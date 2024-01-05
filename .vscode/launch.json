@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [        
+        {
+            "name": "CDE create space",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": ["space", "-a", "5", "-a", "5", "-t", "0", "-t", "1", "-c", "0", "-c", "1", "-o", "spaces.jsonlist"],
+            "justMyCode": true
+        },
+        {
+            "name": "CDE run simulation",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": ["simulate", "-i", "spaces.jsonlist", "-m", "metrics.jsonlist", "-n", "2", "--times", "1"],
+            "justMyCode": true
+        }        
+    ]
+}
