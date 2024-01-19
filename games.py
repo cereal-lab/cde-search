@@ -7,22 +7,19 @@
 
 from abc import ABC, abstractmethod
 from collections import deque
+from itertools import product
 from math import sqrt
 from typing import Any
 from matplotlib.pylab import RandomState, RandomState as RandomState
 
 import numpy as np
 
-from cde import CDEPoint, CDESpace
+from cde import CDESpace
 
 class InteractionGame(ABC):
     ''' Base class that encapsulates representation of candidates/tests and their interactions 
         Candidates and tests are implemented as finite sets! 
     '''
-    def __init__(self, rnd: np.random.RandomState) -> None:
-        super().__init__()
-        self.rnd = rnd
-
     @abstractmethod
     def get_candidates(self) -> list[Any]:
         pass 
@@ -426,14 +423,15 @@ class ParetoGraphSampling(InteractionMatrixSampling):
     '''
 
     def __init__(self, game: InteractionGame, rnd: RandomState, 
-                    w_on_axis = 5, w_spanned  = 3, 
+                    rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8,
                     candidate_sample_size = 10, test_sample_size = 10,
                     **kwargs) -> None:
         super().__init__(game, rnd, **kwargs)
         self.all_candidates = game.get_candidates()
         self.all_tests = game.get_tests()
-        self.w_on_axis = w_on_axis
-        self.w_spanned = w_spanned
+        self.rank_penalty = rank_penalty
+        self.min_exploitation_chance = min_exploitation_chance
+        self.max_exploitation_chance = max_exploitation_chance
         self.candidate_sample_size = candidate_sample_size 
         self.test_sample_size = test_sample_size
 
@@ -443,11 +441,11 @@ class ParetoGraphSampling(InteractionMatrixSampling):
             self.ints = {}
             self.dominates = [] 
             self.dominated = [] 
-            self.axes = {} #dict, axes_id: point_id. For spanned - many of them             
+            self.axes = {} #dict, axes_id: point_id. For spanned - many of them           
+            # self.rank = 0  
 
     def sample_patero_graph(self, interactions: dict[Any, dict[Any, int]], pool: list[Any], sample_size: int) -> list[Any]:
-        ''' Builds Pareto graph from interactions and sample it '''
-        selected = [] 
+        ''' Builds Pareto graph from interactions and sample it '''        
         #first iteration is to build all nodes:
         nodes = []
         sorted_tests = sorted(interactions.items(), key=lambda x: (len(x[1]), len([v for v in x[1].values() if v == 1])))
@@ -487,20 +485,76 @@ class ParetoGraphSampling(InteractionMatrixSampling):
                         node_b.dominates.append(node_a)
                     #otherwise noncomparable. or same?? probably cannot be same here 
         # dominates-dominated edges are built now. We can analyse the graph assigning axes 
+        # for this we build topological orders of DAGs for each of axis (nodes without incoming edges)                        
+        def visit(node: ParetoGraphSampling.Node, grayNodes: set[ParetoGraphSampling.Node], blackNodes: set[ParetoGraphSampling.Node],
+                    order: deque[ParetoGraphSampling.Node]):
+            ''' Walks through dominated edges from node deep down.
+                Cuts nodes that have already been processed 
+                GrayNodes - nodes we are entered 
+                BlackNodes - nodes we existed
+                implicit WhiteNodes - nodes that are not yet considered 
+                order contains built topological order
+            '''
+            if node in blackNodes:
+                return 
+            assert node not in grayNodes, f'There is a cycle (Pareto not DAG). Node: {node.tests}, {node.dominated}'
+            grayNodes.add(node)
+            for dominator in node.dominated:
+                visit(dominator, grayNodes, blackNodes, order)
+            grayNodes.remove(node)
+            blackNodes.add(node)
+            order.appendleft(node)
+
+
         axes_starts = [node for node in nodes if len(node.dominates) == 0]
+        axes = []
         for axis_id, node in enumerate(axes_starts):
-            node.axes[axis_id] = 1
-        node_q = deque([(node, axis_id) for axis_id, node in enumerate(axes_starts)])
-        visited = set()
-        while len(node_q) > 0:
-            node, axis_id = node_q.popleft()
-            point_id = node.axes[axis_id] + 1
-            for n in node.dominated:
-                n.axes[axis_id] = max(n.axes.get(axis_id, 0), point_id)
-                if (n, axis_id) not in visited:
-                    node_q.append((n, axis_id))
+            topological_order = deque([])
+            visit(node, set(), set(), topological_order)
+            prev_rank = 0
+            sum_ranks = 0
+            axes_nodes = []
+            while len(topological_order) > 0:
+                node = topological_order.popleft()
+                node.axes[axis_id] = max(0, prev_rank + 1 - self.rank_penalty * max(0, len(node.dominates) - 1))
+                prev_rank = node.axes[axis_id] 
+                sum_ranks += prev_rank
+                axes_nodes.append(node)
+            #normalize ranks to probabilities
+            for node in axes_nodes:
+                node.axes[axis_id] = node.axes[axis_id] / sum_ranks
+            axes.append(axes_nodes)
+        
+        #exploration vs exploitation - some tests are not in the Pareto graph yet. We need also decide how to balance here
+        #we use annealing with game step increase the chance for exploitation with time 
 
-
+        exploitation_chance = self.min_exploitation_chance + (self.step / self.max_steps) * (self.max_exploitation_chance - self.min_exploitation_chance)
+        strategies = self.rnd.choice([0, 1], size = sample_size, p = [1 - exploitation_chance, exploitation_chance])
+        num_exploits = sum(strategies)
+        # num_explores = sample_size - num_exploits        
+        selected = [] 
+        while num_exploits > 0 and len(axes) > 0:
+            if len(axes) <= num_exploits: #sample each axis
+                selected_axes = axes 
+            else:
+                selected_axes = self.rnd.choice(axes, size = num_exploits, replace=False)
+            for axis_id, axis in enumerate(selected_axes):
+                p = [node.axes[axis_id] for node in axis]
+                node = self.rnd.choice(axis, p=p)
+                test = self.rnd.choice(list(node.tests))
+                selected.append(test)
+                node.tests.remove(test)
+                if len(node.tests) == 0:
+                    axis.remove(node)
+                    if len(axis) == 0:
+                        axes.remove(axis)
+                num_exploits -= 1
+        #left positions are occupied by exploration
+        num_explore = sample_size - len(selected)
+        if num_explore > 0:
+            unknown_inds = [ind for ind in pool if ind not in interactions]
+            tests = self.rnd.choice(unknown_inds, size = min(len(unknown_inds), num_explore), replace=False)
+            selected.extend(tests)
         return selected
     
     def get_candidates(self) -> list[Any]:
@@ -508,41 +562,6 @@ class ParetoGraphSampling(InteractionMatrixSampling):
 
     def get_tests(self) -> list[Any]:
         return self.sample_patero_graph(self.test_interactions, self.all_tests, self.test_sample_size)
-    
-    # def update_space(self, origin: dict[str, set], spanned: dict, axes: list[list[dict[str, set]]], interactions:dict[Any, dict[Any, int]]):
-    #     ''' Moves inds in the corresponding space 
-    #         1. We remove from the space all tests under interraction 
-    #            If this leads that space point does not have tests any more - the space point is removed 
-    #         2. For each space test we build new cfs, cus, css based on previous point data and current interractions 
-    #         3. We add back built points to the space we new space test in tests 
-    #             Draft:
-    #             For this we do unification* of cfs cus and css of already present points in the space (without origin) and current point 
-    #             Unification* succeeds on a set of points A of space:
-    #                 |A| = 1 - one axis has a point which corresponds to added point - we can add the space test to this point 
-    #                 |A| > 1 - several could represent the point - wew can add the test to all these points ?
-    #                 |A| = 0 - new axis should be created?
-    #         Unification: 
-    #             1) pairwise comparison of new point to existing in the space in order: 
-    #                 a) axes for objs to orig (excluded)
-    #                    If it happen that cXs sets are compatible (with wildcards) and deduction of wildcard assignment does not ruin current space 
-    #                    The new point is merged into existing one 
-    #                    cfs {1,2}, css {3}, cus {4,5}
-    #                    cfs {1,4,5}, css {}, cus {2,3}  --> 3 ==> css, 4, 5 ==> cfs 
-    #                 b) 
-    #     '''
-    #     inds_cfs = {t:cfs for t, ints in interactions.items() for cfs in [set(c for c, o in ints.items() if o == 1)] if len(cfs) > 0}
-    #     # TODO
-    #     pass
-
-    def interact(self):
-        # sampling  
-        candidates = self.get_candidates()
-        tests = self.get_tests()
-        candidate_success = {c:{t:1 - self.game.interact(c, t) for t in tests} for c in candidates}
-        #transpose prev matrix and negate it 
-        test_success = {tests[i]:{candidates[j]:1 - candidate_success[j][i] for j in range(len(candidates))} for i in range(len(tests))}
-        self.update_space(self.candidate_space_origin, self.candidate_space_spanned, self.candidate_space_axes, candidate_success)
-        self.update_space(self.test_space_origin, self.test_space_spanned, self.test_space_axes, test_success)
 
 # set of games 
 
@@ -551,27 +570,14 @@ class NumberGame(InteractionGame):
         Init is random in given nat range per dim 
         Change is +-1 random per dimension
     '''
-    def __init__(self, rnd: np.random.RandomState, dims = 2, min_num = 0, max_num = 500, **kwargs) -> None:
-        super().__init__(rnd)
+    def __init__(self, min_num = 0, max_num = 500, **kwargs) -> None:
         self.min_num = min_num
         self.max_num = max_num
-        self.dims = dims
-        super().__init__()
+        nums = list(range(min_num, max_num + 1))
+        self.all_numbers = list(product(nums, nums))
 
-    def init_candidate(self) -> Any:
-        return tuple(self.rnd.randint(self.min_num, self.max_num) for _ in range(self.dims))
-    
-    def change_candidate(self, parent: Any) -> Any:
-        ''' classic schema +-1 for each dim based on random decision 
-            Parent is n-dim tuple created with init
-        '''
-        def adjust(v: int):
-            if v == self.min_num:
-                return v + 1 
-            elif v == self.max_num - 1:
-                return v - 1 
-            return v + self.rnd.choice([-1, 1])
-        return tuple(adjust(d) for d in parent)
+    def get_candidates(self) -> Any:
+        return self.all_numbers    
     
 class IntransitiveGame(NumberGame):
     ''' The IG as it was stated in Bucci article '''
@@ -598,33 +604,18 @@ class CompareOnOneGame(NumberGame):
     
 # game that is based on CDESpace 
 class CDESpaceGame(InteractionGame):
-    ''' Loads given CDE space from the system and provide interactions based on it 
-        Candidates and individuals are Nat numbers
-        Init is random from correspondign pools 
-        Change is mutation, adjustable by mutation strategy.
-        Supported mutations: +-1 at rand, rand resample
-    '''
-    def __init__(self, rnd: RandomState, space: CDESpace, 
-                    candidate_mutation_strategy = "plus_minus_one", test_mutation_strategy = "plus_minus_one", **kwargs) -> None:
-        super().__init__(rnd)
+    ''' Loads given CDE space and provide interactions based on it '''
+    def __init__(self, space: CDESpace, **kwargs) -> None:
         self.space = space 
         self.candidates = sorted(space.get_candidates())
         self.tests = sorted(space.get_tests())
-        self.candidate_mutation_strategy = getattr(self, candidate_mutation_strategy)
-        self.test_mutation_strategy = getattr(self, test_mutation_strategy)
         self.all_fails = space.get_candidate_fails()
 
-    def init_candidate(self) -> Any:
-        return self.rnd.choice(self.candidates)
+    def get_candidates(self) -> Any:
+        return self.candidates
     
-    def init_test(self) -> Any:
-        return self.rnd.choice(self.tests)
-
-    def change_candidate(self, parent: Any) -> Any:
-        return self.candidate_mutation_strategy(parent, self.candidates)
-    
-    def change_test(self, parent: Any) -> Any:
-        return self.test_mutation_strategy(parent, self.tests)    
+    def get_tests(self) -> Any:
+        return self.tests
     
     def interact(self, candidate, test) -> int:
         return 1 if test in self.all_fails.get(candidate, set()) else 0
