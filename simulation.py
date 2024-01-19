@@ -137,12 +137,12 @@ def run_simulation(input, metrics, num_interactions = 1, algo = "algo.RandTestSe
             rnd_state.shuffle(candidates)   
             for candidate_id in candidates:
                 candidate_fails = all_fails.get(candidate_id, set())
-                done_interactions = 0
-                while done_interactions < num_interactions:
-                    selected_tests = test_selector.get_tests(candidate_id, num_interactions - done_interactions)
-                    interactions = {t:t in candidate_fails for t in selected_tests}
-                    test_selector.provide_interactions(candidate_id, interactions)
-                    done_interactions += len(selected_tests)        
+                # done_interactions = 0
+                # while done_interactions < num_interactions:
+                selected_tests = test_selector.get_tests(candidate_id, num_interactions)
+                interactions = {t:t in candidate_fails for t in selected_tests}
+                test_selector.provide_interactions(candidate_id, interactions)
+                # done_interactions += len(selected_tests)        
             #metrics of algo 
             # fetch all tests for next candidate without providing interactions 
             tests_sample = test_selector.get_tests(-1, num_interactions)

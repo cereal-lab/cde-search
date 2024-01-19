@@ -6,6 +6,7 @@
 '''
 
 from abc import ABC, abstractmethod
+from collections import deque
 from math import sqrt
 from typing import Any
 from matplotlib.pylab import RandomState, RandomState as RandomState
@@ -225,15 +226,35 @@ class ZeroSimulation(GameSimulation):
     def get_tests(self) -> list[Any]:
         return self.rnd.choice(self.game.get_tests(), size = self.sample_size, replace=False)
     
-class SamplingStrategies(StepGameSimulation):
+
+class InteractionMatrixSampling(StepGameSimulation):
+    ''' Base class for different sampling approaches based on interaction matrix '''
+    def init_sim(self) -> None:
+        self.candidate_interactions = {}
+        self.test_interactions = {}
+
+    def interact(self):
+        candidates = self.get_candidates() #abstract method that define sampling
+        tests = self.get_tests() #another abstract method
+        candidate_success = [[1 - self.game.interact(c, t) for t in tests] for c in candidates]
+        #transpose prev matrix and negate it 
+        test_success = [[1 - candidate_success[j][i] for j in range(len(candidates))] for i in range(len(tests))]
+        for c, ints in zip(candidates, candidate_success):
+            c_ints = self.candidate_interactions.setdefault(c, {})
+            for t, outcome in zip(tests, ints):
+                c_ints[t] = outcome 
+        for t, ints in zip(tests, test_success):
+            t_ints = self.test_interactions.setdefault(t, {})
+            for c, outcome in zip(candidates, ints):
+                t_ints[c] = outcome        
+
+class SamplingStrategies(InteractionMatrixSampling):
     ''' Implements sampling of pools based on features of built at moment interaction matrix '''
-    def __init__(self, game: InteractionGame, rnd: RandomState, max_steps=0, 
+    def __init__(self, game: InteractionGame, rnd: RandomState,
                     candidate_sample_size = 10, candidate_strategy = None, 
                     test_sample_size = 10, test_strategy = None, 
                     epsilon = None, softmax = None, tau = 1, **kwargs) -> None:
-        super().__init__(game, rnd, max_steps)
-        self.candidate_interactions = {} #dict candidate: {test: outcome}
-        self.test_interactions = {} #3dict test: {candidate: outcome}
+        super().__init__(game, rnd, **kwargs)
         self.total_interaction_count = 0
         self.candidate_sample_size = candidate_sample_size
         self.candidate_strategy = candidate_strategy
@@ -362,7 +383,7 @@ class SamplingStrategies(StepGameSimulation):
             best_ind_key = sorted_inds[0]["key"]
             best_inds = [] 
             i = 0 
-            while best_ind_key == sorted_inds[i]["key"]:
+            while i < len(sorted_inds) and best_ind_key == sorted_inds[i]["key"]:
                 best_inds.append(sorted_inds[i])
                 i += 1
             if self.softmax is not None: 
@@ -384,33 +405,26 @@ class SamplingStrategies(StepGameSimulation):
             selected.add(selected_ind)
         return list(selected)
 
-    def init_sim(self) -> None:
-        self.candidate_interactions = {}
-        self.test_interactions = {}
-
-    def interact(self):
-        candidates = self.get_candidates()
-        tests = self.get_tests()
-        candidate_success = [[1 - self.game.interact(c, t) for t in tests] for c in candidates]
-        #transpose prev matrix and negate it 
-        test_success = [[1 - candidate_success[j][i] for j in range(len(candidates))] for i in range(len(tests))]
-        for c, ints in zip(candidates, candidate_success):
-            c_ints = self.candidate_interactions.setdefault(c, {})
-            for t, outcome in zip(tests, ints):
-                c_ints[t] = outcome 
-        for t, ints in zip(tests, test_success):
-            t_ints = self.test_interactions.setdefault(t, {})
-            for c, outcome in zip(candidates, ints):
-                t_ints[c] = outcome
-
     def get_candidates(self) -> list[Any]:
         return self.sample_inds(self.all_candidates, self.candidate_strategy, self.candidate_sample_size, self.step, self.candidate_interactions)
     
     def get_tests(self) -> list[Any]:
         return self.sample_inds(self.all_tests, self.test_strategy, self.test_sample_size, self.step, self.test_interactions)
     
-class DynamicSpaceBuild(StepGameSimulation):
-    ''' Implements the idea of gradual CDE space building and sampling '''
+    
+class ParetoGraphSampling(InteractionMatrixSampling):
+    ''' Tracks interactions and from scarced interaction metricis builds Pareto graph 
+        directed edges of which define the Pareto relations. Nodes contains tests/candidates 
+        Sampling of graph structure happens with the observation 
+        1. Origin of CDE Space would have no incoming edges (as well as starts of the axes)
+           Weight is minimal for origin (start of the axis)
+        2. The further the axis point on the axis from the origin the greater is number of edges from the beginning of axes
+           Weight is increased with number of hops
+        3. First incomming edge means that the point/node is on the axis. Second and more - it is probably spanned point 
+           Weight is descreased with additional incomming edges 
+        There should be normalization of weights in range of [0, 1] before further use in calc of probs
+    '''
+
     def __init__(self, game: InteractionGame, rnd: RandomState, 
                     w_on_axis = 5, w_spanned  = 3, 
                     candidate_sample_size = 10, test_sample_size = 10,
@@ -423,44 +437,102 @@ class DynamicSpaceBuild(StepGameSimulation):
         self.candidate_sample_size = candidate_sample_size 
         self.test_sample_size = test_sample_size
 
-    def init_sim(self) -> None:
-        self.candidate_space_origin = CDEPoint(tests = set(self.all_candidates), candidates = set(self.all_tests))
-        self.candidate_space_axes = [] #no axes at start, axis list of CDEPoint list
-        self.candidate_space_spanned = [] #list of (ax_id, point_id, CDEPoint)
-        self.candidate_shown = {} #number of times candidate was selected for interractions
-        self.test_space_origin = CDEPoint(candidates = set(self.all_candidates), tests = set(self.all_tests))
-        self.test_space_axes = []
-        self.test_space_spanned = []
-        self.test_shown = {} #number of times test was selected for interractions
+    class Node:
+        def __init__(self) -> None:
+            self.tests = set() 
+            self.ints = {}
+            self.dominates = [] 
+            self.dominated = [] 
+            self.axes = {} #dict, axes_id: point_id. For spanned - many of them             
 
-    def sample_space(self, origin: CDEPoint, spanned, axes: list[list[CDEPoint]], shown: dict, sample_size: int):        
-        origin_weights = {ind: -shown.get(ind, 0) for ind in origin.tests}
-        axis_weights = {ind: (point_id + 1) * self.w_on_axis - shown.get(ind, 0) 
-                            for axis in axes for point_id, point in enumerate(axis) 
-                            for ind in point.tests}
-        spanned_weights = {ind: self.w_spanned - shown.get(ind, 0)
-                            for coords, point in spanned
-                            for ind in point.tests }
-        ind_weights = {**origin_weights, **axis_weights, **spanned_weights}
-        inds, weights = zip(*ind_weights.items())
-        sum_w = sum(weights) + 1
-        probs = [w / sum_w for w in weights]
-        selected = self.rnd.choice(inds, size = sample_size, replace=False, p=probs)
-        for ind in selected:
-            shown[ind] = shown.get(ind, 0) + 1
+    def sample_patero_graph(self, interactions: dict[Any, dict[Any, int]], pool: list[Any], sample_size: int) -> list[Any]:
+        ''' Builds Pareto graph from interactions and sample it '''
+        selected = [] 
+        #first iteration is to build all nodes:
+        nodes = []
+        sorted_tests = sorted(interactions.items(), key=lambda x: (len(x[1]), len([v for v in x[1].values() if v == 1])))
+        for test, ints in sorted_tests:
+            #first we try to check other nodes
+            test_node_common_ints = [(node, [(o, node.ints[c]) for c, o in ints.items() if c in node.ints])
+                                        for node in nodes]
+            test_common_ints = sorted([(node, common_ints) for node, common_ints in test_node_common_ints
+                                        if len(common_ints) > 1 and all(a == b for a,b in common_ints)], 
+                                key=lambda x: len(x[1]), reverse=True)
+            best_common_ints = len(test_common_ints[0][1]) if len(test_common_ints) > 0 else 0
+            selected_nodes = []
+            i = 0
+            while i < len(test_common_ints) and len(test_common_ints[i][1]) == best_common_ints:
+                selected_nodes.append(test_common_ints[i][0])
+                i += 1 
+            for node in selected_nodes:
+                node.tests.add(test)
+                node.ints = {**node.ints, **ints} #merge
+            if len(selected_nodes) == 0: #create new node
+                node = ParetoGraphSampling.Node()
+                node.tests.add(test)
+                node.ints = ints
+                nodes.append(node)
+        # now we have all list of nodes. Weestablish Pareto dominance between them
+        for i in range(len(nodes)):
+            node_a = nodes[i]
+            for j in range(i + 1, len(nodes)):
+                node_b = nodes[j]
+                node_node_common_ints = [(o, node_b.ints[c]) for c, o in node_a.ints.items() if c in node_b.ints]
+                if len(node_node_common_ints) > 1:
+                    if all(a >= b for a, b in node_node_common_ints) and any(a > b for a, b in node_node_common_ints):
+                        node_a.dominates.append(node_b)
+                        node_b.dominated.append(node_a)
+                    elif all(b >= a for a, b in node_node_common_ints) and any(b > a for a, b in node_node_common_ints):
+                        node_a.dominated.append(node_b)
+                        node_b.dominates.append(node_a)
+                    #otherwise noncomparable. or same?? probably cannot be same here 
+        # dominates-dominated edges are built now. We can analyse the graph assigning axes 
+        axes_starts = [node for node in nodes if len(node.dominates) == 0]
+        for axis_id, node in enumerate(axes_starts):
+            node.axes[axis_id] = 1
+        node_q = deque([(node, axis_id) for axis_id, node in enumerate(axes_starts)])
+        visited = set()
+        while len(node_q) > 0:
+            node, axis_id = node_q.popleft()
+            point_id = node.axes[axis_id] + 1
+            for n in node.dominated:
+                n.axes[axis_id] = max(n.axes.get(axis_id, 0), point_id)
+                if (n, axis_id) not in visited:
+                    node_q.append((n, axis_id))
+
+
         return selected
     
     def get_candidates(self) -> list[Any]:
-        return self.sample_space(self.candidate_space_origin, self.candidate_space_spanned, self.candidate_space_axes, self.candidate_shown, self.candidate_sample_size)
+        return self.sample_patero_graph(self.candidate_interactions, self.all_candidates, self.candidate_sample_size)
 
     def get_tests(self) -> list[Any]:
-        return self.sample_space(self.test_space_origin, self.test_space_spanned, self.test_space_axes, self.test_shown, self.test_sample_size)
+        return self.sample_patero_graph(self.test_interactions, self.all_tests, self.test_sample_size)
     
-    def update_space(self, origin: CDEPoint, spanned, axes: list[list[CDEPoint]], interactions:dict[Any, dict[Any, int]]):
-        ''' Moves inds in the corresponding space '''
-        inds_cfs = {t:cfs for t, ints in interactions.items() for cfs in [set(c for c, o in ints.items() if o == 1)] if len(cfs) > 0}
-        # TODO
-        pass
+    # def update_space(self, origin: dict[str, set], spanned: dict, axes: list[list[dict[str, set]]], interactions:dict[Any, dict[Any, int]]):
+    #     ''' Moves inds in the corresponding space 
+    #         1. We remove from the space all tests under interraction 
+    #            If this leads that space point does not have tests any more - the space point is removed 
+    #         2. For each space test we build new cfs, cus, css based on previous point data and current interractions 
+    #         3. We add back built points to the space we new space test in tests 
+    #             Draft:
+    #             For this we do unification* of cfs cus and css of already present points in the space (without origin) and current point 
+    #             Unification* succeeds on a set of points A of space:
+    #                 |A| = 1 - one axis has a point which corresponds to added point - we can add the space test to this point 
+    #                 |A| > 1 - several could represent the point - wew can add the test to all these points ?
+    #                 |A| = 0 - new axis should be created?
+    #         Unification: 
+    #             1) pairwise comparison of new point to existing in the space in order: 
+    #                 a) axes for objs to orig (excluded)
+    #                    If it happen that cXs sets are compatible (with wildcards) and deduction of wildcard assignment does not ruin current space 
+    #                    The new point is merged into existing one 
+    #                    cfs {1,2}, css {3}, cus {4,5}
+    #                    cfs {1,4,5}, css {}, cus {2,3}  --> 3 ==> css, 4, 5 ==> cfs 
+    #                 b) 
+    #     '''
+    #     inds_cfs = {t:cfs for t, ints in interactions.items() for cfs in [set(c for c, o in ints.items() if o == 1)] if len(cfs) > 0}
+    #     # TODO
+    #     pass
 
     def interact(self):
         # sampling  
