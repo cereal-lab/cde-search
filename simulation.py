@@ -1,4 +1,7 @@
-#TODO: add args lib to read config to gen space and to execute algo on space 
+''' Implementation of entry points 
+    CLI for generating CDE space and running games (Number, CDESpace based)
+'''
+
 #TODO: specification for simulation: candidate interracts with set of tests prepared by algo, algo picks set of tests for candidate
 #      note that candidate interracts with all tests in selection from algo but only with one batch 
 #      should batch be formed at start or with analysis of user interraction? 2 different modes of interaction or mixed mode - multi-batched
@@ -13,19 +16,11 @@
 import json
 import click
 import numpy as np
-from algo import TestSelector
 from cde import CDESpace 
 
 @click.group()
 def cli():
     pass
-
-def build_test_selector(algo: str, settings, rnd) -> TestSelector:
-    ''' Parse module.class to class function constructor '''
-    *module, builder = algo.split('.')
-    m = __import__(".".join(module), fromlist=[builder])
-    quiz_model_class = getattr(m, builder)
-    return quiz_model_class(rnd, **settings)
 
 @cli.command("space")
 @click.option("-o", "--output", type = str)
