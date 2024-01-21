@@ -16,14 +16,20 @@
 import json
 import click
 import numpy as np
-from cde import CDESpace 
+from cde import CDESpace
+from config import CONFIG
+from games import CDESpaceGame, GameSimulation 
+from params import param_seed, param_spaces
+import fcntl
+import numpy as np
 
 @click.group()
 def cli():
     pass
 
 @cli.command("space")
-@click.option("-o", "--output", type = str)
+@click.option("--name", type = str, default = "")
+@click.option("-o", "--output", type = str, default = param_spaces)
 @click.option("-a", "--axis", type = int, multiple=True, default=[1,1])
 @click.option("-t", "--tests", type = int, multiple=True)
 @click.option("-c", "--cand", type = int, multiple=True)
@@ -37,12 +43,12 @@ def cli():
 @click.option("--dependency-strategy-count", type = int, default = -1)
 @click.option("--dependency-strategy-pos", type = int, default = -1)
 @click.option("--dependency-strategy-pos", type = int, default = -1)
-def gen_space(axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [], spanned: list[str] = [], 
+def gen_space(name:str, axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [], spanned: list[str] = [], 
                     spanned_strategy = None, spanned_strategy_count = -1, spanned_strategy_pos = -1, spanned_strategy_tests = 1,
                     dependency = [], dependency_strategy = None, dependency_strategy_count = -1, dependency_strategy_pos = -1,
                     output = None):    
     click.echo("Creating CDE space...")
-    space = CDESpace(axis)
+    space = CDESpace(axis, name = name)
     if len(tests) > 0:
         origin, *axis = tests
         axis = [origin] if len(axis) == 0 else axis
@@ -105,54 +111,47 @@ def gen_space(axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [
             f.writelines([space.to_json() + "\n"])
     return space
 
-@cli.command("simulate")
-@click.option("-i", "--input", type = str, required = True)
-@click.option("-n", "--num-interactions", type = int, default = 1)
-@click.option("--algo", type = str, default = "algo.RandTestSelector")
-@click.option('--algo-params', type = str, default = "{}")
-@click.option('--random-seed', type=int, default = 17)
+@cli.command("game")
+@click.option("-id", type = int, required = True)
 @click.option('--times', type=int, default = 1)
-@click.option("-m", "--metrics", type = str, required = True)
-def run_simulation(input, metrics, num_interactions = 1, algo = "algo.RandTestSelector", algo_params = "{}", random_seed = 17, times = 1):
-    click.echo("Reading space...")
-    with open(input, "r") as f:
-        spaces = [CDESpace.from_json(line) for line in f.readlines()]
-    rnd_state = np.random.RandomState(random_seed)
-    click.echo("Initializing algorithm...")
-    algo_settings = json.loads(algo_params)
-    test_selector = build_test_selector(algo, algo_settings, rnd_state)
-    click.echo(f"{test_selector}")
-    for space_id, space in enumerate(spaces):
-        click.echo(f"\n-- Space:\n {space}")
-        all_fails = space.get_candidate_fails()
-        test_selector.init_space(space)
-        candidates = list(space.get_candidates())
-        #simulation loop 
-        for i in range(times):         
-            rnd_state.shuffle(candidates)   
-            for candidate_id in candidates:
-                candidate_fails = all_fails.get(candidate_id, set())
-                # done_interactions = 0
-                # while done_interactions < num_interactions:
-                selected_tests = test_selector.get_tests(candidate_id, num_interactions)
-                interactions = {t:t in candidate_fails for t in selected_tests}
-                test_selector.provide_interactions(candidate_id, interactions)
-                # done_interactions += len(selected_tests)        
-            #metrics of algo 
-            # fetch all tests for next candidate without providing interactions 
-            tests_sample = test_selector.get_tests(-1, num_interactions)
+@click.option("-m", "--metrics", type = str, default = "metrics.jsonlist")
+def run_game(id, times = 1, metrics = ""):
+    sim: GameSimulation = CONFIG[id]
+    click.echo(f"Running simulation {sim.name}")    
+    for i in range(times): 
+        sim.play()
+        if type(sim.game) is CDESpaceGame:     
+            # collect space metrics   
+            space = sim.game.space
+            tests_sample = sim.get_tests()
             DC = space.dimension_coverage(tests_sample)
             ARR, ARRA = space.avg_rank_of_repr(tests_sample)
             Dup = space.duplication(tests_sample)
             R = space.redundancy(tests_sample)
             nonI = space.noninformative(tests_sample)
-            metric_data = json.dumps({"i": i, "input": input, "space_id":space_id, 
+            metric_data = json.dumps({"config_id": id, "algo_id": sim.name, "space_id":space.name, "i": i,
                                 "DC": DC, "ARR": ARR, "ARRA": ARRA, "Dup": Dup, "R": R, 
-                                "nonI": nonI, "algo": algo, "settings": algo_settings, "seed": random_seed,
-                                "num_interactions": num_interactions, "eval_sample": [ int(t) for t in tests_sample ]})
+                                "nonI": nonI, "seed": param_seed,
+                                **sim.game_metrics,
+                                "test_sample": [ int(t) if type(t) is np.int64 else t for t in tests_sample ]})
             click.echo(f"{metric_data}")
-            with open(metrics, "a") as f:
+            with open(metrics, "a") as f:                
+                fcntl.flock(f, fcntl.LOCK_EX)
                 f.writelines([metric_data + "\n"])
-
+                fcntl.flock(f, fcntl.LOCK_UN)
+        else: #number game simulation 
+            cand_sample = sim.get_candidates()
+            tests_sample = sim.get_tests()
+            metric_data = json.dumps({"config_id": id, "algo_id": sim.name, "space_id":space.name, "i": i,
+                                "seed": param_seed,
+                                **sim.game_metrics,
+                                "test_sample": [ int(t) if type(t) is np.int64 else t for t in tests_sample ]
+                                **({} if cand_sample is tests_sample else {"cand_sample": cand_sample})})
+            click.echo(f"{metric_data}")
+            with open(metrics, "a") as f:                
+                fcntl.flock(f, fcntl.LOCK_EX)
+                f.writelines([metric_data + "\n"])
+                fcntl.flock(f, fcntl.LOCK_UN)
+            
 if __name__ == '__main__':
     cli()

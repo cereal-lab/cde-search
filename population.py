@@ -116,9 +116,10 @@ class Sample(Population):
 
     def init_inds(self) -> None:
         self.interactions = {}
-        self.population = self.sample_inds()
+        self.population = None #self.sample_inds()
+        self.for_group = None
 
-    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+    def merge_interactions(self, interactions: dict[Any, dict[Any, int]]) -> None:
         for ind, ints in interactions.items():
             ind_ints = self.interactions.setdefault(ind, {})
             for t, outcome in ints.items():
@@ -126,7 +127,28 @@ class Sample(Population):
                     self.total_interaction_count += 1
                 ind_ints[t] = outcome
         self.t += 1
+
+    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+        self.merge_interactions(interactions)        
+        self.population = None
+
+    def get_same_interactions_percent(self):
+        ''' We would like to avoid same interactions for the following steps
+            This method computes the percent of given group in self.for_group with already present interactions
+            It is up to concrete population how to handle same interactions (current simulations assume uselessness of such interactions)
+        '''
+        scores = {ind: len(existing) / len(self.for_group)
+                    for ind in self.all_inds for ind_ints in [self.interactions.get(ind, {})]
+                    for existing in [len(t for t in self.for_group if t in ind_ints)]
+                    if len(existing) > 0}
+        return scores 
+
+    def get_inds(self, *, for_group = [], **filters) -> list[Any]:
+        if self.population is not None and for_group == self.for_group:
+            return self.population
+        self.for_group = for_group #adjusts sampling by avoiding repetitions of interactions - smaller chance to interruct again
         self.population = self.sample_inds()
+        return self.population
         
 class SamplingStrategySample(Sample):
     ''' Sampling with strategies from matrix directly '''
@@ -164,14 +186,14 @@ class SamplingStrategySample(Sample):
             ''' computes common interactions with other inds of the pool '''
             common_interactions = {ind1: interactions
                 for ind1 in pool_inds if ind1 != ind
-                for ind1_interactions in [interactions.get(ind1, {})]
+                for ind1_interactions in [self.interactions.get(ind1, {})]
                 for interactions in [{common_other_id: (ind_interactions[common_other_id], ind1_interactions[common_other_id]) 
                     for common_other_id in set.intersection(other_ids, set(ind1_interactions.keys()))}]
                 if len(interactions) > 0} #non-empty interactions set
             return common_interactions
         common_interactions = build_common_interactions(self.interactions.keys())
         non_dominated = [ind1 for ind1, ints in common_interactions.items()
-                                if len(ints) >= 2 and
+                                if len(ints) > 1 and
                                     any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items()) and 
                                     any(ind_outcome < ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]
         dominated = [ind1 for ind1, ints in common_interactions.items()
@@ -231,13 +253,17 @@ class SamplingStrategySample(Sample):
         
     def sample_inds(self) -> list[Any]:
         default_strategy = [{"t": 0, "keys": [["rel-kn", "kn", "nond", "sd", "dom"]] * self.size }]
-        sample_strategy = default_strategy if sample_strategy is None or len(sample_strategy) == 0 else sample_strategy
-        sample_strategy = sorted(sample_strategy, key = lambda x: x["t"])
+        sample_strategy = default_strategy if self.strategy is None or len(self.strategy) == 0 else self.strategy
+        sample_strategy = sorted(self.strategy, key = lambda x: x["t"])
         if sample_strategy[0]["t"] != 0:
             sample_strategy = [*default_strategy, *sample_strategy]        
         curr_key_spec = next(spec for spec in reversed(sample_strategy) if self.t >= spec["t"])["keys"]
+        seens_interaction_percents = self.get_same_interactions_percent()
+        excluded = {ind for ind, p in seens_interaction_percents.items() if rnd.rand() < p }
         selected = set()
-        for i in range(self.size):
+        while len(selected) < self.size:
+            i = len(selected)
+            
             i_key_spec = curr_key_spec[i] if i < len(curr_key_spec) else curr_key_spec[-1]
             if (self.epsilon is not None) and (rnd.rand() < self.epsilon): #apply default epsilon strategy - ordered exploration
                 i_key_spec = ["kn", "nond", "d"]
@@ -246,13 +272,17 @@ class SamplingStrategySample(Sample):
                 i_key_spec = i_key_spec[:softmax_idx]
             key_selector = self.build_selector(i_key_spec)
             ind_scores = [ {"ind": ind, "scores": scores, "key": key_selector(scores) }
-                                    for ind in self.all_inds if ind not in selected
+                                    for ind in self.all_inds if ind not in selected and ind not in excluded
                                     for scores in [{**self.calc_knowledge_score(ind, selected, self.interactions), 
                                                     **self.calc_domination_score(ind, selected, self.interactions), 
                                                     **self.calc_complexity_score(ind, selected, self.interactions)}]]
+            # (s * seens_interaction_penalties.get(ind, 1) for s in 
             sorted_inds = sorted(ind_scores, key=lambda x: x["key"], reverse=True)
             if len(sorted_inds) == 0:
-                break
+                if len(excluded) == 0:
+                    break
+                excluded = set()
+                continue
             best_ind_key = sorted_inds[0]["key"]
             best_inds = [] 
             i = 0 
@@ -391,34 +421,136 @@ class ParetoGraphSample(Sample):
         #exploration vs exploitation - some tests are not in the Pareto graph yet. We need also decide how to balance here
         #we use annealing with game step increase the chance for exploitation with time 
 
-        exploitation_chance = self.min_exploitation_chance + (self.step / self.max_steps) * (self.max_exploitation_chance - self.min_exploitation_chance)
-        strategies = rnd.choice([0, 1], size = self.size, p = [1 - exploitation_chance, exploitation_chance])
-        num_exploits = sum(strategies)
-        # num_explores = sample_size - num_exploits        
-        selected = [] 
-        while num_exploits > 0 and len(axes) > 0:
-            if len(axes) <= num_exploits: #sample each axis
-                selected_axes = axes 
-            else:
-                selected_axes = rnd.choice(axes, size = num_exploits, replace=False)
-            for axis_id, axis in enumerate(selected_axes):
-                p = [node.axes[axis_id] for node in axis]
-                node = rnd.choice(axis, p=p)
-                test = rnd.choice(list(node.tests))
-                selected.append(test)
-                node.tests.remove(test)
-                if len(node.tests) == 0:
-                    axis.remove(node)
-                    if len(axis) == 0:
-                        axes.remove(axis)
-                num_exploits -= 1
-        #left positions are occupied by exploration
-        num_explore = self.size - len(selected)
-        if num_explore > 0:
-            unknown_inds = [ind for ind in self.all_inds if ind not in self.interactions]
-            tests = rnd.choice(unknown_inds, size = min(len(unknown_inds), num_explore), replace=False)
-            selected.extend(tests)
+        interacted_weights = {ind: 0.1 + 0.9 * (1 - p) for ind, p in self.get_same_interactions_percent().items()}
+
+        exploitation_weight = self.min_exploitation_chance + (self.step / self.max_steps) * (self.max_exploitation_chance - self.min_exploitation_chance)
+        exploration_weight = 1 - exploitation_weight
+        # strategies = rnd.choice([0, 1], size = self.size, p = [1 - exploitation_chance, exploitation_chance])
+        # num_exploits = sum(strategies)
+        # num_explores = sample_size - num_exploits    
+        weights = {}    
+
+        for axis_id, axis in enumerate(axes):
+            for node in axis:
+                for test in node.tests:
+                    weights[test] = exploitation_weight * (node.axes[axis_id] + 1) * interacted_weights.get(test, 1)        
+
+        for ind in self.all_inds:
+            if ind not in self.interactions:
+                weights[ind] = exploration_weight * interacted_weights.get(test, 1)
+
+        min_weight = min(weights.values())        
+        weights_shifted = {ind: (w - min_weight) for ind, w in weights.items()}
+        sum_weights = sum(weights_shifted.values())
+        probs = {ind: w / sum_weights for ind, w in weights_shifted.items()}
+
+        inds, p = zip(*list(probs.items()))
+        selected = rnd.choice(inds, size = self.size, replace=False, p = p)
         return selected    
+
+class ACOPopulation(Sample):
+    ''' Population that changes by principle of pheromone distribution 
+        We can think of ants as their pheromons - the population is the values of pheromones for each of test 
+        At same time, we still have desirability criteria given by interaction matrix. 
+        Number of ants is given by popsize. Each of them makes decision what test to pick based on pheromone and desirability 
+        No two ants can pick same test. 
+        The tests are sampled by such ants but pheremones undergo evolution.
+        Note, self.population is still used for sampled test 
+        self.pheromones is what evolves   
+        Pheromone range [1, inf). It magnifies desirability of the test 
+        It goes up when the selected test increases the desirability in the interaction step
+        And gradually goes down to 1. 
+    '''
+    def __init__(self, all_inds: list[Any], size: int,
+                    pheromone_decay = 0.8, dom_bonus = 1, span_penalty = 0.25, **kwargs) -> None:
+        super().__init__(all_inds, size)
+        self.pheromones = {}
+        self.pheromone_decay = pheromone_decay
+        self.dom_bonus = dom_bonus
+        self.span_penalty = span_penalty
+
+    def init_inds(self) -> None:
+        super().init_inds()
+        self.pheromones = {ind: 1 for ind in self.all_inds} #each ind gets a bit of pheromone 
+        self.desirability = {}
+        self.population_desirability = 0
+
+    def calc_desirability(self) -> None:
+        ''' Analysis of interaction matrix for combined criteria how ind is good at moment 
+            Desired test is one that dominates many of individuals but do not dominate individuals that Pareto-noncomparable
+            For each dominated + dom_bonus, for each dominated that pareto-noncomparable - spanned_penalty
+        '''
+
+        #step 1 - compute all common interactions between all pair of tests 
+        ind_ids = list(self.interactions.keys())
+        common_ints = {}
+        for i1 in range(len(ind_ids)):
+            ind1 = ind_ids[i1]
+            ind1_ints = self.interactions[ind1]
+            ind1_int_keys = set(ind1_ints.keys())
+            for i2 in range(i1 + 1, len(ind_ids)):
+                ind2 = ind_ids[i2]
+                ind2_ints = self.interactions[ind2]
+                ind2_int_keys = set(ind2_ints.keys())
+                common_ids = set.intersection(ind1_int_keys, ind2_int_keys)
+                if len(common_ints) > 1:
+                    common_ints.setdefault(ind1, {})[ind2] = [(ind1_ints[tid], ind2_ints[tid]) for tid in common_ids] 
+                    common_ints.setdefault(ind2, {})[ind1] = [(ind2_ints[tid], ind1_ints[tid]) for tid in common_ids]         
+        dominated = {ind:[ind1 for ind1, cints in ind_ints.items() 
+                        if all(io >= i1o for io, i1o in cints) and any(io > i1o for io, i1o in cints) ] 
+                        for ind, ind_ints in common_ints.items()}
+        def non_dominated_pairs(inds: list[Any]):
+            result = []
+            for i1 in range(len(inds)):
+                ind1 = inds[i1]
+                for i2 in range(i1 + 1, len(inds)):
+                    ind2 = inds[i2]
+                    ints = common_ints.get(ind1, {}).get(ind2, [])
+                    if len(ints) > 1 and any(o1 > o2 for o1, o2 in ints) and any(o2 > o1 for o1, o2 in ints):
+                        result.append((ind1, ind2))
+            return result 
+        dominated_non_dominant = {ind:non_dominated_pairs(ind_dom) for ind, ind_dom in dominated.items()}
+
+        self.desirability = {ind: self.dom_bonus * len(dominated.get(ind, [])) - self.span_penalty * len(dominated_non_dominant.get(ind, []))
+                  for ind in ind_ids}                        
+
+    def build_selector(self, keys):
+        ''' function that builds selector of features based on keys '''
+        return lambda scores: tuple(scores[k] for k in keys)
+        
+    def sample_inds(self) -> list[Any]:
+        ''' Sample with pheromones and desirability rule 
+            Ants book works with random proportional transition rule 
+            Here we ignore alpha and beta heuristic parameters (= 1)
+        '''        
+        #normalize scores from [min, max] -> [0, max2] - spanned point is on level of origin
+        min_score = min(self.desirability.values(), default=0)
+        d_scores = {k: v - min_score for k, v in self.desirability.items()}
+
+        all_scores = {ind: d_scores.get(ind, 0) for ind in self.all_inds}
+        all_scores_shifted = {ind: score + 0.1 for ind, score in all_scores.items()}
+        interacted_penalty = {ind: 0.1 + 0.9 * (1 - p) for ind, p in self.get_same_interactions_percent().items()}
+        scores_pheromoned = {ind:self.pheromones[ind] * desirability * interacted_penalty.get(ind, 1) for ind, desirability in all_scores_shifted.items()}
+        inds, weights = zip(*list(scores_pheromoned.items()))
+        sum_weight = sum(weights)
+        if sum_weight == 0:
+            sum_weight = 1 
+        probs = [w / sum_weight for w in weights]
+        selected = rnd.choice(inds, size = self.size, replace = False, p = probs)
+        self.population_desirability = sum(self.desirability.get(ind, 0) for ind in selected)
+        return list(selected)
+    
+    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+        prev_pop_desirability = self.population_desirability
+        self.merge_interactions(interactions) 
+        self.calc_desirability()
+        new_pop_desirability = sum(self.desirability.get(ind, 0) for ind in self.population)
+        if new_pop_desirability > prev_pop_desirability:
+            for ind in self.population:
+                self.pheromones[ind] += 1 
+        for ind in self.all_inds:
+            self.pheromones[ind] = 1 + (self.pheromones[ind] - 1) * self.pheromone_decay
+        self.population = None        
 
 class OneTimeSequential(Population):
     ''' Solits all_inds onto self.size and gives each chunk only once  

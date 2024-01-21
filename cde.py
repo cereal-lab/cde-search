@@ -70,11 +70,12 @@ class CDESpace(JSONSerializable):
         :returns - created CDESpace 
     '''    
     def __init__(self, dims: list[int] = [], candidate_remap = [], spanned = [], origin = {}, 
-                        axes = [], next_test_id = 0, next_candidate_id = 0, **kwargs) -> None:
+                        axes = [], next_test_id = 0, next_candidate_id = 0, name = "", **kwargs) -> None:
         ''' Creates space with len(dims) axes and number of points per axis specified in dims
             Origin is created anyway 
             :param dims - points per axis             
         '''
+        self.name = name
         self.dims = dims
         self.candidate_remap = {m["b"]: m["a"] for m in candidate_remap}
         self.spanned = {tuple(tuple(x) for x in m["coord"]):CDEPoint(**m["point"]) for m in spanned}

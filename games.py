@@ -39,6 +39,8 @@ class GameSimulation(ABC):
             @param rule: function which defines interaction between (candidate, test) -> 2
         '''
         self.game = game
+        self.name = type(self).__class__.__name__
+        self.game_metrics = {}
 
     def play(self):
         ''' Executes game, final state defines found candidates and tests '''
@@ -91,7 +93,6 @@ class StepGameSimulation(GameSimulation):
         while self.step < self.max_steps:
             self.interact()
             self.step += 1
-
 
 class PCHC(StepGameSimulation):
     ''' Defines PCHC game skeleton for one population of tests and candidates
@@ -176,20 +177,32 @@ class CandidateTestInteractions(StepGameSimulation):
         super().__init__(game, max_steps)
         self.candidates = candidates
         self.tests = tests
+        self.candidates_first = True
 
     def init_sim(self) -> None:
         self.candidates.init_inds()
         self.tests.init_inds()
 
     def interact(self):
-        candidates = self.candidates.get_inds() 
-        tests = self.tests.get_inds()
+        if self.candidates_first:
+            candidates = self.candidates.get_inds() 
+            tests = self.tests.get_inds(for_group = candidates)
+        else:
+            tests = self.tests.get_inds()  
+            candidates = self.candidates.get_inds(for_group = tests)
+        self.candidates_first = not self.candidates_first           
         candidate_ints = {}
         self.interact_groups_into(candidates, tests, candidate_ints)
         test_ints = {}
         self.transpose_ints(candidate_ints, test_ints)        
         self.candidates.update(candidate_ints)
         self.tests.update(test_ints)
+
+    def get_candidates(self) -> list[Any]:
+        return self.candidates.get_inds()
+
+    def get_tests(self) -> list[Any]:
+        return self.tests.get_inds()
     
 # set of games 
 class NumberGame(InteractionGame):
