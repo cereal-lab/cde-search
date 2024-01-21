@@ -581,7 +581,7 @@ class OneTimeSequential(Population):
         else: 
             selected = self.all_inds[self.cur_pos:end_pos + 1]
         self.cur_pos = (end_pos + 1) % len(self.all_inds)
-        return selected    
+        return selected
     
     def init_inds(self) -> None:
         self.cur_pos = 0

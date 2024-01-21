@@ -61,7 +61,8 @@ def ACO_SIM(popsize = 50, **kwargs):
     return b
 
 GAMES = [ 
-    *[g(param_min_num, param_max_num) for g in [IntransitiveGame, FocusingGame, CompareOnOneGame] ] 
+    *[g(param_min_num, param_max_num, reg_min_num = 100, reg_max_num = 110) 
+        for g in [IntransitiveGame, FocusingGame, CompareOnOneGame] ] 
 ]
 
 #TODO: add another simulations

@@ -14,3 +14,9 @@ PARAM_MAX_INTS = "game_max_ints"
 
 PARAM_UNIQ_INDS = "game_uniq_inds"
 PARAM_MAX_INDS = "game_max_inds"
+
+# game specific goal metric
+PARAM_GAME_GOAL = "game_goal"
+PARAM_GAME_GOAL_MOMENT = "game_goal_moment"
+#changes of goal with game step
+PARAM_GAME_GOAL_STORY = "game_goal_story"
