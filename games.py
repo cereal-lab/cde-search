@@ -8,8 +8,10 @@
 from abc import ABC, abstractmethod
 from itertools import product
 from typing import Any
+from deca import extract_dims
 from population import Population
-from params import rnd
+from params import PARAM_INTS, PARAM_MAX_INDS, PARAM_MAX_INTS, PARAM_UNIQ_INDS, PARAM_UNIQ_INTS, rnd
+from tabulate import tabulate, SEPARATING_LINE
 
 import numpy as np
 
@@ -40,7 +42,9 @@ class GameSimulation(ABC):
         '''
         self.game = game
         self.name = type(self).__class__.__name__
-        self.game_metrics = {}
+        all_cands = game.get_all_candidates()
+        all_tests = game.get_all_tests()
+        self.game_metrics = {PARAM_MAX_INTS: len(all_cands) * len(all_tests), PARAM_UNIQ_INTS: 0, PARAM_INTS: 0}
 
     def play(self):
         ''' Executes game, final state defines found candidates and tests '''
@@ -49,14 +53,18 @@ class GameSimulation(ABC):
     def interact_groups_into(self, group1, group2, ints, allow_self_interacts = True):
         for ind1 in group1:
             for ind2 in group2:
+                self.game_metrics[PARAM_INTS] += 1
                 if (allow_self_interacts or ind1 != ind2) and (ind1 not in ints or ind2 not in ints[ind1]):
-                    ints.setdefault(ind1, {})[ind2] = self.game.interact(ind1, ind2)  
+                    ints.setdefault(ind1, {})[ind2] = self.game.interact(ind1, ind2)            
+                    self.game_metrics[PARAM_UNIQ_INTS] += 1
 
     def interact_groups_into_rev(self, group1, group2, ints, allow_self_interacts = True):
         for ind1 in group1:
             for ind2 in group2:
+                self.game_metrics[PARAM_INTS] += 1
                 if (allow_self_interacts or ind1 != ind2) and (ind1 not in ints or ind2 not in ints[ind1]):
-                    ints.setdefault(ind1, {})[ind2] = 1 - self.game.interact(ind2, ind1)      
+                    ints.setdefault(ind1, {})[ind2] = 1 - self.game.interact(ind2, ind1)
+                    self.game_metrics[PARAM_UNIQ_INTS] += 1
 
     def transpose_ints(self, ints, into_ints):
         for c, t_ints in ints.items():
@@ -101,6 +109,8 @@ class PCHC(StepGameSimulation):
     def __init__(self, game: InteractionGame, max_steps, population: Population) -> None:
         super().__init__(game, max_steps)
         self.population = population
+        self.game_metrics["cand"] = population.pop_metrics
+        self.seen_inds = set()
 
     def init_sim(self) -> None:
         self.population.init_inds()
@@ -108,7 +118,7 @@ class PCHC(StepGameSimulation):
     def interact(self):
         ''' computes interactions of ind on other inds in population (no-children)'''
         parents = self.population.get_inds(only_parents=True)
-        children = self.population.get_inds(only_children=True)
+        children = self.population.get_inds(only_children=True)        
         ints = {}
         self.interact_groups_into(parents, parents, ints, allow_self_interacts=False)
         if children is not parents:
@@ -124,6 +134,8 @@ class PPHC(StepGameSimulation):
         super().__init__(game, max_steps)
         self.candidates = candidates
         self.tests = tests
+        self.game_metrics["cand"] = candidates.pop_metrics
+        self.game_metrics["test"] = tests.pop_metrics
 
     def init_sim(self) -> None:
         ''' creates populations of candidates and tests '''
@@ -164,6 +176,8 @@ class RandSampling(GameSimulation):
         super().__init__(game)
         self.cand_sample_size = cand_sample_size
         self.test_sample_size = test_sample_size
+        self.game_metrics["cand"] = {PARAM_MAX_INDS: cand_sample_size, PARAM_UNIQ_INDS: cand_sample_size}
+        self.game_metrics["test"] = {PARAM_MAX_INDS: test_sample_size, PARAM_UNIQ_INDS: test_sample_size}
 
     def get_candidates(self) -> list[Any]:
         return rnd.choice(self.game.get_all_candidates(), size = self.cand_sample_size, replace=False)
@@ -178,6 +192,8 @@ class CandidateTestInteractions(StepGameSimulation):
         self.candidates = candidates
         self.tests = tests
         self.candidates_first = True
+        self.game_metrics["cand"] = candidates.pop_metrics
+        self.game_metrics["test"] = tests.pop_metrics        
 
     def init_sim(self) -> None:
         self.candidates.init_inds()
@@ -217,6 +233,10 @@ class NumberGame(InteractionGame):
     def get_all_candidates(self) -> Any:
         return self.all_numbers    
     
+    def get_interaction_matrix(self):
+        ints = [[self.interact(num1, num2) for num2 in self.all_numbers] for num1 in self.all_numbers ]
+        return ints 
+    
 class IntransitiveGame(NumberGame):
     ''' The IG as it was stated in Bucci article '''
     def interact(self, candidate, test) -> int:
@@ -235,7 +255,7 @@ class FocusingGame(NumberGame):
 class CompareOnOneGame(NumberGame):
     ''' Game as it was stated in Golam article '''
     def interact(self, candidate, test) -> int:
-        ''' 1 - candidate is better thah test, 0 - test fails candidate '''
+        ''' 1 - candidate is better than test, 0 - test fails candidate '''
         max_pos = np.argmax(test)
         res = 1 if candidate[max_pos] >= test[max_pos] else 0
         return res
@@ -258,3 +278,54 @@ class CDESpaceGame(InteractionGame):
     def interact(self, candidate, test) -> int:
         ''' 1 - candidate wins, 0 - test wins '''
         return 0 if test in self.all_fails.get(candidate, set()) else 1
+    
+if __name__ == '__main__':
+    game = IntransitiveGame(0, 3)
+    ints = game.get_interaction_matrix()
+    dims, origin, spanned, duplicates = extract_dims(ints)
+    dim_nums = [[game.all_numbers[i] for i in dim] for dim in dims]
+    origin_nums = [game.all_numbers[i] for i in origin]
+    spanned_nums = [game.all_numbers[i] for i in spanned]
+    duplicates_nums = [game.all_numbers[i] for i in duplicates]
+    # for num, line in zip(game.all_numbers, ints):
+    #     print(f"{num}: {line}")
+
+    max_dim = max([len(dim) for dim in dim_nums])
+            
+    rows = []    
+    for dim_id, dim in enumerate(sorted(dims, key = lambda dim:game.all_numbers[dim[-1]])):
+        # print(f"Dim {dim_id}")
+        for i in dim:
+            # print(f"{game.all_numbers[i]}: {ints[i]}")
+            row = []
+            num = game.all_numbers[i]
+            row.append(dim_id)
+            row.append(f"{num[0]},{num[1]}")
+            row.extend(["" if o == 0 else 1 for o in ints[i]])
+            rows.append(row)    
+        rows.append(SEPARATING_LINE)
+    if len(origin) > 0:        
+        for num, i in zip(origin_nums, origin):
+            rows.append(["ORIG", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])
+        rows.append(SEPARATING_LINE)
+    if len(spanned) > 0:        
+        for num, i in zip(spanned_nums, spanned):
+            rows.append(["SPAN", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])        
+        rows.append(SEPARATING_LINE)
+    if len(duplicates) > 0:        
+        for num, i in zip(duplicates_nums, duplicates):
+            rows.append(["DUPL", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])        
+        rows.append(SEPARATING_LINE)
+    int_rows = [["", f"{n[0]},{n[1]}", *["" if o == 0 else 1 for o in ind_ints]] for i, ind_ints in enumerate(ints) for n in [game.all_numbers[i]]]
+    int_headers = ["   ", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]]
+    with open('ints_' + game.__class__.__name__ + ".txt", "w") as f:    
+        print(f"Interactions of {game.__class__.__name__}", file=f)
+        print(tabulate(int_rows, headers=int_headers, tablefmt = "simple", numalign="center", stralign="center"), file=f)
+        print("\n", file=f)
+        print(f"Dims: {len(dim_nums)}, points={max_dim} Origin: {len(origin_nums)} Spanned: {len(spanned_nums)} Duplicates: {len(duplicates_nums)}", file=f)
+        print(tabulate(rows, headers=["dim", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]], tablefmt='simple', numalign="center", stralign="center"), file=f)
+    # print(f"{game.all_numbers}")
+
+    # print(f"Spanned")
+    # for i in spanned:
+    #     print(f"{game.all_numbers[i]}: {ints[i]}")

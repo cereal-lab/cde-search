@@ -6,7 +6,7 @@ from abc import abstractmethod
 from collections import deque
 from math import sqrt
 from typing import Any
-from params import rnd
+from params import rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS
 
 class Population:
     ''' Base class for population of candidates/tests which defines different ways of breeding 
@@ -16,6 +16,8 @@ class Population:
         self.size = popsize 
         self.population = [] #first call of get_inds should initialize
         self.all_inds = all_inds #pool of all possible individuals
+        self.pop_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
+        self.seen_inds = set()
 
     def get_inds(self, **filters) -> list[Any]:
         return self.population
@@ -86,6 +88,10 @@ class HCPopulation(Population):
         self.population = rnd.choice(len(self.all_inds), size = self.size, replace=False)
         self.children = [self.mutation_strategy(parent_index) for parent_index in self.population]
 
+        self.pop_metrics[PARAM_MAX_INDS] += 2 * self.size
+        self.seen_inds.update(self.population, self.children)
+        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
+
     def get_inds(self, *, only_parents = False, only_children = False, **filters) -> list[Any]:        
         return [self.all_inds[i] for group in [([] if only_children else self.population), [] if only_parents else self.children] 
                     for i in group]
@@ -102,6 +108,10 @@ class HCPopulation(Population):
         selected = [ self.selection_strategy(i, ints) for i, ints in enumerate(all_ints)]
         self.population = selected 
         self.children = [self.mutation_strategy(parent_index) for parent_index in self.population]
+        
+        self.pop_metrics[PARAM_MAX_INDS] += 2 * self.size
+        self.seen_inds.update(self.population, self.children)
+        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
 
 class Sample(Population):
     ''' Population is a sample from interaction matrix '''
@@ -148,6 +158,9 @@ class Sample(Population):
             return self.population
         self.for_group = for_group #adjusts sampling by avoiding repetitions of interactions - smaller chance to interruct again
         self.population = self.sample_inds()
+        self.pop_metrics[PARAM_MAX_INDS] += self.size
+        self.seen_inds.update(self.population)
+        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
         return self.population
         
 class SamplingStrategySample(Sample):
