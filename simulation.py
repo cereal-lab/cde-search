@@ -15,13 +15,12 @@
 
 import json
 import click
-import numpy as np
 from cde import CDESpace
 from config import CONFIG, GAME_GROUPS, SIM_GROUPS
-from games import CDESpaceGame, GameSimulation, InteractionGame 
+from games import GameSimulation, InteractionGame 
 from params import param_seed
 import fcntl
-import numpy as np
+import time
 
 @click.group()
 def cli():
@@ -123,13 +122,15 @@ def run_game(id, times = 1, metrics = ""):
     sim : GameSimulation = sim_builder(game)
     for i in range(times): 
         sim.play()
-        metric_data = {"config_id": id, "sim_name": sim_name, "game_name":game_name, "i": i,
-                                "seed": param_seed, **sim.game_metrics}
+        timestamp = int(time.time())
+        metric_data = {"config_id": id, "sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": timestamp,
+                            "params":{"seed": param_seed, **game.game_params, **sim.sim_params}, **sim.game_metrics}
         click.echo(f"{metrics}")
         with open(metrics, "a") as f:                
             fcntl.flock(f, fcntl.LOCK_EX)
-            f.writelines([metric_data + "\n"])
+            f.write(json.dumps(metric_data) + "\n")
             fcntl.flock(f, fcntl.LOCK_UN)
             
 if __name__ == '__main__':
+    ''' Entry for running games and collecting data '''
     cli()

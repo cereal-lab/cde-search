@@ -12,12 +12,15 @@ class Population:
     ''' Base class for population of candidates/tests which defines different ways of breeding 
         and going to next generation
     '''            
-    def __init__(self, all_inds: list[Any], popsize) -> None:
+    def __init__(self, all_inds: list[Any], popsize, **kwargs) -> None:
         self.size = popsize 
         self.population = [] #first call of get_inds should initialize
         self.all_inds = all_inds #pool of all possible individuals
         self.pop_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
+        self.pop_params = {"size": popsize}
+        for k,v in kwargs.items():
+            self.pop_params[k] = v
 
     def get_inds(self, **filters) -> list[Any]:
         return self.population
@@ -40,7 +43,7 @@ class HCPopulation(Population):
     def __init__(self, all_inds: list[Any], popsize,
                     mutation = "plus_minus_one", 
                     selection = "pareto_select", **kwargs) -> None:
-        super().__init__(all_inds, popsize)
+        super().__init__(all_inds, popsize, **kwargs)
         self.mutation_strategy = getattr(self, mutation)
         self.selection_strategy = getattr(self, selection)
 
@@ -115,8 +118,8 @@ class HCPopulation(Population):
 
 class Sample(Population):
     ''' Population is a sample from interaction matrix '''
-    def __init__(self, all_inds: list[Any], size:int) -> None:
-        super().__init__(all_inds, size)
+    def __init__(self, all_inds: list[Any], size:int, **kwargs) -> None:
+        super().__init__(all_inds, size, kwargs)
         self.total_interaction_count = 0
         self.t = 0
 
@@ -168,7 +171,7 @@ class SamplingStrategySample(Sample):
     def __init__(self, all_inds: list[Any], size: int,
                     strategy = None, epsilon = None, softmax = None, tau = 1,
                     **kwargs) -> None:
-        super().__init__(all_inds, size)
+        super().__init__(all_inds, size, **{"strategy":strategy, "epsilon": epsilon, "softmax": softmax, "tau": tau, **kwargs})
         self.strategy = strategy
         self.epsilon = epsilon
         self.softmax = softmax
@@ -336,7 +339,7 @@ class ParetoGraphSample(Sample):
     def __init__(self, all_inds: list[Any], size: int,
                     rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8,
                     **kwargs) -> None:
-        super().__init__(all_inds, size)
+        super().__init__(all_inds, size, **{"rank_penalty":rank_penalty, "min_exploitation_chance": min_exploitation_chance, "max_exploitation_chance": max_exploitation_chance, **kwargs})
         self.rank_penalty = rank_penalty
         self.min_exploitation_chance = min_exploitation_chance
         self.max_exploitation_chance = max_exploitation_chance
@@ -476,7 +479,7 @@ class ACOPopulation(Sample):
     '''
     def __init__(self, all_inds: list[Any], size: int,
                     pheromone_decay = 0.8, dom_bonus = 1, span_penalty = 0.25, **kwargs) -> None:
-        super().__init__(all_inds, size)
+        super().__init__(all_inds, size, **{"pheromone_decay":pheromone_decay, "dom_bonus": dom_bonus, "span_penalty": span_penalty, **kwargs})
         self.pheromones = {}
         self.pheromone_decay = pheromone_decay
         self.dom_bonus = dom_bonus

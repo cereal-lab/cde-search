@@ -23,6 +23,9 @@ class InteractionGame(ABC):
     ''' Base class that encapsulates representation of candidates/tests and their interactions 
         Candidates and tests are implemented as finite sets! 
     '''
+    def __init__(self) -> None:
+        self.game_params = {}
+
     @abstractmethod
     def get_all_candidates(self) -> list[Any]:
         pass 
@@ -44,6 +47,9 @@ class InteractionGame(ABC):
         ''' defines in metrics how close we are to metrics '''
         pass    
 
+    def get_game_params() -> dict:
+        return {}
+
 class GameSimulation(ABC):
     ''' Abstract game of candidates and tests where interactions happen by given CDESpace or rule '''
     def __init__(self, game: InteractionGame) -> None:
@@ -54,6 +60,7 @@ class GameSimulation(ABC):
         all_cands = game.get_all_candidates()
         all_tests = game.get_all_tests()
         self.game_metrics = {PARAM_MAX_INTS: len(all_cands) * len(all_tests), PARAM_UNIQ_INTS: 0, PARAM_INTS: 0}
+        self.sim_params = {}    
 
     def play(self):
         ''' Executes game, final state defines found candidates and tests '''
@@ -95,6 +102,7 @@ class StepGameSimulation(GameSimulation):
         super().__init__(game)
         self.max_steps = max_steps
         self.step = 0
+        self.sim_params["param_max_steps"] = max_steps
 
     @abstractmethod
     def init_sim(self) -> None:
@@ -125,6 +133,7 @@ class PCHC(StepGameSimulation):
         self.population = population
         self.game_metrics["cand"] = population.pop_metrics
         self.seen_inds = set()
+        self.sim_params["pop_params"] = population.pop_params
 
     def init_sim(self) -> None:
         self.population.init_inds()
@@ -155,6 +164,8 @@ class PPHC(StepGameSimulation):
         self.tests = tests
         self.game_metrics["cand"] = candidates.pop_metrics
         self.game_metrics["test"] = tests.pop_metrics
+        self.sim_params["cand_params"] = candidates.pop_params
+        self.sim_params["test_params"] = tests.pop_params
 
     def init_sim(self) -> None:
         ''' creates populations of candidates and tests '''
@@ -208,6 +219,8 @@ class RandSampling(GameSimulation):
         self.test_sample_size = test_sample_size
         self.game_metrics["cand"] = {PARAM_MAX_INDS: cand_sample_size, PARAM_UNIQ_INDS: cand_sample_size}
         self.game_metrics["test"] = {PARAM_MAX_INDS: test_sample_size, PARAM_UNIQ_INDS: test_sample_size}
+        self.sim_params["cand_params"] = {"size": cand_sample_size}
+        self.sim_params["test_params"] = {"size": test_sample_size}
 
     def get_candidates(self) -> list[Any]:
         return rnd.choice(self.game.get_all_candidates(), size = self.cand_sample_size, replace=False)
@@ -223,7 +236,9 @@ class CandidateTestInteractions(StepGameSimulation):
         self.tests = tests
         self.candidates_first = True
         self.game_metrics["cand"] = candidates.pop_metrics
-        self.game_metrics["test"] = tests.pop_metrics        
+        self.game_metrics["test"] = tests.pop_metrics  
+        self.sim_params["cand_params"] = candidates.pop_params
+        self.sim_params["test_params"] = tests.pop_params              
 
     def init_sim(self) -> None:
         self.candidates.init_inds()
@@ -268,10 +283,15 @@ class NumberGame(InteractionGame):
         Change is +-1 random per dimension
     '''
     def __init__(self, min_num = param_min_num, max_num = param_max_num, **kwargs) -> None:
+        super().__init__()
         nums = list(range(min_num, max_num + 1))
         self.all_numbers = list(product(nums, nums))
         self.min_num = min_num
         self.max_num = max_num
+        self.game_params["min_num"] = min_num
+        self.game_params["max_num"] = max_num
+        for k,v in kwargs.items():
+            self.game_params[k] = v
 
     def get_all_candidates(self) -> Any:
         return self.all_numbers    
@@ -414,6 +434,7 @@ class CDESpaceGame(InteractionGame):
         self.candidates = sorted(space.get_candidates())
         self.tests = sorted(space.get_tests())
         self.all_fails = space.get_candidate_fails()
+        self.game_params["space"] = space.to_dict()            
 
     def get_all_candidates(self) -> Any:
         return self.candidates
@@ -442,6 +463,9 @@ class CDESpaceGame(InteractionGame):
                 metrics[k] = v
     
 if __name__ == '__main__':
+    ''' This entry is used currently only to figure out the CDE space of different number games 
+        TODO: probably move to separate function 
+    '''
     # game = IntransitiveRegionGame(1, 4, 0, 5)
     game = IntransitiveGame(0, 3)
     ints = game.get_interaction_matrix()
