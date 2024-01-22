@@ -9,9 +9,9 @@ from abc import ABC, abstractmethod
 from itertools import product
 from typing import Any
 from deca import extract_dims
-from population import Population
-from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY, PARAM_INTS,\
-        PARAM_MAX_INDS, PARAM_MAX_INTS, PARAM_UNIQ_INDS, PARAM_UNIQ_INTS, rnd, param_reg_min_num, param_reg_max_num,\
+from population import OneTimeSequential, Population
+from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
+        PARAM_MAX_INDS, PARAM_MAX_INTS, PARAM_UNIQ_INDS, rnd, param_reg_min_num, param_reg_max_num,\
         param_min_num, param_max_num
 from tabulate import tabulate, SEPARATING_LINE
 
@@ -24,7 +24,7 @@ class InteractionGame(ABC):
         Candidates and tests are implemented as finite sets! 
     '''
     def __init__(self) -> None:
-        self.game_params = {}
+        self.game_params = {"class": self.__class__.__name__}
 
     @abstractmethod
     def get_all_candidates(self) -> list[Any]:
@@ -43,7 +43,7 @@ class InteractionGame(ABC):
         ''' if True - forall c, t. interact(c, t) == 1 - interact(t, c) '''
         return False 
     
-    def update_game_metrics(self, inds, metrics, prefix = "", is_final = False):
+    def update_game_metrics(self, inds, metrics, is_final = False):
         ''' defines in metrics how close we are to metrics '''
         pass    
 
@@ -59,8 +59,8 @@ class GameSimulation(ABC):
         self.game = game
         all_cands = game.get_all_candidates()
         all_tests = game.get_all_tests()
-        self.game_metrics = {PARAM_MAX_INTS: len(all_cands) * len(all_tests), PARAM_UNIQ_INTS: 0, PARAM_INTS: 0}
-        self.sim_params = {}    
+        self.game_metrics = {PARAM_MAX_INTS: len(all_cands) * len(all_tests)}
+        self.sim_params = {"class": self.__class__.__name__}    
 
     def play(self):
         ''' Executes game, final state defines found candidates and tests '''
@@ -68,19 +68,15 @@ class GameSimulation(ABC):
 
     def interact_groups_into(self, group1, group2, ints, allow_self_interacts = True):
         for ind1 in group1:
-            for ind2 in group2:
-                self.game_metrics[PARAM_INTS] += 1
+            for ind2 in group2:                
                 if (allow_self_interacts or ind1 != ind2) and (ind1 not in ints or ind2 not in ints[ind1]):
                     ints.setdefault(ind1, {})[ind2] = self.game.interact(ind1, ind2)            
-                    self.game_metrics[PARAM_UNIQ_INTS] += 1
 
     def interact_groups_into_rev(self, group1, group2, ints, allow_self_interacts = True):
         for ind1 in group1:
             for ind2 in group2:
-                self.game_metrics[PARAM_INTS] += 1
                 if (allow_self_interacts or ind1 != ind2) and (ind1 not in ints or ind2 not in ints[ind1]):
                     ints.setdefault(ind1, {})[ind2] = 1 - self.game.interact(ind2, ind1)
-                    self.game_metrics[PARAM_UNIQ_INTS] += 1
 
     def transpose_ints(self, ints, into_ints):
         for c, t_ints in ints.items():
@@ -130,12 +126,11 @@ class PCHC(StepGameSimulation):
     '''
     def __init__(self, game: InteractionGame, max_steps, population: Population) -> None:
         super().__init__(game, max_steps)
-        self.population = population
-        self.game_metrics["cand"] = population.pop_metrics
-        self.seen_inds = set()
+        self.population = population        
         self.sim_params["pop_params"] = population.pop_params
+        self.game_metrics["cand"] = self.population.pop_metrics        
 
-    def init_sim(self) -> None:
+    def init_sim(self) -> None:        
         self.population.init_inds()
 
     def interact(self):
@@ -147,30 +142,41 @@ class PCHC(StepGameSimulation):
         if children is not parents:
             self.interact_groups_into(children, parents, ints, allow_self_interacts=False)
         self.population.update(ints)
-        self.game.update_game_metrics(parents, self.game_metrics, prefix = "prop_", is_final=False)
+        self.game.update_game_metrics(parents, self.population.pop_metrics, is_final=False)
 
     def end_sim(self) -> None:
         parents = self.population.get_inds(only_parents=True)
-        self.game.update_game_metrics(parents, self.game_metrics, prefix = "prop_", is_final=True)
+        self.game.update_game_metrics(parents, self.population.pop_metrics, is_final=True)
     
     def get_candidates(self) -> list[Any]:
         return self.population.get_inds(only_parents=True)
 
-class PPHC(StepGameSimulation):
-    ''' Implements P-PHC approach for number game with co-evolution of two populations of candidates and tests '''
+class TwoPopulationSimulation(StepGameSimulation):
+    ''' Adds common methods to implementations with self.candidates and self.tests populations '''
+
     def __init__(self, game: InteractionGame, max_steps, candidates: Population, tests: Population) -> None:
         super().__init__(game, max_steps)
         self.candidates = candidates
         self.tests = tests
-        self.game_metrics["cand"] = candidates.pop_metrics
-        self.game_metrics["test"] = tests.pop_metrics
-        self.sim_params["cand_params"] = candidates.pop_params
-        self.sim_params["test_params"] = tests.pop_params
-
+        self.game_metrics["cand"] = self.candidates.pop_metrics
+        self.game_metrics["test"] = self.tests.pop_metrics
+        self.sim_params["cand_params"] = self.candidates.pop_params
+        self.sim_params["test_params"] = self.tests.pop_params        
+        
     def init_sim(self) -> None:
         ''' creates populations of candidates and tests '''
         self.candidates.init_inds()
         self.tests.init_inds()
+
+    def update_game_goal_metrics(self, candidates, tests, is_final = False):
+        if type(self.candidates) is not OneTimeSequential:
+            self.game.update_game_metrics(candidates, self.candidates.pop_metrics, is_final=is_final)
+        if type(self.tests) is not OneTimeSequential:
+            self.game.update_game_metrics(tests, self.tests.pop_metrics, is_final=is_final)
+
+
+class PPHC(TwoPopulationSimulation):
+    ''' Implements P-PHC approach for number game with co-evolution of two populations of candidates and tests '''
 
     def interact(self):
         ''' plays one step interaction between populations of candidates and tests and their children '''
@@ -196,14 +202,12 @@ class PPHC(StepGameSimulation):
 
         self.candidates.update(candidate_ints)
         self.tests.update(test_ints)
-        self.game.update_game_metrics(candidate_parents, self.game_metrics, prefix = "cand_", is_final=False)
-        self.game.update_game_metrics(test_parents, self.game_metrics, prefix = "test_", is_final=False)
+        self.update_game_goal_metrics(candidate_parents, test_parents, is_final=False)
 
     def end_sim(self) -> None:
         candidate_parents = self.candidates.get_inds(only_parents = True)
         test_parents = self.tests.get_inds(only_parents=True)
-        self.game.update_game_metrics(candidate_parents, self.game_metrics, prefix = "cand_", is_final=True)
-        self.game.update_game_metrics(test_parents, self.game_metrics, prefix = "test_", is_final=True)        
+        self.update_game_goal_metrics(candidate_parents, test_parents, is_final=True)
 
     def get_candidates(self) -> list[Any]:
         return self.candidates.get_inds(only_parents=True)
@@ -228,21 +232,11 @@ class RandSampling(GameSimulation):
     def get_tests(self) -> list[Any]:
         return rnd.choice(self.game.get_all_tests(), size = self.test_sample_size, replace=False)    
 
-class CandidateTestInteractions(StepGameSimulation):
+class CandidateTestInteractions(TwoPopulationSimulation):
     ''' Base class for different sampling approaches based on interaction matrix '''
-    def __init__(self, game: InteractionGame, max_steps, candidates: Population, tests: Population) -> None:
-        super().__init__(game, max_steps)
-        self.candidates = candidates
-        self.tests = tests
-        self.candidates_first = True
-        self.game_metrics["cand"] = candidates.pop_metrics
-        self.game_metrics["test"] = tests.pop_metrics  
-        self.sim_params["cand_params"] = candidates.pop_params
-        self.sim_params["test_params"] = tests.pop_params              
-
     def init_sim(self) -> None:
-        self.candidates.init_inds()
-        self.tests.init_inds()
+        super().init_sim()        
+        self.candidates_first = True
 
     def interact(self):
         if self.candidates_first:
@@ -261,14 +255,12 @@ class CandidateTestInteractions(StepGameSimulation):
             self.interact_groups_into(tests, candidates, test_ints)
         self.candidates.update(candidate_ints)
         self.tests.update(test_ints)
-        self.game.update_game_metrics(candidates, self.game_metrics, prefix = "cand_", is_final=False)
-        self.game.update_game_metrics(tests, self.game_metrics, prefix = "test_", is_final=False)        
+        self.update_game_goal_metrics(candidates, tests, is_final=False)
 
     def end_sim(self) -> None:
         candidates = self.candidates.get_inds() 
         tests = self.tests.get_inds()
-        self.game.update_game_metrics(candidates, self.game_metrics, prefix = "cand_", is_final=True)
-        self.game.update_game_metrics(tests, self.game_metrics, prefix = "test_", is_final=True)
+        self.update_game_goal_metrics(candidates, tests, is_final=True)
 
     def get_candidates(self) -> list[Any]:
         return self.candidates.get_inds()
@@ -308,32 +300,41 @@ class IntransitiveGame(NumberGame):
         res = 1 if (abs_diffs[0] > abs_diffs[1] and candidate[1] > test[1]) or (abs_diffs[1] > abs_diffs[0] and candidate[0] > test[0]) else 0
         return res
     
-    def update_game_metrics(self, numbers, metrics, prefix = "", is_final = False):
+    def is_in_range(self, n):
+        return True
+    
+    def update_game_metrics(self, numbers, metrics, is_final = False):
         ''' the goal of this game is to check how diverse the numbers are 
             check ints_ of this game - almost each number is uniq dim/underlying objective
             returns in metrics the percent of underlying objectives
         '''
-        uniq_nums = set(numbers)
+        uniq_nums = set([n for n in numbers if self.is_in_range(n)])
         delta = 0
         if (self.max_num, self.max_num) in uniq_nums and (self.max_num - 1, self.max_num - 1) in uniq_nums:
             delta -= 1 
         if (self.min_num, self.min_num) in uniq_nums:
             delta -= 1 
         goal = (len(uniq_nums) + delta) / len(numbers)
-        metrics[prefix + PARAM_GAME_GOAL] = goal
-        story = metrics.setdefault(prefix + PARAM_GAME_GOAL_STORY, [])
+        metrics[PARAM_GAME_GOAL] = goal        
+        # dim1 = 0 if len(uniq_nums) == 0 else round(sum(c[0] for c in uniq_nums) / len(uniq_nums))
+        # dim2 = 0 if len(uniq_nums) == 0 else round(sum(c[1] for c in uniq_nums) / len(uniq_nums))
+        # metrics["game_goal_1"] = dim1        
+        # metrics["game_goal_2"] = dim2
+        story = metrics.setdefault(PARAM_GAME_GOAL_STORY, [])
         story.append(goal)
+        # metrics.setdefault("game_goal_1_story", []).append(dim1)
+        # metrics.setdefault("game_goal_2_story", []).append(dim2)
         if goal > 0.9:
-            metrics[prefix + PARAM_GAME_GOAL_MOMENT] = len(story)
+            metrics[PARAM_GAME_GOAL_MOMENT] = len(story)
         if is_final:
-            metrics[prefix + "sample"] = numbers
+            metrics["sample"] = numbers
     
 class IntransitiveRegionGame(IntransitiveGame):
     ''' As IG but only applies IG rule in small region, subject for search
         All other points repond with 0 - no-information
     '''
     def __init__(self, reg_min_num = param_reg_min_num, reg_max_num = param_reg_max_num, **kwargs) -> None:
-        super().__init__(**kwargs)
+        super().__init__(**{"reg_min_num":reg_min_num, "reg_max_num":reg_max_num, **kwargs})
         self.reg_min_num = reg_min_num
         self.reg_max_num = reg_max_num
 
@@ -346,85 +347,45 @@ class IntransitiveRegionGame(IntransitiveGame):
         if self.is_in_range(candidate) and self.is_in_range(test):
             return super().interact(candidate, test)
         else:
-            return 0
-        
-    def update_game_metrics(self, numbers, metrics, prefix = "", is_final = False):
-        ''' the goal of this game is to check how diverse the numbers are 
-            check ints_ of this game - almost each number is uniq dim/underlying objective
-        '''
-        uniq_nums = set([n for n in numbers if self.is_in_range(n)])
-        delta = 0
-        if (self.reg_max_num, self.reg_max_num) in uniq_nums and (self.reg_max_num - 1, self.reg_max_num - 1) in uniq_nums:
-            delta -= 1 
-        if (self.reg_min_num, self.reg_min_num) in uniq_nums:
-            delta -= 1 
-        goal = (len(uniq_nums) + delta) / len(numbers)
-        metrics[prefix + PARAM_GAME_GOAL] = goal
-        story = metrics.setdefault(prefix + PARAM_GAME_GOAL_STORY, [])
-        story.append(goal)
-        if goal > 0.9:
-            metrics[prefix + PARAM_GAME_GOAL_MOMENT] = len(story)
-        if is_final:
-            metrics[prefix + "sample"] = numbers            
+            return 0             
 
-class FocusingGame(NumberGame):
+class TwoGoalsMixin:
+    def update_game_metrics(self, numbers, metrics, is_final = False):
+        ''' the goal of this game is to focus on two axes (0, max_dim) and (max_dim, 0)
+            Check ints_ file of this game to understand thee structure of underelying objectives
+            We compute average distance to either of two objectives. But two objectives should be discovered
+        '''
+        goals = [(0, self.max_num), (self.max_num, 0)]
+        goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
+        number_goals = [np.argmin(n) for n in goal_dists]
+        numbers_by_goals = [[], []]
+        for goal_id, dists in zip(number_goals, goal_dists):
+            numbers_by_goals[goal_id].append(dists[goal_id])
+        goal_scores = [min(gd, default=self.max_num) for gd in numbers_by_goals]
+        score = sum(goal_scores) / len(goal_scores)
+        metrics["game_goal_1"] = goal_scores[0]
+        metrics["game_goal_2"] = goal_scores[1]
+        metrics.setdefault("game_goal_1_story", []).append(goal_scores[0])
+        metrics.setdefault("game_goal_2_story", []).append(goal_scores[1])
+        metrics[PARAM_GAME_GOAL] = score #smaller is better
+        metrics.setdefault(PARAM_GAME_GOAL_STORY, []).append(score)
+        if is_final:
+            metrics["sample"] = numbers
+
+class FocusingGame(NumberGame, TwoGoalsMixin):
     ''' The FG as it was stated in Bucci article '''
     def interact(self, candidate, test) -> int:
         ''' 1 - candidate is better thah test, 0 - test fails candidate '''
         res = 1 if (test[0] > test[1] and candidate[0] > test[0]) or (test[1] > test[0] and candidate[1] > test[1]) else 0
         return res
     
-    def update_game_metrics(self, numbers, metrics, prefix = "", is_final = False):
-        ''' the goal of this game is to focus on two axes (0, max_dim) and (max_dim, 0)
-            Check ints_ file of this game to understand thee structure of underelying objectives
-            We compute average distance to either of two objectives. But two objectives should be discovered
-        '''
-        goals = [(0, self.max_num), (self.max_num, 0)]
-        goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
-        number_goals = [np.argmin(n) for n in goal_dists]
-        numbers_by_goals = [[], []]
-        for goal_id, dists in zip(number_goals, goal_dists):
-            numbers_by_goals[goal_id].append(dists[goal_id])
-        goal_scores = [min(gd, default=self.max_num) for gd in numbers_by_goals]
-        score = sum(goal_scores) / len(goal_scores)
-        metrics[prefix + "game_goal_1"] = goal_scores[0]
-        metrics[prefix + "game_goal_2"] = goal_scores[1]
-        metrics.setdefault(prefix + "game_goal_1_story", []).append(goal_scores[0])
-        metrics.setdefault(prefix + "game_goal_2_story", []).append(goal_scores[1])
-        metrics[prefix + PARAM_GAME_GOAL] = score #smaller is better
-        metrics.setdefault(prefix + PARAM_GAME_GOAL_STORY, []).append(score)
-        if is_final:
-            metrics[prefix + "sample"] = numbers        
-    
-class CompareOnOneGame(NumberGame):
+class CompareOnOneGame(NumberGame, TwoGoalsMixin):
     ''' Game as it was stated in Golam article '''
     def interact(self, candidate, test) -> int:
         ''' 1 - candidate is better than test, 0 - test fails candidate '''
         max_pos = np.argmax(test)
         res = 1 if candidate[max_pos] >= test[max_pos] else 0
         return res
-    
-    def update_game_metrics(self, numbers, metrics, prefix = "", is_final = False):
-        ''' the goal of this game is to focus on two axes (0, max_dim) and (max_dim, 0)
-            Check ints_ file of this game to understand thee structure of underelying objectives
-            We compute average distance to either of two objectives. But two objectives should be discovered
-        '''
-        goals = [(0, self.max_num), (self.max_num, 0)]
-        goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
-        number_goals = [np.argmin(n) for n in goal_dists]
-        numbers_by_goals = [[], []]
-        for goal_id, dists in zip(number_goals, goal_dists):
-            numbers_by_goals[goal_id].append(dists[goal_id])
-        goal_scores = [min(gd, default=self.max_num) for gd in numbers_by_goals]
-        score = sum(goal_scores) / len(goal_scores)
-        metrics[prefix + "game_goal_1"] = goal_scores[0]
-        metrics[prefix + "game_goal_2"] = goal_scores[1]
-        metrics.setdefault(prefix + "game_goal_1_story", []).append(goal_scores[0])
-        metrics.setdefault(prefix + "game_goal_2_story", []).append(goal_scores[1])
-        metrics[prefix + PARAM_GAME_GOAL] = score #smaller is better
-        metrics.setdefault(prefix + PARAM_GAME_GOAL_STORY, []).append(score)   
-        if is_final:
-            metrics[prefix + "sample"] = numbers        
     
 # game that is based on CDESpace 
 class CDESpaceGame(InteractionGame):
@@ -449,16 +410,15 @@ class CDESpaceGame(InteractionGame):
         ''' 1 - candidate wins, 0 - test wins '''
         return 0 if test in self.all_fails.get(candidate, set()) else 1
     
-    def update_game_metrics(self, tests, metrics: dict, prefix = "", is_final = False):
+    def update_game_metrics(self, tests, metrics: dict, is_final = False):
         ''' Update game metrics with space metrics. '''
-        if is_final and prefix == "test_":
+        if is_final:
             DC = self.space.dimension_coverage(tests)
             ARR, ARRA = self.space.avg_rank_of_repr(tests)
             Dup = self.space.duplication(tests)
             R = self.space.redundancy(tests)
             nonI = self.space.noninformative(tests)
-            metric_data = { "DC": DC, "ARR": ARR, "ARRA": ARRA, "Dup": Dup, "R": R, "nonI": nonI,
-                            "sample": [ int(t) if type(t) is np.int64 else t for t in tests ]}
+            metric_data = { "DC": DC, "ARR": ARR, "ARRA": ARRA, "Dup": Dup, "R": R, "nonI": nonI, "sample": tests}
             for k, v in metric_data.items():
                 metrics[k] = v
     
@@ -503,8 +463,8 @@ if __name__ == '__main__':
         for num, i in zip(duplicates_nums, duplicates):
             rows.append(["DUPL", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])        
         rows.append(SEPARATING_LINE)
-    int_rows = [["", f"{n[0]},{n[1]}", *["" if o == 0 else 1 for o in ind_ints]] for i, ind_ints in enumerate(ints) for n in [game.all_numbers[i]]]
-    int_headers = ["   ", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]]
+    int_rows = [[sum(ind_ints), f"{n[0]},{n[1]}", *["" if o == 0 else 1 for o in ind_ints]] for i, ind_ints in enumerate(ints) for n in [game.all_numbers[i]]]
+    int_headers = ["win", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]]
     with open('ints_' + game.__class__.__name__ + ".txt", "w") as f:    
         print(f"Interactions of {game.__class__.__name__}", file=f)
         print(tabulate(int_rows, headers=int_headers, tablefmt = "simple", numalign="center", stralign="center"), file=f)

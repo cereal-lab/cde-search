@@ -21,6 +21,7 @@ from games import GameSimulation, InteractionGame
 from params import param_seed
 import fcntl
 import time
+import numpy as np
 
 @click.group()
 def cli():
@@ -109,6 +110,18 @@ def gen_space(axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [
             f.writelines([space.to_json() + "\n"])
     return space
 
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        return super(NpEncoder, self).default(obj)
+    
 @cli.command("game")
 @click.option("-id", type = int, required = True)
 @click.option('--times', type=int, default = 1)
@@ -121,14 +134,16 @@ def run_game(id, times = 1, metrics = ""):
     game : InteractionGame = game_builder() #no kwargs? - see params.py for defaults
     sim : GameSimulation = sim_builder(game)
     for i in range(times): 
+        start_ms = int(time.time() * 1000)
         sim.play()
-        timestamp = int(time.time())
-        metric_data = {"config_id": id, "sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": timestamp,
-                            "params":{"seed": param_seed, **game.game_params, **sim.sim_params}, **sim.game_metrics}
-        click.echo(f"{metrics}")
+        end_ms = int(time.time() * 1000)
+        metric_data = {"config_id": id, "sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
+                            "duration_ms": end_ms - start_ms,
+                            "params":{"seed": param_seed, "game":game.game_params, "sim":sim.sim_params}, **sim.game_metrics}
+        click.echo(f"{metric_data}")
         with open(metrics, "a") as f:                
             fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps(metric_data) + "\n")
+            f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
             fcntl.flock(f, fcntl.LOCK_UN)
             
 if __name__ == '__main__':

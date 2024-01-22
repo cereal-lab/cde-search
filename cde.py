@@ -33,7 +33,6 @@
 from itertools import product
 import json
 from math import prod
-import numpy as np
 
 class JSONSerializable:
     def to_json(self):

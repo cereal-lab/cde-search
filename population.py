@@ -6,7 +6,7 @@ from abc import abstractmethod
 from collections import deque
 from math import sqrt
 from typing import Any
-from params import rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS
+from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, param_steps
 
 class Population:
     ''' Base class for population of candidates/tests which defines different ways of breeding 
@@ -15,12 +15,12 @@ class Population:
     def __init__(self, all_inds: list[Any], popsize, **kwargs) -> None:
         self.size = popsize 
         self.population = [] #first call of get_inds should initialize
+        self.interactions = {}
+        self.total_interaction_count = 0
         self.all_inds = all_inds #pool of all possible individuals
         self.pop_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
-        self.pop_params = {"size": popsize}
-        for k,v in kwargs.items():
-            self.pop_params[k] = v
+        self.pop_params = {"size": popsize, "class":self.__class__.__name__, **kwargs}
 
     def get_inds(self, **filters) -> list[Any]:
         return self.population
@@ -28,13 +28,25 @@ class Population:
     def get_all_inds(self) -> list[Any]:
         return self.all_inds
 
-    @abstractmethod 
     def init_inds(self) -> None:
-        pass 
+        self.interactions = {}
+        self.total_interaction_count = 0
+        self.pop_metrics[PARAM_UNIQ_INDS] = 0
+        self.pop_metrics[PARAM_MAX_INDS] = 0
+        self.seen_inds = set()
 
-    @abstractmethod
+    def merge_interactions(self, interactions: dict[Any, dict[Any, int]]) -> None:
+        for ind, ints in interactions.items():                        
+            ind_ints = self.interactions.setdefault(ind, {})
+            self.pop_metrics[PARAM_INTS] = self.pop_metrics.get(PARAM_INTS, 0) + len(ints)
+            for t, outcome in ints.items():
+                if t not in ind_ints:
+                    self.total_interaction_count += 1
+                ind_ints[t] = outcome
+        self.pop_metrics[PARAM_UNIQ_INTS] = self.total_interaction_count        
+
     def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
-        pass 
+        self.merge_interactions(interactions)
 
 class HCPopulation(Population):
     ''' Population that evolves with parent-child hill climbing
@@ -43,7 +55,7 @@ class HCPopulation(Population):
     def __init__(self, all_inds: list[Any], popsize,
                     mutation = "plus_minus_one", 
                     selection = "pareto_select", **kwargs) -> None:
-        super().__init__(all_inds, popsize, **kwargs)
+        super().__init__(all_inds, popsize, **{"mutation":mutation, "selection":selection, **kwargs})
         self.mutation_strategy = getattr(self, mutation)
         self.selection_strategy = getattr(self, selection)
 
@@ -74,7 +86,7 @@ class HCPopulation(Population):
         ''' selection based on ninformativeness score aggregation '''
         def informativeness_score(ints: list[int]):
             ''' counts pairs of interactions of same outcome '''
-            return len(1 for i in range(len(ints)) for j in range(i+1, len(ints)) if ints[i] == ints[j])
+            return sum(1 for i in range(len(ints)) for j in range(i+1, len(ints)) if ints[i] == ints[j])
         common_ints = [(co, po) for co, po in all_ints if co is not None and po is not None]
         parent_informativeness = informativeness_score([o for _, o in common_ints])
         child_informativeness = informativeness_score([o for o, _ in common_ints])
@@ -88,6 +100,7 @@ class HCPopulation(Population):
         return ind
 
     def init_inds(self) -> None:
+        super().init_inds()
         self.population = rnd.choice(len(self.all_inds), size = self.size, replace=False)
         self.children = [self.mutation_strategy(parent_index) for parent_index in self.population]
 
@@ -100,6 +113,7 @@ class HCPopulation(Population):
                     for i in group]
 
     def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+        super().update(interactions)
         parents = [self.all_inds[i] for i in self.population]
         children = [self.all_inds[i] for i in self.children]
         parent_ints = [interactions.get(p, {}) for p in parents]
@@ -109,8 +123,11 @@ class HCPopulation(Population):
                         for all_int_keys in [ set([*p_ints.keys(), *c_ints.keys()]) ] ]
         
         selected = [ self.selection_strategy(i, ints) for i, ints in enumerate(all_ints)]
+        num_changes = sum(1 for s, p in zip(selected, self.population) if s != p)
+        self.pop_metrics.setdefault(PARAM_IND_CHANGES_STORY, []).append(num_changes)
         self.population = selected 
         self.children = [self.mutation_strategy(parent_index) for parent_index in self.population]
+        
         
         self.pop_metrics[PARAM_MAX_INDS] += 2 * self.size
         self.seen_inds.update(self.population, self.children)
@@ -119,8 +136,7 @@ class HCPopulation(Population):
 class Sample(Population):
     ''' Population is a sample from interaction matrix '''
     def __init__(self, all_inds: list[Any], size:int, **kwargs) -> None:
-        super().__init__(all_inds, size, kwargs)
-        self.total_interaction_count = 0
+        super().__init__(all_inds, size, **kwargs)        
         self.t = 0
 
     @abstractmethod
@@ -128,21 +144,14 @@ class Sample(Population):
         pass
 
     def init_inds(self) -> None:
-        self.interactions = {}
+        super().init_inds()        
         self.population = None #self.sample_inds()
         self.for_group = None
-
-    def merge_interactions(self, interactions: dict[Any, dict[Any, int]]) -> None:
-        for ind, ints in interactions.items():
-            ind_ints = self.interactions.setdefault(ind, {})
-            for t, outcome in ints.items():
-                if t not in ind_ints:
-                    self.total_interaction_count += 1
-                ind_ints[t] = outcome
-        self.t += 1
+        self.t = 0
 
     def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
-        self.merge_interactions(interactions)        
+        super().update(interactions)        
+        self.t += 1  
         self.population = None
 
     def get_same_interactions_percent(self):
@@ -150,10 +159,10 @@ class Sample(Population):
             This method computes the percent of given group in self.for_group with already present interactions
             It is up to concrete population how to handle same interactions (current simulations assume uselessness of such interactions)
         '''
-        scores = {ind: len(existing) / len(self.for_group)
+        scores = {ind: existing / len(self.for_group)
                     for ind in self.all_inds for ind_ints in [self.interactions.get(ind, {})]
-                    for existing in [len(t for t in self.for_group if t in ind_ints)]
-                    if len(existing) > 0}
+                    for existing in [sum(1 for t in self.for_group if t in ind_ints)]
+                    if existing > 0}
         return scores 
 
     def get_inds(self, *, for_group = [], **filters) -> list[Any]:
@@ -222,18 +231,6 @@ class SamplingStrategySample(Sample):
                                     for ind_cfs in [[(ind_outcome, ind1_outcome) for _, (ind_outcome, ind1_outcome) in ints.items() if ind_outcome == 1]] 
                                     if len(ind_cfs) >= 1 and all(ind_outcome == ind1_outcome for (ind_outcome, ind1_outcome) in ind_cfs))
 
-        # selected_dominated = [did1 for did1 in selected_inds if did1 in dominated]
-
-        # spanned_of_selected = any((did1, did2) for did1 in selected_dominated
-        #                 for did2 in selected_dominated if did2 != did1 
-        #                 for did1_interactions in [self.inverted_interactions.get(int(did1), {})]
-        #                 for did2_interactions in [self.inverted_interactions.get(int(did2), {})]
-        #                 for interactions in [{sid: (did1_interactions[sid], did2_interactions[sid]) 
-        #                     for sid in set.intersection(set(did1_interactions.keys()), set(did2_interactions.keys()))}]
-        #                 if len(interactions) >= 2 and
-        #                     any(did1_outcome > did2_outcome for _, (did1_outcome, did2_outcome) in interactions.items()) and 
-        #                     any(did2_outcome > did1_outcome for _, (did1_outcome, did2_outcome) in interactions.items()))
-
         #NOTE: spanned_of_selected vs spanned: spanned is peramnent while spanned_of_selected is only temporary block
 
         non_domination_score = len(non_dominated) / max(len(self.interactions), 1)
@@ -289,9 +286,9 @@ class SamplingStrategySample(Sample):
             key_selector = self.build_selector(i_key_spec)
             ind_scores = [ {"ind": ind, "scores": scores, "key": key_selector(scores) }
                                     for ind in self.all_inds if ind not in selected and ind not in excluded
-                                    for scores in [{**self.calc_knowledge_score(ind, selected, self.interactions), 
-                                                    **self.calc_domination_score(ind, selected, self.interactions), 
-                                                    **self.calc_complexity_score(ind, selected, self.interactions)}]]
+                                    for scores in [{**self.calc_knowledge_score(ind, selected), 
+                                                    **self.calc_domination_score(ind, selected), 
+                                                    **self.calc_complexity_score(ind, selected)}]]
             # (s * seens_interaction_penalties.get(ind, 1) for s in 
             sorted_inds = sorted(ind_scores, key=lambda x: x["key"], reverse=True)
             if len(sorted_inds) == 0:
@@ -337,12 +334,13 @@ class ParetoGraphSample(Sample):
         There should be normalization of weights in range of [0, 1] before further use in calc of probs
     '''
     def __init__(self, all_inds: list[Any], size: int,
-                    rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8,
+                    rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8, max_step = param_steps,
                     **kwargs) -> None:
-        super().__init__(all_inds, size, **{"rank_penalty":rank_penalty, "min_exploitation_chance": min_exploitation_chance, "max_exploitation_chance": max_exploitation_chance, **kwargs})
+        super().__init__(all_inds, size, **{"rank_penalty":rank_penalty, "min_exploitation_chance": min_exploitation_chance, "max_exploitation_chance": max_exploitation_chance, "max_step":max_step, **kwargs})
         self.rank_penalty = rank_penalty
         self.min_exploitation_chance = min_exploitation_chance
         self.max_exploitation_chance = max_exploitation_chance
+        self.max_step = max_step
 
     class Node:
         def __init__(self) -> None:
@@ -439,7 +437,7 @@ class ParetoGraphSample(Sample):
 
         interacted_weights = {ind: 0.1 + 0.9 * (1 - p) for ind, p in self.get_same_interactions_percent().items()}
 
-        exploitation_weight = self.min_exploitation_chance + (self.step / self.max_steps) * (self.max_exploitation_chance - self.min_exploitation_chance)
+        exploitation_weight = self.min_exploitation_chance + (self.t / self.max_step) * (self.max_exploitation_chance - self.min_exploitation_chance)
         exploration_weight = 1 - exploitation_weight
         # strategies = rnd.choice([0, 1], size = self.size, p = [1 - exploitation_chance, exploitation_chance])
         # num_exploits = sum(strategies)
@@ -453,15 +451,16 @@ class ParetoGraphSample(Sample):
 
         for ind in self.all_inds:
             if ind not in self.interactions:
-                weights[ind] = exploration_weight * interacted_weights.get(test, 1)
+                weights[ind] = exploration_weight * interacted_weights.get(ind, 1)
 
         min_weight = min(weights.values())        
-        weights_shifted = {ind: (w - min_weight) for ind, w in weights.items()}
+        weights_shifted = {ind: (w - min_weight) + 0.1 for ind, w in weights.items()}
         sum_weights = sum(weights_shifted.values())
         probs = {ind: w / sum_weights for ind, w in weights_shifted.items()}
 
         inds, p = zip(*list(probs.items()))
-        selected = rnd.choice(inds, size = self.size, replace=False, p = p)
+        selected_indexes = rnd.choice(len(inds), size = self.size, replace=False, p = list(p))
+        selected = [inds[i] for i in selected_indexes]
         return selected    
 
 class ACOPopulation(Sample):
@@ -552,7 +551,8 @@ class ACOPopulation(Sample):
         if sum_weight == 0:
             sum_weight = 1 
         probs = [w / sum_weight for w in weights]
-        selected = rnd.choice(inds, size = self.size, replace = False, p = probs)
+        selected_indexes = rnd.choice(len(inds), size = self.size, replace = False, p = probs)
+        selected = [inds[i] for i in selected_indexes]
         self.population_desirability = sum(self.desirability.get(ind, 0) for ind in selected)
         return list(selected)
     
@@ -587,6 +587,7 @@ class OneTimeSequential(Population):
         return selected
     
     def init_inds(self) -> None:
+        super().init_inds()
         self.cur_pos = 0
         if self.shuffle:
             rnd.shuffle(self.all_inds)
