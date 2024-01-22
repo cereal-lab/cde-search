@@ -27,12 +27,7 @@
     5. RQ5: Under increase number of objectives per candidate, how algo behavior change? Noise of weak independance of axes
     6. RQ6*: consistency of algos around different spaces? Probably under RQ1
     7. --RQ7**: experiments with strategies ==> different setups of algos at first place - all RQs above should consider them
-
-    Algos:
-    1. One time random sampling - baseline 
-    2. P-PHC - different versions, w archive
-    3. Sampling strategies 
-    4. ACO    
+  
 '''
 
 from itertools import product
@@ -70,12 +65,11 @@ class CDESpace(JSONSerializable):
         :returns - created CDESpace 
     '''    
     def __init__(self, dims: list[int] = [], candidate_remap = [], spanned = [], origin = {}, 
-                        axes = [], next_test_id = 0, next_candidate_id = 0, name = "", **kwargs) -> None:
+                        axes = [], next_test_id = 0, next_candidate_id = 0, **kwargs) -> None:
         ''' Creates space with len(dims) axes and number of points per axis specified in dims
             Origin is created anyway 
             :param dims - points per axis             
         '''
-        self.name = name
         self.dims = dims
         self.candidate_remap = {m["b"]: m["a"] for m in candidate_remap}
         self.spanned = {tuple(tuple(x) for x in m["coord"]):CDEPoint(**m["point"]) for m in spanned}
@@ -327,21 +321,27 @@ class CDESpace(JSONSerializable):
     def from_json(json_str: str):
         data = json.loads(json_str)
         return CDESpace(**data)
-    
 
 if __name__ == '__main__':
     #RQ0
-    space = CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1).with_spanned_point([(i, -1) for i in range(10)], 1)
+    # space = CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1).with_spanned_point([(i, -1) for i in range(10)], 1)
+    space = CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)
+
     # dc_prob = space.space_dimension_coverage_probability()
     # r_prob = space.space_best_ranks_probability()
     # dup = space.space_duplication()
     # dep = space.space_dependency()
     # noni = space.space_noninformativeness()
     # r = space.space_redundancy()
-    print(f"{space}")
+    c = space.get_candidates()
+    t = space.get_tests()
+    print(f"{space}\n Candidates {len(c)}, tests {len(t)}\n")
     js = space.to_json()
     space2 = CDESpace.from_json(js) 
-    print(f"{space2}")
+    c = space2.get_candidates()
+    t = space2.get_tests()
+    print(f"{space2}\n Candidates {len(c)}, tests {len(t)}")
+
 
     #RQ1
     # space = CDESpace([6, 6, 6, 6, 6, 4, 4, 4, 4, 4])

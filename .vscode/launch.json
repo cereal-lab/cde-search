@@ -5,22 +5,25 @@
     "version": "0.2.0",
     "configurations": [        
         {
-            "name": "CDE create space",
+            "name": "Python: Current File",
             "type": "python",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "args": ["space", "-a", "5", "-a", "5", "-t", "0", "-t", "1", "-c", "0", "-c", "1", "-o", "spaces.jsonlist"],
             "justMyCode": true
         },
         {
-            "name": "CDE run simulation",
+            "name": "game simulation",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "simulation.py",
             "console": "integratedTerminal",
-            "args": ["simulate", "-i", "spaces.jsonlist", "-m", "metrics.jsonlist", "-n", "2", "--times", "1"],
+            "args": [
+                "game",
+                "-id", "0",
+                "--times", "1"
+            ],
             "justMyCode": true
-        }        
+        }
     ]
 }

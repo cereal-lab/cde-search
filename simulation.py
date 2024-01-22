@@ -17,9 +17,9 @@ import json
 import click
 import numpy as np
 from cde import CDESpace
-from config import CONFIG
-from games import CDESpaceGame, GameSimulation 
-from params import param_seed, param_spaces
+from config import CONFIG, GAME_GROUPS, SIM_GROUPS
+from games import CDESpaceGame, GameSimulation, InteractionGame 
+from params import param_seed
 import fcntl
 import numpy as np
 
@@ -28,8 +28,7 @@ def cli():
     pass
 
 @cli.command("space")
-@click.option("--name", type = str, default = "")
-@click.option("-o", "--output", type = str, default = param_spaces)
+@click.option("-o", "--output", type = str, required=True)
 @click.option("-a", "--axis", type = int, multiple=True, default=[1,1])
 @click.option("-t", "--tests", type = int, multiple=True)
 @click.option("-c", "--cand", type = int, multiple=True)
@@ -43,12 +42,12 @@ def cli():
 @click.option("--dependency-strategy-count", type = int, default = -1)
 @click.option("--dependency-strategy-pos", type = int, default = -1)
 @click.option("--dependency-strategy-pos", type = int, default = -1)
-def gen_space(name:str, axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [], spanned: list[str] = [], 
+def gen_space(axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [], spanned: list[str] = [], 
                     spanned_strategy = None, spanned_strategy_count = -1, spanned_strategy_pos = -1, spanned_strategy_tests = 1,
                     dependency = [], dependency_strategy = None, dependency_strategy_count = -1, dependency_strategy_pos = -1,
                     output = None):    
     click.echo("Creating CDE space...")
-    space = CDESpace(axis, name = name)
+    space = CDESpace(axis)
     if len(tests) > 0:
         origin, *axis = tests
         axis = [origin] if len(axis) == 0 else axis
@@ -116,42 +115,21 @@ def gen_space(name:str, axis:list[int] = [1,1], tests: list[int] = [], cand: lis
 @click.option('--times', type=int, default = 1)
 @click.option("-m", "--metrics", type = str, default = "metrics.jsonlist")
 def run_game(id, times = 1, metrics = ""):
-    sim: GameSimulation = CONFIG[id]
-    click.echo(f"Running simulation {sim.name}")    
+    group, game_name, sim_name = CONFIG[id]    
+    game_builder = GAME_GROUPS[group][game_name]
+    sim_builder = SIM_GROUPS[group][sim_name]
+    click.echo(f"Running simulation {sim_name} on game {game_name} from group '{group}'")
+    game : InteractionGame = game_builder() #no kwargs? - see params.py for defaults
+    sim : GameSimulation = sim_builder(game)
     for i in range(times): 
         sim.play()
-        if type(sim.game) is CDESpaceGame:     
-            # collect space metrics   
-            space = sim.game.space
-            tests_sample = sim.get_tests()
-            DC = space.dimension_coverage(tests_sample)
-            ARR, ARRA = space.avg_rank_of_repr(tests_sample)
-            Dup = space.duplication(tests_sample)
-            R = space.redundancy(tests_sample)
-            nonI = space.noninformative(tests_sample)
-            metric_data = json.dumps({"config_id": id, "algo_id": sim.name, "space_id":space.name, "i": i,
-                                "DC": DC, "ARR": ARR, "ARRA": ARRA, "Dup": Dup, "R": R, 
-                                "nonI": nonI, "seed": param_seed,
-                                **sim.game_metrics,
-                                "test_sample": [ int(t) if type(t) is np.int64 else t for t in tests_sample ]})
-            click.echo(f"{metric_data}")
-            with open(metrics, "a") as f:                
-                fcntl.flock(f, fcntl.LOCK_EX)
-                f.writelines([metric_data + "\n"])
-                fcntl.flock(f, fcntl.LOCK_UN)
-        else: #number game simulation 
-            cand_sample = sim.get_candidates()
-            tests_sample = sim.get_tests()
-            metric_data = json.dumps({"config_id": id, "algo_id": sim.name, "space_id":space.name, "i": i,
-                                "seed": param_seed,
-                                **sim.game_metrics,
-                                "test_sample": [ int(t) if type(t) is np.int64 else t for t in tests_sample ]
-                                **({} if cand_sample is tests_sample else {"cand_sample": cand_sample})})
-            click.echo(f"{metric_data}")
-            with open(metrics, "a") as f:                
-                fcntl.flock(f, fcntl.LOCK_EX)
-                f.writelines([metric_data + "\n"])
-                fcntl.flock(f, fcntl.LOCK_UN)
+        metric_data = {"config_id": id, "sim_name": sim_name, "game_name":game_name, "i": i,
+                                "seed": param_seed, **sim.game_metrics}
+        click.echo(f"{metrics}")
+        with open(metrics, "a") as f:                
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.writelines([metric_data + "\n"])
+            fcntl.flock(f, fcntl.LOCK_UN)
             
 if __name__ == '__main__':
     cli()
