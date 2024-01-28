@@ -6,7 +6,7 @@ from abc import abstractmethod
 from collections import deque
 from math import sqrt
 from typing import Any
-from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, param_steps
+from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, param_steps, param_popsize
 
 class Population:
     ''' Base class for population of candidates/tests which defines different ways of breeding 
@@ -16,7 +16,6 @@ class Population:
         self.size = popsize 
         self.population = [] #first call of get_inds should initialize
         self.interactions = {}
-        self.total_interaction_count = 0
         self.all_inds = all_inds #pool of all possible individuals
         self.pop_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
@@ -30,108 +29,158 @@ class Population:
 
     def init_inds(self) -> None:
         self.interactions = {}
-        self.total_interaction_count = 0
         self.pop_metrics[PARAM_UNIQ_INDS] = 0
         self.pop_metrics[PARAM_MAX_INDS] = 0
         self.seen_inds = set()
 
-    def merge_interactions(self, interactions: dict[Any, dict[Any, int]]) -> None:
+    def merge_interactions(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        num_uniq_ints = 0
         for ind, ints in interactions.items():                        
             ind_ints = self.interactions.setdefault(ind, {})
             self.pop_metrics[PARAM_INTS] = self.pop_metrics.get(PARAM_INTS, 0) + len(ints)
-            for t, outcome in ints.items():
+            for t, outcome in ints:
                 if t not in ind_ints:
-                    self.total_interaction_count += 1
+                    num_uniq_ints += 1
                 ind_ints[t] = outcome
-        self.pop_metrics[PARAM_UNIQ_INTS] = self.total_interaction_count        
+        self.pop_metrics[PARAM_UNIQ_INTS] = self.pop_metrics.get(PARAM_UNIQ_INTS, 0) + num_uniq_ints
 
-    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
         self.merge_interactions(interactions)
 
 class HCPopulation(Population):
-    ''' Population that evolves with parent-child hill climbing
-        self.population is a set of indexes from self.all_inds
-    '''
-    def __init__(self, all_inds: list[Any], popsize,
+    ''' Population that evolves with parent-child hill climbing '''
+    def __init__(self, all_inds: list[Any], popsize = param_popsize,
                     mutation = "plus_minus_one", 
-                    selection = "pareto_select", **kwargs) -> None:
+                    selection = "pareto_select", 
+                    init = "rand_init", init_range = None,
+                    ind_range = None, **kwargs) -> None:
         super().__init__(all_inds, popsize, **{"mutation":mutation, "selection":selection, **kwargs})
         self.mutation_strategy = getattr(self, mutation)
         self.selection_strategy = getattr(self, selection)
-
-    def plus_minus_one(self, parent_index: int):
-        # parent_index = next(i for i, ind in enumerate(pool) if ind == parent)
-        child_index = parent_index + rnd.choice([-1,1])
-        if child_index < 0: 
-            child_index = len(self.all_inds) - 1
-        elif child_index >= len(self.all_inds):
-            child_index = 0
-        return child_index
+        self.init_strategy = getattr(self, init)
+        self.ind_range = (min(all_inds), max(all_inds)) if ind_range is None else ind_range
+        self.init_range = init_range
     
-    def resample(self, parent_index: int):
+    def plus_minus_one(self, ind: tuple[int,int]):
+        # Mutation for number games inds (i, j) -> (i+-1, j+-1)    
+        # def wrap_value(v: int):
+        #     if self.ind_range is None:
+        #         return v
+        #     if v < self.ind_range[0]: 
+        #         v = self.ind_range[1]
+        #     elif v > self.ind_range[1]:
+        #         v = self.ind_range[0]
+        #     return v
+        
+        # mutated = tuple(wrap_value(c + rnd.choice([-1,1])) for c in ind)        
+        # return mutated
+        # while True: 
+        mutated = tuple(c + rnd.choice([-1,1]) for c in ind)            
+        # if mutated[0] < self.ind_range[0] or mutated[0] > self.ind_range[1] or\
+        #     mutated[1] < self.ind_range[0] or mutated[1] > self.ind_range[1]:
+        #     continue
+        return mutated
+
+    def resample(self, ind: Any):
+        ''' Picks random other ind from pool '''
         for _ in range(10):
-            child_index = rnd.randint(0, len(self.all_inds))
-            if child_index != parent_index:
-                return child_index 
-        return parent_index    
+            index = rnd.randint(0, len(self.all_inds))
+            mutated = self.all_inds[index]
+            if mutated != ind:
+                return mutated
+        return ind 
     
     def pareto_select(self, i, all_ints):
+        ''' Version of Pareto selection 
+            If parent and child are same by performance - pick child for progress 
+            Then, consider domination and preserve parent if non-dominant
+        '''
         common_ints = [(co, po) for co, po in all_ints if co is not None and po is not None]
+        # if all(co == po for co, po in common_ints):
+        #     return self.children[i] #prefer progress on of performance change
+        #prefer domination 
         ind = self.children[i] if len(common_ints) > 1 and \
                             all(co >= po for co, po in common_ints) and \
                             any(co > po for co, po in common_ints) else self.population[i]
+        # todo: what to do on non-dominance? Currently parent is picked - maybe count wins? 
         return ind
     
     def informativeness_select(self, i, all_ints):
-        ''' selection based on ninformativeness score aggregation '''
+        ''' selection based on informativeness score aggregation '''
         def informativeness_score(ints: list[int]):
             ''' counts pairs of interactions of same outcome '''
-            return sum(1 for i in range(len(ints)) for j in range(i+1, len(ints)) if ints[i] == ints[j])
+            # return sum(1 for i in range(len(ints)) for j in range(i+1, len(ints)) if ints[i] == ints[j])
+            return sum(1 for s1 in ints for s2 in ints if s1 == s2)
         common_ints = [(co, po) for co, po in all_ints if co is not None and po is not None]
         parent_informativeness = informativeness_score([o for _, o in common_ints])
         child_informativeness = informativeness_score([o for o, _ in common_ints])
         ind = self.children[i] if child_informativeness > parent_informativeness else self.population[i] 
-        return ind
+        return ind    
     
     def num_wins(self, i, all_ints):
         parent_score = sum([o for _, o in all_ints if o is not None])
         child_score = sum([o for o, _ in all_ints if o is not None])
         ind = self.children[i] if child_score > parent_score else self.population[i] 
         return ind
+    
+    def rand_init(self):
+        parent_indexes = rnd.choice(len(self.all_inds), size = self.size, replace=False)
+        self.population = [self.all_inds[i] for i in parent_indexes]
+
+    def zero_init(self):
+        self.population = [tuple(0 for _ in self.all_inds[0]) if type(self.all_inds[0]) is tuple else 0 for _ in range(self.size)]
+
+    def range_init(self):
+        self.population = [tuple(rnd.choice(self.init_range) for _ in self.all_inds[0]) if type(self.all_inds[0]) is tuple else rnd.choice(self.init_range) for _ in range(self.size)]
 
     def init_inds(self) -> None:
         super().init_inds()
-        self.population = rnd.choice(len(self.all_inds), size = self.size, replace=False)
-        self.children = [self.mutation_strategy(parent_index) for parent_index in self.population]
+        self.init_strategy()
+        self.children = [self.mutation_strategy(parent) for parent in self.population]
 
         self.pop_metrics[PARAM_MAX_INDS] += 2 * self.size
         self.seen_inds.update(self.population, self.children)
-        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
+        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)          
 
     def get_inds(self, *, only_parents = False, only_children = False, **filters) -> list[Any]:        
-        return [self.all_inds[i] for group in [([] if only_children else self.population), [] if only_parents else self.children] 
-                    for i in group]
+        return [*([] if only_children else self.population), *([] if only_parents else self.children)]
 
-    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
         super().update(interactions)
-        parents = [self.all_inds[i] for i in self.population]
-        children = [self.all_inds[i] for i in self.children]
-        parent_ints = [interactions.get(p, {}) for p in parents]
-        child_ints = [interactions.get(c, {}) for c in children]
-        all_ints = [[(c_ints.get(t, None), p_ints.get(t, None)) for t in all_int_keys] 
-                        for p_ints, c_ints in zip(parent_ints, child_ints)
-                        for all_int_keys in [ set([*p_ints.keys(), *c_ints.keys()]) ] ]
+        parent_ints = [interactions.get(p, []) for p in self.population]
+        child_ints = [interactions.get(c, []) for c in self.children]   
+        def get_counts(ints: list[tuple[Any, int]]):
+            res = {} 
+            for k, _ in ints: 
+                res[k] = res.get(k, 0) + 1
+            return res 
+        def get_union_outcomes(parent_ints: list[tuple[Any, int]], child_ints: list[tuple[Any, int]]):
+            parent_dict = {k:v for k, v in parent_ints}
+            child_dict = {k:v for k, v in child_ints}
+            parent_counts = get_counts(parent_ints)
+            child_counts = get_counts(child_ints)
+            key_set = set(*parent_dict.keys(), *child_dict.keys())
+            int_dict = {k: (child_counts.get(k, 0), child_dict.get(k, None), parent_counts.get(k, 0), parent_dict.get(k, None)) for k in key_set}
+            child_vect = []
+            parent_vect = []
+            for child_count, child_outcome, parent_count, parent_outcome in int_dict.values():
+                n = max(child_count, parent_count)
+                child_vect.extend([child_outcome] * child_count)
+                child_vect.extend([None] * (n - child_count))
+                parent_vect.extend([parent_outcome] * parent_count)
+                parent_vect.extend([None] * (n - parent_count))
+            return list(zip(child_vect, parent_vect))
+        all_ints = [get_union_outcomes(p_ints, c_ints) for p_ints, c_ints in zip(parent_ints, child_ints)]
         
         selected = [ self.selection_strategy(i, ints) for i, ints in enumerate(all_ints)]
         num_changes = sum(1 for s, p in zip(selected, self.population) if s != p)
         self.pop_metrics.setdefault(PARAM_IND_CHANGES_STORY, []).append(num_changes)
         self.population = selected 
-        self.children = [self.mutation_strategy(parent_index) for parent_index in self.population]
-        
-        
+        self.children = [self.mutation_strategy(parent) for parent in self.population]
+                
         self.pop_metrics[PARAM_MAX_INDS] += 2 * self.size
         self.seen_inds.update(self.population, self.children)
-        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
+        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)    
 
 class Sample(Population):
     ''' Population is a sample from interaction matrix '''
@@ -149,18 +198,15 @@ class Sample(Population):
         self.for_group = None
         self.t = 0
 
-    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
-        super().update(interactions)        
-        self.t += 1  
-        self.population = None
-
     def get_same_interactions_percent(self):
         ''' We would like to avoid same interactions for the following steps
             This method computes the percent of given group in self.for_group with already present interactions
             It is up to concrete population how to handle same interactions (current simulations assume uselessness of such interactions)
         '''
+        if len(self.for_group) == 0:
+            return {}
         scores = {ind: existing / len(self.for_group)
-                    for ind in self.all_inds for ind_ints in [self.interactions.get(ind, {})]
+                    for ind, ind_ints in self.interactions.items()
                     for existing in [sum(1 for t in self.for_group if t in ind_ints)]
                     if existing > 0}
         return scores 
@@ -175,146 +221,185 @@ class Sample(Population):
         self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
         return self.population
         
-class SamplingStrategySample(Sample):
-    ''' Sampling with strategies from matrix directly '''
-    def __init__(self, all_inds: list[Any], size: int,
+class InteractionFeatureOrder(Sample):
+    ''' Sampling of search space based on grouping by interactions features and ordering of the groups '''
+    def __init__(self, all_inds: list[Any], size: int, dedupl = False, anneal_max_time = param_steps, 
                     strategy = None, epsilon = None, softmax = None, tau = 1,
                     **kwargs) -> None:
-        super().__init__(all_inds, size, **{"strategy":strategy, "epsilon": epsilon, "softmax": softmax, "tau": tau, **kwargs})
-        self.strategy = strategy
+        super().__init__(all_inds, size, **{"dedupl": dedupl, "anneal_max_time":anneal_max_time, "strategy":strategy, "epsilon": epsilon, "softmax": softmax, "tau": tau, **kwargs})        
         self.epsilon = epsilon
         self.softmax = softmax
-        self.tau = tau        
+        self.tau = tau
+        self.dedupl = dedupl
+        self.anneal_max_time = anneal_max_time
+        self.features = {} #contains set of features per interacted individual 
+        default_strategy = [{"t": 0, "keys": [["kn-rel", "kn", "nond", "sd", "dom"]] }]
+        strategy = default_strategy if strategy is None else strategy
+        if type(strategy) is list:
+            if len(strategy) == 0:
+                strategy = default_strategy
+            elif type(strategy[0]) is str: 
+                strategy = [{"t": 0, "keys": [strategy] }]
+            elif type(strategy[0]) is list: 
+                strategy = [{"t": 0, "keys": strategy }]
+        else:
+            strategy = [strategy]
+        strategy = sorted(strategy, key = lambda x: x["t"])
+        if strategy[0]["t"] != 0:
+            strategy = [*default_strategy, *strategy]          
+        self.strategy = list(reversed(strategy))
+        # this is alt strategy when for_group is specified
+        # third = self.size // 3
+        # self.exploration = [{"t": 0, "keys": [["-one", "kn"]] * third + [["one", "kn"]] * third + self.strategy[-1]["keys"] }]
+        # twothrids = 2 * self.size // 3
+        # self.exploration = [{"t": 0, "keys": [["-one", "kn"]] * twothrids + self.strategy[-1]["keys"] }]
+        # self.strategy = [{"t": 0, "keys": self.strategy[-1]["keys"] * twothrids + [["-one", "kn"]] }]
 
-    def calc_knowledge_score(self, ind, selected_inds):
-        ''' Computes features of interactions about how well ind was alreeady explored '''
-        ind_interactions = self.interactions.get(ind, {})
-        knowledge_force = 1 if self.total_interaction_count == 0 else (1 - len(ind_interactions) / self.total_interaction_count)
-        scores = {}
-        # metrics of interactions based on knowledge about ind and already selected inds
-        scores["kn"] = knowledge_force    
-        scores["rel-kn"] = -(sum(len([oid for oid in selected_ind_ints.keys() if oid in ind_interactions]) 
-                                        for selected_ind in selected_inds 
-                                        for selected_ind_ints in [self.interactions.get(selected_ind, {})]))
-        scores["kn-n"] = len(ind_interactions)
-        return scores
 
-    def calc_domination_score(self, ind, selected_inds):
-        ''' Computes metrics of individual about how well ind dominates others 
-            ind - individual (candidate/test) for which we need to compute score 
-            selected_inds - already sampled inds 
-            interactions - set of interactions for all inds of ind kind
+    def init_inds(self) -> None:
+        super().init_inds()
+        self.features = {}
+        self.keys = []
+
+    def build_common_interactions(self, ind: Any, ind_ints: dict[Any, int], pool_inds):
+        ''' computes common interactions with other inds of the pool '''
+        common_interactions = {ind1: interactions
+            for ind1 in pool_inds if ind1 != ind
+            for ind1_ints in [self.interactions.get(ind1, {})]
+            for interactions in [{common_test_id: (ind_ints[common_test_id], ind1_ints[common_test_id]) 
+                for common_test_id in set.intersection(set(ind_ints.keys()), set(ind1_ints.keys()))}]
+            if len(interactions) > 0} #non-empty interactions set
+        return common_interactions     
+
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Also updates individual features from interactions 
         '''
-        ind_interactions = self.interactions.get(ind, {})
-        other_ids = set(ind_interactions.keys()) #other ids represent ids of other kind (for candidate it is test and vise versa)
-        def build_common_interactions(pool_inds):
-            ''' computes common interactions with other inds of the pool '''
-            common_interactions = {ind1: interactions
-                for ind1 in pool_inds if ind1 != ind
-                for ind1_interactions in [self.interactions.get(ind1, {})]
-                for interactions in [{common_other_id: (ind_interactions[common_other_id], ind1_interactions[common_other_id]) 
-                    for common_other_id in set.intersection(other_ids, set(ind1_interactions.keys()))}]
-                if len(interactions) > 0} #non-empty interactions set
-            return common_interactions
-        common_interactions = build_common_interactions(self.interactions.keys())
-        non_dominated = [ind1 for ind1, ints in common_interactions.items()
-                                if len(ints) > 1 and
-                                    any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items()) and 
-                                    any(ind_outcome < ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]
-        dominated = [ind1 for ind1, ints in common_interactions.items()
+        super().update(interactions)        
+        other_inds = set(interactions.keys())
+        for ind, cur_ind_ints in interactions.items():
+            ind_features = self.features.setdefault(ind, {})
+            ind_features["one"] = 1
+            ind_features["-one"] = -1
+            ind_features["num_ints"] = ind_features.get("num_ints", 0) + len(cur_ind_ints)
+            ind_features["num_uniq_ints"] = len(self.interactions.get(ind, {}))
+            ind_features["kn"] = -ind_features["num_ints"]
+            ind_ints = self.interactions[ind]
+            common_interactions = self.build_common_interactions(ind, ind_ints, other_inds)            
+            total_group = [(ind1, ints) for ind1, ints in common_interactions.items() if len(ints) > 1]
+            cur_total_group_ids = set([ind1 for ind1, _ in total_group])
+            total_group_ids = ind_features.setdefault("total_group_ids", set())
+            total_group_ids.update(cur_total_group_ids)
+            non_dom_set = ind_features.setdefault("non_dom_set", set())
+            non_dom_set -= other_inds #probably something changed about them            
+            non_dominated = [ind1 for ind1, ints in total_group
+                                    if any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items()) and 
+                                        any(ind_outcome < ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]
+            non_dom_set.update(non_dominated)
+            dom_set = ind_features.setdefault("dom_set", set())
+            dom_set -= other_inds    
+            dominated = [ind1 for ind1, ints in total_group
+                            if ind1 not in non_dom_set
                             if all(ind_outcome >= ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items()) and 
-                               any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]        
+                            any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]        
+            dom_set.update(dominated)
+            ind_features["nond"] = 0 if len(total_group) == 0 else round(len(non_dom_set) * 100 / len(total_group_ids))
+            ind_features["dom"] = 0 if len(total_group) == 0 else round(len(dom_set) * 100 / len(total_group_ids))
+            ind_features["nd"] = sqrt(ind_features["nond"] * ind_features["dom"])
 
-        # the idea that whenever current ind of qX fails other el, the already selected ind qY also fails the other el ==> cur ind is duplicate
-        common_interactions_with_selected = build_common_interactions(selected_inds)
+            cfs = [s for s, r in ind_ints.items() if r == 1]
+            css = [s for s, r in ind_ints.items() if r == 0]
+            simplicity_score = round((0 if len(ind_ints) == 0 else (1 - len(cfs) / len(ind_ints))) * 100)
+            difficulty_score = round((0 if len(ind_ints) == 0 else (1 - len(css) / len(ind_ints))) * 100)
+            ind_features["sd"] = round(sqrt(simplicity_score * difficulty_score))
+            ind_features["d"] = difficulty_score
+            ind_features["-d"] = -difficulty_score
+            ind_features["s"] = simplicity_score
+            ind_features["-s"] = -simplicity_score
+
+        self.t += 1  
+        self.population = None    
+    
+    def is_dupl(self, ind: Any, selected_inds):
+        ind_ints = self.interactions[ind]
+        common_interactions_with_selected = self.build_common_interactions(ind, ind_ints, selected_inds)
         duplicate_of_selected = any(ind1 for ind1, ints in common_interactions_with_selected.items()
                                     for ind_cfs in [[(ind_outcome, ind1_outcome) for _, (ind_outcome, ind1_outcome) in ints.items() if ind_outcome == 1]] 
                                     if len(ind_cfs) >= 1 and all(ind_outcome == ind1_outcome for (ind_outcome, ind1_outcome) in ind_cfs))
-
-        #NOTE: spanned_of_selected vs spanned: spanned is peramnent while spanned_of_selected is only temporary block
-
-        non_domination_score = len(non_dominated) / max(len(self.interactions), 1)
-        domination_score = len(dominated) / max(len(self.interactions), 1)
-        scores = {}
-        scores["nond"] = non_domination_score
-        # scores["nondb"] = 1 if non_domination_score > 0 else 0
-        scores["nd"] = sqrt(non_domination_score * domination_score)
-        scores["dom"] = domination_score
-        scores["dup"] = -1 if duplicate_of_selected else 1 #prefer non-duplicants
-        # scores["sp"] = -1 if spanned_of_selected else 1 #prefer nonspanned
-        return scores
-    
-    def calc_complexity_score(self, ind, selected_inds):
-        ind_interactions = self.interactions.get(ind, {})
-        cfs = [s for s, r in ind_interactions.items() if r == 1]
-        css = [s for s, r in ind_interactions.items() if r == 0]
-        simplicity_score = 0 if len(ind_interactions) == 0 else (1 - len(cfs) / len(ind_interactions))
-        difficulty_score = 0 if len(ind_interactions) == 0 else (1 - len(css) / len(ind_interactions))
-        scores = {}
-        # scores["simple"] = simplicity_score
-        # scores["difficult"] = difficulty_score
-        scores["sd"] = sqrt(simplicity_score * difficulty_score)
-        scores["d"] = len(cfs)
-        scores["-d"] = -scores["d"]
-        scores["s"] = len(css)
-        scores["-s"] = -scores["s"]
-        return scores
+        # scores = dict(dup = 0 if duplicate_of_selected else 1) #prefer non-duplicants
+        # scores["kn-rel"] = -(sum(len([test for test in self.interactions.get(ind1, {}).keys() if test in ind_ints]) 
+        #                                 for ind1 in [selected_ind]))
+        return duplicate_of_selected
     
     def build_selector(self, keys):
         ''' function that builds selector of features based on keys '''
         return lambda scores: tuple(scores[k] for k in keys)
         
     def sample_inds(self) -> list[Any]:
-        default_strategy = [{"t": 0, "keys": [["rel-kn", "kn", "nond", "sd", "dom"]] * self.size }]
-        sample_strategy = default_strategy if self.strategy is None or len(self.strategy) == 0 else self.strategy
-        sample_strategy = sorted(self.strategy, key = lambda x: x["t"])
-        if sample_strategy[0]["t"] != 0:
-            sample_strategy = [*default_strategy, *sample_strategy]        
-        curr_key_spec = next(spec for spec in reversed(sample_strategy) if self.t >= spec["t"])["keys"]
+        curr_key_spec = next(spec for spec in self.strategy if self.t >= spec["t"])["keys"]
         seens_interaction_percents = self.get_same_interactions_percent()
         excluded = {ind for ind, p in seens_interaction_percents.items() if rnd.rand() < p }
         selected = set()
+        dupls = set()
+        self.keys = []
+        start_explore_i = self.size
+        coef = 2 if len(self.for_group) > 0 else 1 #explore more
+        start_explore_i = self.size - max(0, (coef * self.size // 3) * (1 - self.t / self.anneal_max_time))
         while len(selected) < self.size:
             i = len(selected)
-            
-            i_key_spec = curr_key_spec[i] if i < len(curr_key_spec) else curr_key_spec[-1]
+            i_key_spec = ["-one", "kn"] if i >= start_explore_i else curr_key_spec[i] if i < len(curr_key_spec) else curr_key_spec[-1]
             if (self.epsilon is not None) and (rnd.rand() < self.epsilon): #apply default epsilon strategy - ordered exploration
                 i_key_spec = ["kn", "nond", "d"]
             elif self.softmax is not None:
                 softmax_idx = [i for i, k in enumerate(i_key_spec) if k == self.softmax][0]
                 i_key_spec = i_key_spec[:softmax_idx]
             key_selector = self.build_selector(i_key_spec)
-            ind_scores = [ {"ind": ind, "scores": scores, "key": key_selector(scores) }
-                                    for ind in self.all_inds if ind not in selected and ind not in excluded
-                                    for scores in [{**self.calc_knowledge_score(ind, selected), 
-                                                    **self.calc_domination_score(ind, selected), 
-                                                    **self.calc_complexity_score(ind, selected)}]]
+            default_features_for_noninterracted = tuple(0 for _ in i_key_spec)
+            cur_ind_scores = [ {"ind": ind, "scores": ind_features, "key": key_selector(ind_features) }
+                                    for ind, ind_features in self.features.items() if ind not in selected and ind not in excluded and ind not in dupls]
+            if len(self.interactions) < len(self.all_inds):
+                cur_ind_scores.append(dict(noninteracted = True, key=default_features_for_noninterracted))
+            # cur_ind_scores.append({"key"})
             # (s * seens_interaction_penalties.get(ind, 1) for s in 
-            sorted_inds = sorted(ind_scores, key=lambda x: x["key"], reverse=True)
+            sorted_inds = sorted(cur_ind_scores, key=lambda x: x["key"], reverse=True)
             if len(sorted_inds) == 0:
                 if len(excluded) == 0:
                     break
                 excluded = set()
                 continue
-            best_ind_key = sorted_inds[0]["key"]
-            best_inds = [] 
-            i = 0 
-            while i < len(sorted_inds) and best_ind_key == sorted_inds[i]["key"]:
-                best_inds.append(sorted_inds[i])
-                i += 1
-            if self.softmax is not None: 
-                softmax_sum = 0
-                from math import e
-                for ind in best_inds:
-                    fitness = ind['scores'][self.softmax] #first criterion
-                    ind['softmax'] = e ** (fitness / self.tau)
-                    softmax_sum += ind['softmax']
-                for ind in best_inds:
-                    ind['softmax'] = ind['softmax'] / softmax_sum
-                selected_one = rnd.choice(best_inds, p = [d['softmax'] for d in best_inds])
-            else:                 
-                selected_one = rnd.choice(best_inds)
-            selected_ind = selected_one["ind"]
+            if sorted_inds[0].get("noninteracted", False):
+                #pick one from noninterracted, search space could be big therefore we resort to enumeration with limited number of times 
+                self.keys.append("kn")
+                tries = 0
+                while tries < 10:
+                    i = rnd.choice(len(self.all_inds))
+                    selected_ind = self.all_inds[i]
+                    if selected_ind not in selected and selected_ind not in self.interactions:
+                        break
+                    tries += 1 
+            else:
+                best_ind_key = sorted_inds[0]["key"]
+                self.keys.append(" ".join("{0} {1}".format(k, round(v)) for k, v in zip(i_key_spec, best_ind_key) if v != 0))
+                best_inds = [] 
+                i = 0 
+                while i < len(sorted_inds) and best_ind_key == sorted_inds[i]["key"]:
+                    best_inds.append(sorted_inds[i])
+                    i += 1
+                if self.softmax is not None: 
+                    softmax_sum = 0
+                    from math import e
+                    for ind in best_inds:
+                        fitness = ind['scores'][self.softmax] #first criterion
+                        ind['softmax'] = e ** (fitness / self.tau)
+                        softmax_sum += ind['softmax']
+                    for ind in best_inds:
+                        ind['softmax'] = ind['softmax'] / softmax_sum
+                    selected_one = rnd.choice(best_inds, p = [d['softmax'] for d in best_inds])
+                else:
+                    selected_one = rnd.choice(best_inds)
+                selected_ind = selected_one["ind"]
+                if self.dedupl and self.is_dupl(selected_ind, selected):
+                    dupls.add(selected_ind)
+                    continue
             # print(f"t={self.t} {i}/{self.n} d={selected_did} from alts {len(best_candidates)} {selected_candidate} kspec: {curr_key_spec[i]}")
             # self.block_similar(selected_did, blocked_dids)
             # print(f"\t selected {qid}: {selected_did}. {selected_dids}")
@@ -556,7 +641,7 @@ class ACOPopulation(Sample):
         self.population_desirability = sum(self.desirability.get(ind, 0) for ind in selected)
         return list(selected)
     
-    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
         prev_pop_desirability = self.population_desirability
         self.merge_interactions(interactions) 
         self.calc_desirability()
@@ -593,5 +678,5 @@ class OneTimeSequential(Population):
             rnd.shuffle(self.all_inds)
         self.population = self.get_group()
 
-    def update(self, interactions: dict[Any, dict[Any, int]]) -> None:
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
         self.population = self.get_group()

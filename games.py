@@ -18,6 +18,7 @@ from tabulate import tabulate, SEPARATING_LINE
 import numpy as np
 
 from cde import CDESpace
+from viz import draw_populations
     
 class InteractionGame(ABC):
     ''' Base class that encapsulates representation of candidates/tests and their interactions 
@@ -66,23 +67,6 @@ class GameSimulation(ABC):
         ''' Executes game, final state defines found candidates and tests '''
         pass 
 
-    def interact_groups_into(self, group1, group2, ints, allow_self_interacts = True):
-        for ind1 in group1:
-            for ind2 in group2:                
-                if (allow_self_interacts or ind1 != ind2) and (ind1 not in ints or ind2 not in ints[ind1]):
-                    ints.setdefault(ind1, {})[ind2] = self.game.interact(ind1, ind2)            
-
-    def interact_groups_into_rev(self, group1, group2, ints, allow_self_interacts = True):
-        for ind1 in group1:
-            for ind2 in group2:
-                if (allow_self_interacts or ind1 != ind2) and (ind1 not in ints or ind2 not in ints[ind1]):
-                    ints.setdefault(ind1, {})[ind2] = 1 - self.game.interact(ind2, ind1)
-
-    def transpose_ints(self, ints, into_ints):
-        for c, t_ints in ints.items():
-            for t, outcome in t_ints.items():
-                into_ints.setdefault(t, {})[c] = 1 - outcome        
-
     @abstractmethod
     def get_candidates(self) -> list[Any]:
         ''' Gets candidates from game simulation state '''
@@ -94,11 +78,12 @@ class GameSimulation(ABC):
 
 class StepGameSimulation(GameSimulation):
     ''' Defines step based game with group of interactions on each step '''
-    def __init__(self, game: InteractionGame, max_steps) -> None:
+    def __init__(self, game: InteractionGame, max_steps, draw_dynamics = False) -> None:
         super().__init__(game)
         self.max_steps = max_steps
         self.step = 0
         self.sim_params["param_max_steps"] = max_steps
+        self.draw_dynamics = draw_dynamics
 
     @abstractmethod
     def init_sim(self) -> None:
@@ -107,6 +92,15 @@ class StepGameSimulation(GameSimulation):
 
     def end_sim(self) -> None:
         pass 
+
+    def draw(self, parents1, children1, parents2, children2, seen_inds, logs):
+        if self.draw_dynamics: #at this point we asume number game            
+            name = f"{self.step}"
+            name = name if len(name) >= 4 else ("0" * (4 - len(name)) + name)
+            draw_populations(parents1, children1, parents2, children2,
+                             xrange=(self.game.min_num, self.game.max_num), yrange=(self.game.min_num, self.game.max_num),
+                             name = f"step-{name}", title = f"{self.__class__.__name__} on {self.game.__class__.__name__}",
+                             prev = seen_inds, legend=logs)
 
     @abstractmethod 
     def interact(self):
@@ -124,8 +118,8 @@ class PCHC(StepGameSimulation):
     ''' Defines PCHC game skeleton for one population of tests and candidates
         The same nature of candidates and tests are assumed
     '''
-    def __init__(self, game: InteractionGame, max_steps, population: Population) -> None:
-        super().__init__(game, max_steps)
+    def __init__(self, game: InteractionGame, max_steps, population: Population, **kwargs) -> None:
+        super().__init__(game, max_steps, **kwargs)
         self.population = population        
         self.sim_params["pop_params"] = population.pop_params
         self.game_metrics["cand"] = self.population.pop_metrics        
@@ -136,13 +130,21 @@ class PCHC(StepGameSimulation):
     def interact(self):
         ''' computes interactions of ind on other inds in population (no-children)'''
         parents = self.population.get_inds(only_parents=True)
-        children = self.population.get_inds(only_children=True)        
-        ints = {}
-        self.interact_groups_into(parents, parents, ints, allow_self_interacts=False)
-        if children is not parents:
-            self.interact_groups_into(children, parents, ints, allow_self_interacts=False)
-        self.population.update(ints)
         self.game.update_game_metrics(parents, self.population.pop_metrics, is_final=False)
+        children = self.population.get_inds(only_children=True)    
+        all_inds = [*parents, *children]
+        inds = set(all_inds)
+        ints = {}
+        for candidate in inds:
+            for test in inds:                
+                if candidate != test:
+                    ints.setdefault(candidate, {})[test] = self.game.interact(candidate, test)
+        all_ints = {ind:[(ind1, ind_ints[ind1]) for ind1 in all_inds if ind1 != ind] for ind, ind_ints in ints.items()}
+        self.population.update(all_ints)
+        logs = []
+        if self.draw_dynamics:
+            logs = [f"C {p} vs {c}" for p, c in list(zip(parents, children))[:10]]
+        self.draw(parents, children, [], [], self.population.seen_inds, logs)
 
     def end_sim(self) -> None:
         parents = self.population.get_inds(only_parents=True)
@@ -154,14 +156,14 @@ class PCHC(StepGameSimulation):
 class TwoPopulationSimulation(StepGameSimulation):
     ''' Adds common methods to implementations with self.candidates and self.tests populations '''
 
-    def __init__(self, game: InteractionGame, max_steps, candidates: Population, tests: Population) -> None:
-        super().__init__(game, max_steps)
+    def __init__(self, game: InteractionGame, max_steps, candidates: Population, tests: Population, **kwargs) -> None:
+        super().__init__(game, max_steps, **kwargs)
         self.candidates = candidates
         self.tests = tests
         self.game_metrics["cand"] = self.candidates.pop_metrics
         self.game_metrics["test"] = self.tests.pop_metrics
         self.sim_params["cand_params"] = self.candidates.pop_params
-        self.sim_params["test_params"] = self.tests.pop_params        
+        self.sim_params["test_params"] = self.tests.pop_params     
         
     def init_sim(self) -> None:
         ''' creates populations of candidates and tests '''
@@ -174,7 +176,6 @@ class TwoPopulationSimulation(StepGameSimulation):
         if type(self.tests) is not OneTimeSequential:
             self.game.update_game_metrics(tests, self.tests.pop_metrics, is_final=is_final)
 
-
 class PPHC(TwoPopulationSimulation):
     ''' Implements P-PHC approach for number game with co-evolution of two populations of candidates and tests '''
 
@@ -185,24 +186,35 @@ class PPHC(TwoPopulationSimulation):
         candidate_children = self.candidates.get_inds(only_children = True)
         test_parents = self.tests.get_inds(only_parents=True)
         test_children = self.tests.get_inds(only_children=True)
-
-        candidate_ints = {}
-        self.interact_groups_into(candidate_parents, test_parents, candidate_ints)
-        test_ints = {}
-        if self.game.is_symmetric():
-            self.transpose_ints(candidate_ints, test_ints)
-        else:
-            self.interact_groups_into(test_parents, candidate_parents, test_ints)
-
-        if candidate_children is not candidate_parents:
-            self.interact_groups_into(candidate_children, test_parents, candidate_ints)
-        
-        if test_children is not test_parents:
-            self.interact_groups_into_rev(test_children, candidate_parents, test_ints)
-
-        self.candidates.update(candidate_ints)
-        self.tests.update(test_ints)
         self.update_game_goal_metrics(candidate_parents, test_parents, is_final=False)
+        all_candidates = [*candidate_parents, *candidate_children]
+        candidates = set(all_candidates)
+        all_tests = [*test_parents, *test_children]
+        tests = set(all_tests)
+        logs = []
+        if self.draw_dynamics: #at this point we asume number game            
+            logs1 = [f"C {p} vs {c}" for p, c in list(zip(candidate_parents, candidate_children))[:5]]
+            logs2 = [f"T {p} vs {c}" for p, c in list(zip(test_parents, test_children))[:5]]
+            logs = [*logs1, *logs2]
+        self.draw(candidate_parents, candidate_children, test_parents, test_children, set.union(self.candidates.seen_inds, self.tests.seen_inds), logs)
+        candidate_ints = {}
+        test_ints = {}
+
+        for cand in candidates: 
+            candidate_ints[cand] = {test: self.game.interact(cand, test) for test in tests}
+
+        if self.game.is_symmetric():
+            for test in tests:
+                test_ints[test] = {cand: 1 - candidate_ints[cand][test] for cand in candidates}
+        else:
+            for test in tests:
+                test_ints[test] = {cand: self.game.interact(test, cand) for cand in candidates}
+
+        all_candidate_ints = {cand:[(test, cand_ints[test]) for test in all_tests] for cand, cand_ints in candidate_ints.items()} 
+        all_test_ints = {test:[(cand, t_ints[cand]) for cand in all_candidates] for test, t_ints in test_ints.items()} 
+
+        self.candidates.update(all_candidate_ints)
+        self.tests.update(all_test_ints)        
 
     def end_sim(self) -> None:
         candidate_parents = self.candidates.get_inds(only_parents = True)
@@ -245,16 +257,31 @@ class CandidateTestInteractions(TwoPopulationSimulation):
         else:
             tests = self.tests.get_inds()  
             candidates = self.candidates.get_inds(for_group = tests)
+
+        logs = []
+        if self.draw_dynamics: #at this point we asume number game            
+            logs1 = [f"C {c} {l}" for c, l in zip(candidates[:10], self.candidates.keys[:10])]
+            logs2 = [f"T {t} {l}" for t, l in zip(tests[:10], self.tests.keys[:10])]
+            logs = [*logs1, *logs2]
+        self.draw(candidates, [], tests, [], set.union(self.candidates.seen_inds, self.tests.seen_inds), logs)
+
         self.candidates_first = not self.candidates_first           
         candidate_ints = {}
-        self.interact_groups_into(candidates, tests, candidate_ints)
         test_ints = {}
+        uniq_candidates = set(candidates)
+        uniq_tests = set(tests)
+        for cand in uniq_candidates:
+            candidate_ints[cand] = {test:self.game.interact(cand, test) for test in uniq_tests}
         if self.game.is_symmetric():
-            self.transpose_ints(candidate_ints, test_ints)        
+            for test in uniq_tests:
+                test_ints[test] = {cand:1 - candidate_ints[cand][test] for cand in uniq_candidates}
         else:
-            self.interact_groups_into(tests, candidates, test_ints)
-        self.candidates.update(candidate_ints)
-        self.tests.update(test_ints)
+            for test in uniq_tests:
+                test_ints[test] = {cand:self.game.interact(test, cand) for cand in uniq_candidates}
+        all_candidate_ints = {cand:[(test, cand_ints[test]) for test in tests] for cand, cand_ints in candidate_ints.items()} 
+        all_test_ints = {test:[(cand, t_ints[cand]) for cand in candidates] for test, t_ints in test_ints.items()} 
+        self.candidates.update(all_candidate_ints)
+        self.tests.update(all_test_ints)
         self.update_game_goal_metrics(candidates, tests, is_final=False)
 
     def end_sim(self) -> None:
@@ -291,7 +318,25 @@ class NumberGame(InteractionGame):
     def get_interaction_matrix(self):
         ints = [[self.interact(num1, num2) for num2 in self.all_numbers] for num1 in self.all_numbers ]
         return ints     
-   
+
+class GreaterThanGame(NumberGame):
+    ''' testing game to see how everything works '''
+    def interact(self, candidate, test) -> int:
+        ''' 1 - candidate is better thah test, 0 - test fails candidate '''
+        return 1 if candidate[0] > test[0] else 0
+    
+    def update_game_metrics(self, numbers, metrics, is_final = False):
+        ''' the goal of this game is to check how diverse the numbers are 
+            check ints_ of this game - almost each number is uniq dim/underlying objective
+            returns in metrics the percent of underlying objectives
+        '''
+        goal = sum(abs(self.max_num - n[0]) for n in numbers) / len(numbers)
+        metrics[PARAM_GAME_GOAL] = goal        
+        story = metrics.setdefault(PARAM_GAME_GOAL_STORY, [])
+        story.append(goal)
+        if is_final:
+            metrics["sample"] = numbers
+        
 class IntransitiveGame(NumberGame):
     ''' The IG as it was stated in Bucci article '''
     def interact(self, candidate, test) -> int:
@@ -329,6 +374,13 @@ class IntransitiveGame(NumberGame):
         if is_final:
             metrics["sample"] = numbers
     
+class OrigIntransitiveGame(IntransitiveGame):
+    def interact(self, candidate, test) -> int:
+        abs_diffs = [abs(x - y) for x, y in zip(candidate, test)]
+        idx = 0 if abs_diffs[0] < abs_diffs[1] else 1
+        res = 1 if candidate[idx] > test[idx] else 0
+        return res
+
 class IntransitiveRegionGame(IntransitiveGame):
     ''' As IG but only applies IG rule in small region, subject for search
         All other points repond with 0 - no-information
@@ -372,7 +424,7 @@ class TwoGoalsMixin:
         if is_final:
             metrics["sample"] = numbers
 
-class FocusingGame(NumberGame, TwoGoalsMixin):
+class FocusingGame(TwoGoalsMixin, NumberGame):
     ''' The FG as it was stated in Bucci article '''
     def interact(self, candidate, test) -> int:
         ''' 1 - candidate is better thah test, 0 - test fails candidate '''
@@ -427,7 +479,7 @@ if __name__ == '__main__':
         TODO: probably move to separate function 
     '''
     # game = IntransitiveRegionGame(1, 4, 0, 5)
-    game = IntransitiveGame(0, 3)
+    game = OrigIntransitiveGame(0, 3)
     ints = game.get_interaction_matrix()
     dims, origin, spanned, duplicates = extract_dims(ints)
     dim_nums = [[game.all_numbers[i] for i in dim] for dim in dims]

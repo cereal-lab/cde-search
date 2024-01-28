@@ -12,6 +12,11 @@
                                                                  duplicates - what test is already represents it and what (axis_id, point_id)
     As with original algo, there could be situation when new test can extend several axes - in this case first axis is selected
         - this is what makes the algo depending on order of tests, probably sorting at start should fixate the order more strictly
+       t1 t2 t3
+    c1 0   1  0
+    c2 0   0  1
+    c3 1   0  0
+    c4 1   1  1
 '''
 
 def extract_dims(tests):

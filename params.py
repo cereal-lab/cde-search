@@ -1,9 +1,15 @@
 param_steps = 100
 param_min_num = 0 
-param_max_num = 50
-param_reg_min_num = 20
-param_reg_max_num = 29
+param_max_num = 100
+param_reg_min_num = 3
+param_reg_max_num = 8
 param_seed = 19
+
+param_popsize = 100
+param_candsize = 50
+param_testsize = 50
+
+param_space_popsize = 10
 
 import numpy as np
 rnd = np.random.RandomState(param_seed)
