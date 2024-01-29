@@ -582,21 +582,20 @@ class ACOPopulation(Sample):
         self.pheromone_decay = pheromone_decay
         self.dom_bonus = dom_bonus
         self.span_penalty = span_penalty
+        self.keys = []
 
     def init_inds(self) -> None:
         super().init_inds()
-        self.pheromones = {ind: 1 for ind in self.all_inds} #each ind gets a bit of pheromone 
+        self.pheromones = {} #{ind: 1 for ind in self.all_inds} #each ind gets a bit of pheromone 
         self.desirability = {}
-        self.population_desirability = 0
+        self.keys = []
 
-    def calc_desirability(self) -> None:
-        ''' Analysis of interaction matrix for combined criteria how ind is good at moment 
-            Desired test is one that dominates many of individuals but do not dominate individuals that Pareto-noncomparable
-            For each dominated + dom_bonus, for each dominated that pareto-noncomparable - spanned_penalty
-        '''
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Also updates individual features from interactions '''
+        super().update(interactions)     
 
         #step 1 - compute all common interactions between all pair of tests 
-        ind_ids = list(self.interactions.keys())
+        ind_ids = list(interactions.keys())
         common_ints = {}
         for i1 in range(len(ind_ids)):
             ind1 = ind_ids[i1]
@@ -607,9 +606,11 @@ class ACOPopulation(Sample):
                 ind2_ints = self.interactions[ind2]
                 ind2_int_keys = set(ind2_ints.keys())
                 common_ids = set.intersection(ind1_int_keys, ind2_int_keys)
-                if len(common_ints) > 1:
-                    common_ints.setdefault(ind1, {})[ind2] = [(ind1_ints[tid], ind2_ints[tid]) for tid in common_ids] 
-                    common_ints.setdefault(ind2, {})[ind1] = [(ind2_ints[tid], ind1_ints[tid]) for tid in common_ids]         
+                if len(common_ids) > 1:
+                    d1 = common_ints.setdefault(ind1, {})
+                    d1[ind2] = [(ind1_ints[tid], ind2_ints[tid]) for tid in common_ids] 
+                    d2 = common_ints.setdefault(ind2, {})
+                    d2[ind1] = [(ind2_ints[tid], ind1_ints[tid]) for tid in common_ids]         
         dominated = {ind:[ind1 for ind1, cints in ind_ints.items() 
                         if all(io >= i1o for io, i1o in cints) and any(io > i1o for io, i1o in cints) ] 
                         for ind, ind_ints in common_ints.items()}
@@ -625,12 +626,31 @@ class ACOPopulation(Sample):
             return result 
         dominated_non_dominant = {ind:non_dominated_pairs(ind_dom) for ind, ind_dom in dominated.items()}
 
-        self.desirability = {ind: self.dom_bonus * len(dominated.get(ind, [])) - self.span_penalty * len(dominated_non_dominant.get(ind, []))
-                  for ind in ind_ids}                        
+        prev_desirability = {**self.desirability}
+        for ind in ind_ids:
+            w = (self.span_penalty ** len(dominated_non_dominant.get(ind, []))) if len(dominated_non_dominant.get(ind, [])) > 0 else (self.dom_bonus ** len(dominated.get(ind, [])))
+            if ind in self.desirability:
+                self.desirability[ind] = sqrt(w * self.desirability[ind]) 
+            else:
+                self.desirability[ind] = w
 
-    def build_selector(self, keys):
-        ''' function that builds selector of features based on keys '''
-        return lambda scores: tuple(scores[k] for k in keys)
+        to_preserve = 2 * self.size
+        if len(self.desirability) > to_preserve:
+            sorted_ranks = sorted(self.desirability.items(), key = lambda x: x[1])
+            for k, _ in sorted_ranks[:-to_preserve]:
+                del self.desirability[k]
+
+        for ind in self.pheromones.keys():
+            self.pheromones[ind] = 1 + (self.pheromones[ind] - 1) * self.pheromone_decay
+
+        for k, v in self.desirability.keys():
+            v2 = prev_desirability.get(k, 0)
+            if v > v2:
+                self.pheromones[ind] = self.pheromones.get(ind, 0) + 10
+
+        self.t += 1  
+        self.population = None    
+                     
         
     def sample_inds(self) -> list[Any]:
         ''' Sample with pheromones and desirability rule 
@@ -638,34 +658,24 @@ class ACOPopulation(Sample):
             Here we ignore alpha and beta heuristic parameters (= 1)
         '''        
         #normalize scores from [min, max] -> [0, max2] - spanned point is on level of origin
-        min_score = min(self.desirability.values(), default=0)
-        d_scores = {k: v - min_score for k, v in self.desirability.items()}
-
-        all_scores = {ind: d_scores.get(ind, 0) for ind in self.all_inds}
-        all_scores_shifted = {ind: score + 0.1 for ind, score in all_scores.items()}
-        interacted_penalty = {ind: 0.1 + 0.9 * (1 - p) for ind, p in self.get_same_interactions_percent().items()}
-        scores_pheromoned = {ind:self.pheromones[ind] * desirability * interacted_penalty.get(ind, 1) for ind, desirability in all_scores_shifted.items()}
-        inds, weights = zip(*list(scores_pheromoned.items()))
-        sum_weight = sum(weights)
+        rand_ids = rnd.choice(len(self.all_inds), size=self.size, replace = False)
+        rand_inds = {self.all_inds[i]:1 for i in rand_ids}
+        weights = {k: v * self.pheromones.get(k, 1) for k, v in self.desirability.items()}
+        weights = {**rand_inds, **weights}
+        sum_weight = sum(weights.values())     
         if sum_weight == 0:
-            sum_weight = 1 
-        probs = [w / sum_weight for w in weights]
-        selected_indexes = rnd.choice(len(inds), size = self.size, replace = False, p = probs)
+            sum_weight += 1   
+        kprobs = [(k, w / sum_weight) for k, w in weights.items()]
+
+
+        # all_scores = {ind: d_scores.get(ind, 0) for ind in self.all_inds}
+        # all_scores_shifted = {ind: score + 0.1 for ind, score in all_scores.items()}
+        # interacted_penalty = {ind: 0.1 + 0.9 * (1 - p) for ind, p in self.get_same_interactions_percent().items()}
+        # scores_pheromoned = {ind:self.pheromones[ind] * desirability * interacted_penalty.get(ind, 1) for ind, desirability in all_scores_shifted.items()}
+        inds, probs = zip(*kprobs)
+        selected_indexes = rnd.choice(len(inds), size = min(len(inds), self.size), replace = False, p = probs)
         selected = [inds[i] for i in selected_indexes]
-        self.population_desirability = sum(self.desirability.get(ind, 0) for ind in selected)
-        return list(selected)
-    
-    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
-        prev_pop_desirability = self.population_desirability
-        self.merge_interactions(interactions) 
-        self.calc_desirability()
-        new_pop_desirability = sum(self.desirability.get(ind, 0) for ind in self.population)
-        if new_pop_desirability > prev_pop_desirability:
-            for ind in self.population:
-                self.pheromones[ind] += 1 
-        for ind in self.all_inds:
-            self.pheromones[ind] = 1 + (self.pheromones[ind] - 1) * self.pheromone_decay
-        self.population = None        
+        return list(selected)  
 
 class OneTimeSequential(Population):
     ''' Solits all_inds onto self.size and gives each chunk only once  

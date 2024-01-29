@@ -52,7 +52,7 @@ def ACO_SIM(popsize = 50, **kwargs):
     def b(game: InteractionGame):
         candidates = ACOPopulation(game.get_all_candidates(), popsize, **get_args(kwargs, "cand_"))
         tests = ACOPopulation(game.get_all_tests(), popsize, **get_args(kwargs, "test_"))
-        sim = CandidateTestInteractions(game, param_steps, candidates, tests)
+        sim = CandidateTestInteractions(game, param_steps, candidates, tests, draw_dynamics=True)
         return sim
     return b
 
@@ -86,9 +86,9 @@ GAME_SIM = {
     "pg-2-50-80": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
     "pg-2-80-90": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.8, max_exploitation_chance = 0.9),
 
-    "aco-50-25": ACO_SIM(pheromone_decay = 0.5, dom_bonus = 1, span_penalty = 0.25),
-    "aco-80-25": ACO_SIM(pheromone_decay = 0.8, dom_bonus = 1, span_penalty = 0.25),
-    "aco-80-50": ACO_SIM(pheromone_decay = 0.8, dom_bonus = 1, span_penalty = 0.50)        
+    "aco-50-25": ACO_SIM(pheromone_decay = 0.5, dom_bonus = 1.5, span_penalty = 0.5),
+    "aco-80-25": ACO_SIM(pheromone_decay = 0.8, dom_bonus = 1.5, span_penalty = 0.5),
+    "aco-80-50": ACO_SIM(pheromone_decay = 0.8, dom_bonus = 1.5, span_penalty = 0.50)        
 }
 
 def RAND_SPACE_SIM(**kwargs):
@@ -236,9 +236,9 @@ SPACE_SIM = {
     "pg-2-50-80": PGS_SPACE_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
     "pg-2-80-90": PGS_SPACE_SIM(rank_penalty = 2, min_exploitation_chance = 0.8, max_exploitation_chance = 0.9),
 
-    "aco-50-25": ACO_SPACE_SIM(pheromone_decay = 0.5, dom_bonus = 1, span_penalty = 0.25),
-    "aco-80-25": ACO_SPACE_SIM(pheromone_decay = 0.8, dom_bonus = 1, span_penalty = 0.25),
-    "aco-80-50": ACO_SPACE_SIM(pheromone_decay = 0.8, dom_bonus = 1, span_penalty = 0.50)        
+    "aco-50-25": ACO_SPACE_SIM(pheromone_decay = 0.5, dom_bonus = 1.1, span_penalty = 0.5),
+    "aco-80-25": ACO_SPACE_SIM(pheromone_decay = 0.8, dom_bonus = 1.1, span_penalty = 0.5),
+    "aco-80-50": ACO_SPACE_SIM(pheromone_decay = 0.8, dom_bonus = 1.1, span_penalty = 0.5)        
 
 }
 
