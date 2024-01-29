@@ -260,8 +260,8 @@ class CandidateTestInteractions(TwoPopulationSimulation):
 
         logs = []
         if self.draw_dynamics: #at this point we asume number game            
-            logs1 = [f"C {c} {l}" for c, l in zip(candidates[:10], self.candidates.keys[:10])]
-            logs2 = [f"T {t} {l}" for t, l in zip(tests[:10], self.tests.keys[:10])]
+            logs1 = [f"C {c}" for c in self.candidates.keys[:10]]
+            logs2 = [f"T {t}" for t in self.tests.keys[:10]]
             logs = [*logs1, *logs2]
         self.draw(candidates, [], tests, [], set.union(self.candidates.seen_inds, self.tests.seen_inds), logs)
 

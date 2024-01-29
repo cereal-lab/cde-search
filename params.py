@@ -6,8 +6,8 @@ param_reg_max_num = 8
 param_seed = 19
 
 param_popsize = 100
-param_candsize = 50
-param_testsize = 50
+param_candsize = 10
+param_testsize = 10
 
 param_space_popsize = 10
 

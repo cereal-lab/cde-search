@@ -42,9 +42,9 @@ def SS_SIM(**kwargs):
 
 def PGS_SIM(**kwargs):
     def b(game: InteractionGame):
-        candidates = ParetoGraphSample(game.get_all_candidates(), popsize = param_candsize, **get_args(kwargs, "cand_"))
-        tests = ParetoGraphSample(game.get_all_tests(), popsize = param_testsize, **get_args(kwargs, "test_"))
-        sim = CandidateTestInteractions(game, param_steps, candidates, tests)
+        candidates = ParetoGraphSample(game.get_all_candidates(), size = param_candsize, **get_args(kwargs, "cand_"))
+        tests = ParetoGraphSample(game.get_all_tests(), size = param_testsize, **get_args(kwargs, "test_"))
+        sim = CandidateTestInteractions(game, param_steps, candidates, tests, draw_dynamics=True)
         return sim 
     return b
 
@@ -82,7 +82,7 @@ GAME_SIM = {
     "s-0_dp_nd": SS_SIM(strategy=["dup", "nond", "kn"]),
     "s-0_dp_ndXdm": SS_SIM(strategy=["dup", "nd", "kn"]),
 
-    "pg-1-50-80": PGS_SIM(rank_penalty = 1, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
+    "pg-1-50-80": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 1), 
     "pg-2-50-80": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
     "pg-2-80-90": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.8, max_exploitation_chance = 0.9),
 

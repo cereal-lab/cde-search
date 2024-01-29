@@ -187,6 +187,7 @@ class Sample(Population):
     def __init__(self, all_inds: list[Any], size:int, **kwargs) -> None:
         super().__init__(all_inds, size, **kwargs)        
         self.t = 0
+        self.keys = []
 
     @abstractmethod
     def sample_inds(self) -> list[Any]:
@@ -258,8 +259,7 @@ class InteractionFeatureOrder(Sample):
 
     def init_inds(self) -> None:
         super().init_inds()
-        self.features = {}
-        self.keys = []
+        self.features = {}        
 
     def build_common_interactions(self, ind: Any, ind_ints: dict[Any, int], pool_inds):
         ''' computes common interactions with other inds of the pool '''
@@ -272,8 +272,7 @@ class InteractionFeatureOrder(Sample):
         return common_interactions     
 
     def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
-        ''' Also updates individual features from interactions 
-        '''
+        ''' Also updates individual features from interactions '''
         super().update(interactions)        
         other_inds = set(interactions.keys())
         for ind, cur_ind_ints in interactions.items():
@@ -367,18 +366,17 @@ class InteractionFeatureOrder(Sample):
                 excluded = set()
                 continue
             if sorted_inds[0].get("noninteracted", False):
-                #pick one from noninterracted, search space could be big therefore we resort to enumeration with limited number of times 
-                self.keys.append("kn")
+                #pick one from noninterracted, search space could be big therefore we resort to enumeration with limited number of times                 
                 tries = 0
                 while tries < 10:
                     i = rnd.choice(len(self.all_inds))
                     selected_ind = self.all_inds[i]
                     if selected_ind not in selected and selected_ind not in self.interactions:
+                        self.keys.append(f"{selected_ind} kn")
                         break
                     tries += 1 
             else:
-                best_ind_key = sorted_inds[0]["key"]
-                self.keys.append(" ".join("{0} {1}".format(k, round(v)) for k, v in zip(i_key_spec, best_ind_key) if v != 0))
+                best_ind_key = sorted_inds[0]["key"]                
                 best_inds = [] 
                 i = 0 
                 while i < len(sorted_inds) and best_ind_key == sorted_inds[i]["key"]:
@@ -400,6 +398,8 @@ class InteractionFeatureOrder(Sample):
                 if self.dedupl and self.is_dupl(selected_ind, selected):
                     dupls.add(selected_ind)
                     continue
+                selected_features = " ".join("{0} {1}".format(k, round(v)) for k, v in zip(i_key_spec, best_ind_key) if v != 0)
+                self.keys.append(f"{selected_ind} {selected_features}")
             # print(f"t={self.t} {i}/{self.n} d={selected_did} from alts {len(best_candidates)} {selected_candidate} kspec: {curr_key_spec[i]}")
             # self.block_similar(selected_did, blocked_dids)
             # print(f"\t selected {qid}: {selected_did}. {selected_dids}")
@@ -407,7 +407,7 @@ class InteractionFeatureOrder(Sample):
         return list(selected)
 
 class ParetoGraphSample(Sample):
-    ''' Tracks interactions and from scarced interaction metricis builds Pareto graph 
+    ''' Tracks interactions and from sparced interaction metrics builds Pareto graph 
         directed edges of which define the Pareto relations. Nodes contains tests/candidates 
         Sampling of graph structure happens with the observation 
         1. Origin of CDE Space would have no incoming edges (as well as starts of the axes)
@@ -426,127 +426,151 @@ class ParetoGraphSample(Sample):
         self.min_exploitation_chance = min_exploitation_chance
         self.max_exploitation_chance = max_exploitation_chance
         self.max_step = max_step
+        self.keys = []
 
-    class Node:
-        def __init__(self) -> None:
-            self.tests = set() 
-            self.ints = {}
-            self.dominates = [] 
-            self.dominated = [] 
-            self.axes = {} #dict, axes_id: point_id. For spanned - many of them           
-            # self.rank = 0 
+    # class Node:
+    #     def __init__(self) -> None:
+    #         self.tests = set() 
+    #         self.ints = {}
+    #         self.dominates = [] 
+    #         self.dominated = [] 
+    #         self.axes = {} #dict, axes_id: point_id. For spanned - many of them      
+    #         self.ax_max_rank = {}     
+    #         # self.rank = 0 
+
+    def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Also updates individual features from interactions '''
+        super().update(interactions)
+        self.keys = []
+        self.t += 1  
+        self.population = None    
+
+    def get_common_ints(self, ind1_ints: dict[Any, int], ind2_ints: dict[Any, int]):
+        res = {k: (o, ind2_ints[k]) for k, o in ind1_ints.items() if k in ind2_ints}
+        return res
 
     def sample_inds(self) -> list[Any]:
         ''' Builds Pareto graph from interactions and sample it '''        
         #first iteration is to build all nodes:
-        nodes = []
-        sorted_tests = sorted(self.interactions.items(), key=lambda x: (len(x[1]), len([v for v in x[1].values() if v == 1])))
+        sorted_tests = sorted(self.interactions.items(), key=lambda x: (-len(x[1]), sum(x[1].values())))
+        # origin = ParetoGraphSample.Node()       
+        origin = set()
+        dimensions = []
+        spanned = []
         for test, ints in sorted_tests:
-            #first we try to check other nodes
-            test_node_common_ints = [(node, [(o, node.ints[c]) for c, o in ints.items() if c in node.ints])
-                                        for node in nodes]
-            test_common_ints = sorted([(node, common_ints) for node, common_ints in test_node_common_ints
-                                        if len(common_ints) > 1 and all(a == b for a,b in common_ints)], 
-                                key=lambda x: len(x[1]), reverse=True)
-            best_common_ints = len(test_common_ints[0][1]) if len(test_common_ints) > 0 else 0
-            selected_nodes = []
-            i = 0
-            while i < len(test_common_ints) and len(test_common_ints[i][1]) == best_common_ints:
-                selected_nodes.append(test_common_ints[i][0])
-                i += 1 
-            for node in selected_nodes:
-                node.tests.add(test)
-                node.ints = {**node.ints, **ints} #merge
-            if len(selected_nodes) == 0: #create new node
-                node = ParetoGraphSample.Node()
-                node.tests.add(test)
-                node.ints = ints
-                nodes.append(node)
-        # now we have all list of nodes. Weestablish Pareto dominance between them
-        for i in range(len(nodes)):
-            node_a = nodes[i]
-            for j in range(i + 1, len(nodes)):
-                node_b = nodes[j]
-                node_node_common_ints = [(o, node_b.ints[c]) for c, o in node_a.ints.items() if c in node_b.ints]
-                if len(node_node_common_ints) > 1:
-                    if all(a >= b for a, b in node_node_common_ints) and any(a > b for a, b in node_node_common_ints):
-                        node_a.dominates.append(node_b)
-                        node_b.dominated.append(node_a)
-                    elif all(b >= a for a, b in node_node_common_ints) and any(b > a for a, b in node_node_common_ints):
-                        node_a.dominated.append(node_b)
-                        node_b.dominates.append(node_a)
-                    #otherwise noncomparable. or same?? probably cannot be same here 
-        # dominates-dominated edges are built now. We can analyse the graph assigning axes 
-        # for this we build topological orders of DAGs for each of axis (nodes without incoming edges)                        
-        def visit(node: ParetoGraphSample.Node, grayNodes: set[ParetoGraphSample.Node], blackNodes: set[ParetoGraphSample.Node],
-                    order: deque[ParetoGraphSample.Node]):
-            ''' Walks through dominated edges from node deep down.
-                Cuts nodes that have already been processed 
-                GrayNodes - nodes we are entered 
-                BlackNodes - nodes we existed
-                implicit WhiteNodes - nodes that are not yet considered 
-                order contains built topological order
-            '''
-            if node in blackNodes:
-                return 
-            assert node not in grayNodes, f'There is a cycle (Pareto not DAG). Node: {node.tests}, {node.dominated}'
-            grayNodes.add(node)
-            for dominator in node.dominated:
-                visit(dominator, grayNodes, blackNodes, order)
-            grayNodes.remove(node)
-            blackNodes.add(node)
-            order.appendleft(node)
-
-
-        axes_starts = [node for node in nodes if len(node.dominates) == 0]
-        axes = []
-        for axis_id, node in enumerate(axes_starts):
-            topological_order = deque([])
-            visit(node, set(), set(), topological_order)
-            prev_rank = 0
-            sum_ranks = 0
-            axes_nodes = []
-            while len(topological_order) > 0:
-                node = topological_order.popleft()
-                node.axes[axis_id] = max(0, prev_rank + 1 - self.rank_penalty * max(0, len(node.dominates) - 1))
-                prev_rank = node.axes[axis_id] 
-                sum_ranks += prev_rank
-                axes_nodes.append(node)
-            #normalize ranks to probabilities
-            for node in axes_nodes:
-                node.axes[axis_id] = node.axes[axis_id] / sum_ranks
-            axes.append(axes_nodes)
+            if all(v == 0 for v in ints.values()): #origin
+                # origin.tests.add(test)
+                origin.add(test)
+                continue
+            test_dims = []
+            is_dup = False
+            for dim_id, dim in enumerate(dimensions):
+                i = len(dim) - 1
+                while i >= 0:
+                    common_outcomes = self.get_common_ints(ints, dim[i][1])                    
+                    if len(common_outcomes) >= 3 and all(o1 == o2 for o1, o2 in common_outcomes.values()):
+                        dim[i][0].add(test)
+                        # has_uncommon_one = any(o == 1 for k, o in ints.items() if k not in dim[i][1])
+                        dim[i] = (dim[i][0], {**dim[i][1], **ints})
+                        is_dup = True #is_dup or not has_uncommon_one   
+                        break    
+                    if len(common_outcomes) >= 2 and all(t >= d for t, d in common_outcomes.values()) and any(t > d for t, d in common_outcomes.values()):
+                        test_dims.append((dim, dim_id, i))   
+                        break
+                    i -= 1
+            if is_dup:
+                continue
+            if len(test_dims) == 0:
+                dimensions.append([(set([test]), ints)])
+            elif len(test_dims) == 1:
+                test_dims[0][0].append((set([test]), ints))
+            else:
+                all_ands = {} 
+                for (dim, dim_id, dim_pos) in test_dims:
+                    dim_ints = dim[dim_pos][1]
+                    for k, v in dim_ints.items():
+                        all_ands[k] = max(all_ands.get(k, 0), v)
+                has_uncommon_one = any(o == 1 for k, o in ints.items() if k not in all_ands)
+                if not has_uncommon_one: #spanned 
+                    spanned.append((test, [(dim_id, dim_pos) for _, dim_id, dim_pos in test_dims]))
+                    continue 
+                at_ends_dims = [dim for dim, _, pos in test_dims if pos == len(dim) - 1]
+                if len(at_ends_dims) > 0:
+                    for dim in at_ends_dims:
+                        dim.append((set([test]), ints))
+                else:
+                    dimensions.append([(set([test]), ints)])
         
         #exploration vs exploitation - some tests are not in the Pareto graph yet. We need also decide how to balance here
         #we use annealing with game step increase the chance for exploitation with time 
 
-        interacted_weights = {ind: 0.1 + 0.9 * (1 - p) for ind, p in self.get_same_interactions_percent().items()}
+        selected = set()
+        interacted_weights = {ind: 1 - p for ind, p in self.get_same_interactions_percent().items()}
 
-        exploitation_weight = self.min_exploitation_chance + (self.t / self.max_step) * (self.max_exploitation_chance - self.min_exploitation_chance)
-        exploration_weight = 1 - exploitation_weight
-        # strategies = rnd.choice([0, 1], size = self.size, p = [1 - exploitation_chance, exploitation_chance])
-        # num_exploits = sum(strategies)
-        # num_explores = sample_size - num_exploits    
-        weights = {}    
+        exploitation_percent = self.min_exploitation_chance + (self.t / self.max_step) * (self.max_exploitation_chance - self.min_exploitation_chance)
+        exploitation_slots = round(self.size * exploitation_percent)
 
-        for axis_id, axis in enumerate(axes):
-            for node in axis:
-                for test in node.tests:
-                    weights[test] = exploitation_weight * (node.axes[axis_id] + 1) * interacted_weights.get(test, 1)        
+        # sampling order: axes (exploit), unknown (explore), spanned (exploit, 0.1), origin (explore, 0.1)
 
-        for ind in self.all_inds:
-            if ind not in self.interactions:
-                weights[ind] = exploration_weight * interacted_weights.get(ind, 1)
+        test_group_weights = {}
+        for axis_id, axis in enumerate(dimensions):            
+            for point_id, (tests, _) in enumerate(axis):
+                # ax_end_coef = (2 if len(axis) == point_id + 1 else 0)
+                ax_end_coef = 0
+                tests = set([t for t in tests if interacted_weights.get(t, 1) > 0 ])
+                if len(tests) > 0:
+                    test_group_weights[(axis_id, point_id)] = (tests, (10 * (point_id + 1) / len(axis) + ax_end_coef))
+        # adding spanned points 
+        for test, spanned_coord in spanned:
+            spanned_set, _ = test_group_weights.setdefault(tuple(spanned_coord), (set(), max(0.01, 0.5 - 0.01 * len(spanned_coord))))
+            spanned_set.add(test)
 
-        min_weight = min(weights.values())        
-        weights_shifted = {ind: (w - min_weight) + 0.1 for ind, w in weights.items()}
-        sum_weights = sum(weights_shifted.values())
-        probs = {ind: w / sum_weights for ind, w in weights_shifted.items()}
+        while len(test_group_weights) > 0 and exploitation_slots > 0:
+            sum_node_weights = sum(w for _, w in test_group_weights.values())
+            group_probs = [ ((gid, tests), w / sum_node_weights) for gid, (tests, w) in test_group_weights.items()]
+            groups, p = zip(*group_probs)
+            group_id = rnd.choice(len(groups), p = list(p))
+            gid, tests = groups[group_id]
+            test_list = list(tests)
+            # test_weights = [-len(self.interactions[t]) for t in test_list]
+            # min_test_weight = min(test_weights)
+            # test_weights_shifted = [w - min_test_weight + 0.1 for w in test_weights]
+            # sum_test_weights = sum(test_weights_shifted)
+            # test_proba = [w / sum_test_weights for w in test_weights_shifted]
+            # test_id = rnd.choice(len(test_list), p = test_proba)
+            test_id = rnd.choice(len(test_list))
+            selected_test = test_list[test_id]
+            if selected_test not in selected:
+                selected.add(selected_test)
+                gid_str = f"{gid}" if type(gid[0]) is int else f"{len(gid)}-sp"
+                # info = dict(g=gid_str,p=f"{round(p[group_id] * 100)}%,{round(test_proba[test_id] * 100)}%")
+                # info = dict(g=gid_str,p=f"{round(p[group_id] * 100)}%,{round(test_proba[test_id] * 100)}%")
+                # info_str = " ".join("{0} {1}".format(k, v) for k,v in info.items())
+                self.keys.append(f"{selected_test} {gid_str} {round(p[group_id] * 100)}% {len(test_list)}")                
+                exploitation_slots -= 1
+            tests.discard(selected_test)
+            if len(tests) == 0:
+                del test_group_weights[gid]
 
-        inds, p = zip(*list(probs.items()))
-        selected_indexes = rnd.choice(len(inds), size = self.size, replace=False, p = list(p))
-        selected = [inds[i] for i in selected_indexes]
-        return selected    
+        #here we treet origin as usual 
+        j = 0
+        while len(selected) < self.size and j < 100:
+            was_selected = False
+            i = 0
+            while i < 10:             
+                selected_index = rnd.choice(len(self.all_inds))            
+                selected_ind = self.all_inds[selected_index]
+                i += 1            
+                if selected_ind not in selected and (selected_ind in origin or selected_ind not in self.interactions):
+                    selected.add(selected_ind)
+                    self.keys.append(f"{selected_ind} new")
+                    was_selected = True 
+                    break
+            if was_selected:
+                continue
+            j += 1    
+            
+        return list(selected)
 
 class ACOPopulation(Sample):
     ''' Population that changes by principle of pheromone distribution 
