@@ -23,7 +23,7 @@ def extract_dims(tests):
     origin = []
     spanned = []
     dimensions = []    
-    duplicates = []
+    # duplicates = []
 
     for test_id, test in sorted(enumerate(tests), key=lambda x: sum(x[1])):        
         if all(t == 0 for t in test): #origin 
@@ -33,7 +33,8 @@ def extract_dims(tests):
         is_dup = False
         for dim in dimensions:
             if all(t == d for t, d in zip(test, dim[-1][1])):
-                duplicates.append(test_id)
+                # duplicates.append(test_id)
+                dim[-1][0].append(test_id)
                 is_dup = True
                 break 
             else:
@@ -50,13 +51,14 @@ def extract_dims(tests):
             spanned.append(test_id)
             continue 
         elif len(all_ands) == 0: #extend any of dims 
-            dimensions.append([(test_id, test)])
+            dimensions.append([([test_id], test)])
         else:
             at_ends_dims = [dim for dim, pos in test_dims if pos == len(dim) - 1]
             if len(at_ends_dims) > 0:
-                at_ends_dims[0].append((test_id, test)) 
+                at_ends_dims[0].append(([test_id], test)) 
             else:
-                dimensions.append([(test_id, test)])
+                dimensions.append([([test_id], test)])
 
-    dims = [[i for i, _ in dim] for dim in dimensions]
+    dims = [[test_ids for test_ids, _ in dim] for dim in dimensions]
+    duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
     return dims, origin, spanned, duplicates

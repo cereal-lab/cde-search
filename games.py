@@ -482,7 +482,7 @@ if __name__ == '__main__':
     game = OrigIntransitiveGame(0, 3)
     ints = game.get_interaction_matrix()
     dims, origin, spanned, duplicates = extract_dims(ints)
-    dim_nums = [[game.all_numbers[i] for i in dim] for dim in dims]
+    dim_nums = [[game.all_numbers[test_ids[0]] for test_ids in dim] for dim in dims]
     origin_nums = [game.all_numbers[i] for i in origin]
     spanned_nums = [game.all_numbers[i] for i in spanned]
     duplicates_nums = [game.all_numbers[i] for i in duplicates]
@@ -494,8 +494,9 @@ if __name__ == '__main__':
     rows = []    
     for dim_id, dim in enumerate(sorted(dims, key = lambda dim:game.all_numbers[dim[-1]])):
         # print(f"Dim {dim_id}")
-        for i in dim:
+        for test_ids in dim:
             # print(f"{game.all_numbers[i]}: {ints[i]}")
+            i = test_ids[0]
             row = []
             num = game.all_numbers[i]
             row.append(dim_id)
