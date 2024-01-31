@@ -12,7 +12,7 @@ from deca import extract_dims
 from population import OneTimeSequential, Population
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
         PARAM_MAX_INDS, PARAM_MAX_INTS, PARAM_UNIQ_INDS, rnd, param_reg_min_num, param_reg_max_num,\
-        param_min_num, param_max_num
+        param_min_num, param_max_num, param_space_popsize
 from tabulate import tabulate, SEPARATING_LINE
 
 import numpy as np
@@ -229,7 +229,7 @@ class PPHC(TwoPopulationSimulation):
 
 class RandSampling(GameSimulation):
     ''' Samples the individuals from game as provide it as result '''
-    def __init__(self, game: InteractionGame, cand_sample_size, test_sample_size) -> None:
+    def __init__(self, game: InteractionGame, cand_sample_size = param_space_popsize, test_sample_size = param_space_popsize) -> None:
         super().__init__(game)
         self.cand_sample_size = cand_sample_size
         self.test_sample_size = test_sample_size

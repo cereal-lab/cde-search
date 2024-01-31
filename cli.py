@@ -16,7 +16,7 @@
 import json
 import click
 from cde import CDESpace
-from config import CONFIG, GAME_GROUPS, SIM_GROUPS
+from config import CONFIG, GAME_GROUPS, SIM_GROUPS, GAMES, SPACES, GAME_SIM, SPACE_SIM, print_config
 from games import GameSimulation, InteractionGame 
 from params import param_seed
 import fcntl
@@ -121,18 +121,48 @@ class NpEncoder(json.JSONEncoder):
         if isinstance(obj, np.bool_):
             return bool(obj)
         return super(NpEncoder, self).default(obj)
-    
-@cli.command("game")
-@click.option("-id", type = int, required = True)
+
+@cli.command("config")
+def show_config():
+    print_config()
+
+@cli.command("game", context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.option("-id", type = int, default = 0)
+@click.option("-gid", type = str)
+@click.option("-sid", type = str)
 @click.option('--times', type=int, default = 1)
 @click.option("-m", "--metrics", type = str, default = "metrics.jsonlist")
-def run_game(id, times = 1, metrics = ""):
-    group, game_name, sim_name = CONFIG[id]    
-    game_builder = GAME_GROUPS[group][game_name]
-    sim_builder = SIM_GROUPS[group][sim_name]
+@click.pass_context
+def run_game(ctx, id = 0, gid = None, sid = None, times = 1, metrics = ""):
+    game_dynamic_args = dict()
+    sim_dynamic_args = dict()
+    for item in ctx.args:
+        nameVal = item.split('=')
+        if nameVal[0].startswith("g_"):
+            game_dynamic_args.update([nameVal])
+        else:
+            sim_dynamic_args.update([nameVal])
+    if gid is not None and sid is not None:
+        sim_name = sid 
+        game_name = gid
+        if gid in GAMES:
+            group = "game"
+            game_builder = GAMES[gid]
+            sim_builder = GAME_SIM[sid]            
+        else:
+            group = "space"
+            game_builder = SPACES[gid]
+            sim_builder = SPACE_SIM[sim]
+    else:
+        group, game_name, sim_name = CONFIG[id]    
+        game_builder = GAME_GROUPS[group][game_name]
+        sim_builder = SIM_GROUPS[group][sim_name]
     click.echo(f"Running simulation {sim_name} on game {game_name} from group '{group}'")
-    game : InteractionGame = game_builder() #no kwargs? - see params.py for defaults
-    sim : GameSimulation = sim_builder(game)
+    game : InteractionGame = game_builder(**game_dynamic_args)
+    sim : GameSimulation = sim_builder(game, **sim_dynamic_args)
     for i in range(times): 
         start_ms = int(time.time() * 1000)
         sim.play()

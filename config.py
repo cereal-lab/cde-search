@@ -10,7 +10,7 @@ from typing import Any
 from cde import CDESpace
 from games import PCHC, PPHC, CDESpaceGame, CandidateTestInteractions, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, RandSampling
 
-from population import ACOPopulation, HCPopulation, OneTimeSequential, ParetoGraphSample, InteractionFeatureOrder
+from population import ACOPopulation, HCPopulation, OneTimeSequential, DECABasedSample, InteractionFeatureOrder
 from params import *
 
 def get_args(kwargs: dict[str, Any], prefix):
@@ -20,38 +20,43 @@ def get_args(kwargs: dict[str, Any], prefix):
     return params
 
 def PCHC_SIM(**kwargs):
-    def b(game: InteractionGame):
-        return PCHC(game, param_steps, HCPopulation(game.get_all_candidates(), popsize = param_popsize, **kwargs), draw_dynamics=True)
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        return PCHC(game, param_steps, HCPopulation(game.get_all_candidates(), popsize = param_popsize, **kwargsAll), draw_dynamics=True)
     return b
 
 def PPHC_SIM(**kwargs):
-    def b(game: InteractionGame):
-        candidates = HCPopulation(game.get_all_candidates(), popsize = param_candsize, **get_args(kwargs, "cand_"))
-        tests = HCPopulation(game.get_all_tests(), popsize = param_testsize, **get_args(kwargs, "test_"))
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = HCPopulation(game.get_all_candidates(), popsize = param_candsize, **get_args(kwargsAll, "cand_"))
+        tests = HCPopulation(game.get_all_tests(), popsize = param_testsize, **get_args(kwargsAll, "test_"))
         sim = PPHC(game, param_steps, candidates, tests, draw_dynamics=True)
         return sim
     return b
 
 def SS_SIM(**kwargs):
-    def b(game: InteractionGame):
-        candidates = InteractionFeatureOrder(game.get_all_candidates(), size = param_candsize, **get_args(kwargs, "cand_"))
-        tests = InteractionFeatureOrder(game.get_all_tests(), size = param_testsize, **get_args(kwargs, "test_"))
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = InteractionFeatureOrder(game.get_all_candidates(), size = param_candsize, **get_args(kwargsAll, "cand_"))
+        tests = InteractionFeatureOrder(game.get_all_tests(), size = param_testsize, **get_args(kwargsAll, "test_"))
         sim = CandidateTestInteractions(game, param_steps, candidates, tests, draw_dynamics=True)
         return sim    
     return b
 
-def PGS_SIM(**kwargs):
-    def b(game: InteractionGame):
-        candidates = ParetoGraphSample(game.get_all_candidates(), size = param_candsize, **get_args(kwargs, "cand_"))
-        tests = ParetoGraphSample(game.get_all_tests(), size = param_testsize, **get_args(kwargs, "test_"))
+def DS_SIM(**kwargs):
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = DECABasedSample(game.get_all_candidates(), size = param_candsize, **get_args(kwargsAll, "cand_"))
+        tests = DECABasedSample(game.get_all_tests(), size = param_testsize, **get_args(kwargsAll, "test_"))
         sim = CandidateTestInteractions(game, param_steps, candidates, tests, draw_dynamics=True)
         return sim 
     return b
 
 def ACO_SIM(popsize = 50, **kwargs):
-    def b(game: InteractionGame):
-        candidates = ACOPopulation(game.get_all_candidates(), popsize, **get_args(kwargs, "cand_"))
-        tests = ACOPopulation(game.get_all_tests(), popsize, **get_args(kwargs, "test_"))
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = ACOPopulation(game.get_all_candidates(), popsize, **get_args(kwargsAll, "cand_"))
+        tests = ACOPopulation(game.get_all_tests(), popsize, **get_args(kwargsAll, "test_"))
         sim = CandidateTestInteractions(game, param_steps, candidates, tests, draw_dynamics=True)
         return sim
     return b
@@ -65,66 +70,66 @@ GAME_SIM = {
     "pphc-pmo-p-p": PPHC_SIM(mutation = "plus_minus_one", ind_range=(param_min_num, param_max_num), cand_selection="pareto_select", test_selection="pareto_select", init="zero_init", init_range=3),
     "pphc-r-p-i": PPHC_SIM(mutation = "resample", cand_selection="pareto_select", test_selection="informativeness_select", init="zero_init", init_range=3), 
     "pphc-r-p-p": PPHC_SIM(mutation = "resample", cand_selection="pareto_select", test_selection="pareto_select", init="zero_init", init_range=3),
-    "s-0_nd": SS_SIM(strategy=[["nond", "kn"]]),
-    "s-0_ndXdm": SS_SIM(strategy=["nd", "kn"]),
-    "s-0_dm": SS_SIM(strategy=["dom", "kn"]),
-    "s-0_d": SS_SIM(strategy=["d", "kn"]),
-    "s-0_sXd": SS_SIM(strategy=["sd", "kn"]),
-    "s-0_Zs": SS_SIM(strategy=["-s", "kn"]),
-    "s-0_k": SS_SIM(strategy=["kn"]),
+    "s-0_nd": SS_SIM(strategy=[["nond", "dom", "kn"]]),
+    # "s-0_ndXdm": SS_SIM(strategy=["nd", "kn"]),
+    # "s-0_dm": SS_SIM(strategy=["dom", "kn"]),
+    # "s-0_d": SS_SIM(strategy=["d", "kn"]),
+    # "s-0_sXd": SS_SIM(strategy=["sd", "kn"]),
+    # "s-0_Zs": SS_SIM(strategy=["-s", "kn"]),
+    # "s-0_k": SS_SIM(strategy=["kn"]),
 
-    "s-0_dp_kn": SS_SIM(strategy=["dup","kn"]),
-    "s-0_dp_d": SS_SIM(strategy=["dup", "d", "kn"]),
-    "s-0_dp_sXd": SS_SIM(strategy=["dup", "sd", "kn"]),
-    "s-0_dp_kn": SS_SIM(strategy=["d", "kn"]),
-    "s-0_dp_Zs": SS_SIM(strategy=["dup", "-s", "kn"]),
-    "s-0_dp_dm": SS_SIM(strategy=["dup", "dom", "kn"]),
-    "s-0_dp_nd": SS_SIM(strategy=["dup", "nond", "kn"]),
-    "s-0_dp_ndXdm": SS_SIM(strategy=["dup", "nd", "kn"]),
+    # "s-0_dp_kn": SS_SIM(strategy=["dup","kn"]),
+    # "s-0_dp_d": SS_SIM(strategy=["dup", "d", "kn"]),
+    # "s-0_dp_sXd": SS_SIM(strategy=["dup", "sd", "kn"]),
+    # "s-0_dp_kn": SS_SIM(strategy=["d", "kn"]),
+    # "s-0_dp_Zs": SS_SIM(strategy=["dup", "-s", "kn"]),
+    # "s-0_dp_dm": SS_SIM(strategy=["dup", "dom", "kn"]),
+    # "s-0_dp_nd": SS_SIM(strategy=["dup", "nond", "kn"]),
+    # "s-0_dp_ndXdm": SS_SIM(strategy=["dup", "nd", "kn"]),
 
-    "pg-1-50-80": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 1), 
-    "pg-2-50-80": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
-    "pg-2-80-90": PGS_SIM(rank_penalty = 2, min_exploitation_chance = 0.8, max_exploitation_chance = 0.9),
-
-    "aco-50-25": ACO_SIM(pheromone_decay = 0.5, dom_bonus = 1.5, span_penalty = 0.5),
-    "aco-80-25": ACO_SIM(pheromone_decay = 0.8, dom_bonus = 1.5, span_penalty = 0.5),
-    "aco-80-50": ACO_SIM(pheromone_decay = 0.8, dom_bonus = 1.5, span_penalty = 0.50)        
+    "ds-100-001": DS_SIM(obj_bonus = 100, span_penalty = 0.01), 
+    "aco-08-10-100-001": ACO_SIM(pheromone_decay = 0.8, pheromone_inc = 10, dom_bonus = 100, span_penalty = 0.01,)      
 }
 
 def RAND_SPACE_SIM(**kwargs):
-    def b(game: CDESpaceGame):
-        return RandSampling(game, param_space_popsize, param_space_popsize)
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        return RandSampling(game, **kwargsAll)
     return b    
 
 def PPHC_SPACE_SIM(num_cands = 2, **kwargs):
-    def b(game: CDESpaceGame):
-        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargs, "cand_"))
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargsAll, "cand_"))
         max_steps = len(candidates.get_all_inds()) / num_cands
-        tests = HCPopulation(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargs, "test_"))
+        tests = HCPopulation(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargsAll, "test_"))
         return PPHC(game, max_steps, candidates, tests)
     return b
 
 def SS_SPACE_SIM(num_cands = 2, **kwargs):
-    def b(game: CDESpaceGame):
-        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargs, "cand_"))
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargsAll, "cand_"))
         max_steps = len(candidates.get_all_inds()) / num_cands
-        tests = InteractionFeatureOrder(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargs, "test_"))
+        tests = InteractionFeatureOrder(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargsAll, "test_"))
         return CandidateTestInteractions(game, max_steps, candidates, tests)
     return b
 
-def PGS_SPACE_SIM(num_cands = 2, **kwargs):
-    def b(game: CDESpaceGame):
-        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargs, "cand_"))
+def DS_SPACE_SIM(num_cands = 2, **kwargs):
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargsAll, "cand_"))
         max_steps = len(candidates.get_all_inds()) / num_cands
-        tests = ParetoGraphSample(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargs, "test_"))
+        tests = DECABasedSample(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargsAll, "test_"))
         return CandidateTestInteractions(game, max_steps, candidates, tests)
     return b
 
 def ACO_SPACE_SIM(num_cands = 2, **kwargs):
-    def b(game: InteractionGame):
-        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargs, "cand_"))
+    def b(game: InteractionGame, **kwargs2):
+        kwargsAll = {**kwargs, **kwargs2}
+        candidates = OneTimeSequential(game.get_all_candidates(), num_cands, **get_args(kwargsAll, "cand_"))
         max_steps = len(candidates.get_all_inds()) / num_cands
-        tests = ACOPopulation(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargs, "test_"))
+        tests = ACOPopulation(game.get_all_tests(), popsize = param_space_popsize, **get_args(kwargsAll, "test_"))
         return CandidateTestInteractions(game, max_steps, candidates, tests)
     return b
 
@@ -215,31 +220,25 @@ SPACE_SIM = {
     "pchc-r-i": PPHC_SPACE_SIM(mutation = "resample", test_selection="informativeness_select"), 
     "pchc-r-p": PPHC_SPACE_SIM(mutation = "resample", test_selection="pareto_select"),
     
-    "s-0_nd": SS_SPACE_SIM(strategy=["nond", "kn"]),
-    "s-0_ndXdm": SS_SPACE_SIM(strategy=["nd", "kn"]),
-    "s-0_dm": SS_SPACE_SIM(strategy=["dom", "kn"]),
-    "s-0_d": SS_SPACE_SIM(strategy=["d", "kn"]),
-    "s-0_sXd": SS_SPACE_SIM(strategy=["sd", "kn"]),
-    "s-0_Zs": SS_SPACE_SIM(strategy=["-s", "kn"]),
-    "s-0_k": SS_SPACE_SIM(strategy=["kn"]),
+    "s-0_nd": SS_SPACE_SIM(strategy=["nond", "dom", "kn"]),
+    # "s-0_ndXdm": SS_SPACE_SIM(strategy=["nd", "kn"]),
+    # "s-0_dm": SS_SPACE_SIM(strategy=["dom", "kn"]),
+    # "s-0_d": SS_SPACE_SIM(strategy=["d", "kn"]),
+    # "s-0_sXd": SS_SPACE_SIM(strategy=["sd", "kn"]),
+    # "s-0_Zs": SS_SPACE_SIM(strategy=["-s", "kn"]),
+    # "s-0_k": SS_SPACE_SIM(strategy=["kn"]),
 
-    "s-0_dp_kn": SS_SPACE_SIM(strategy=["dup","kn"]),
-    "s-0_dp_d": SS_SPACE_SIM(strategy=["dup", "d", "kn"]),
-    "s-0_dp_sXd": SS_SPACE_SIM(strategy=["dup", "sd", "kn"]),
-    "s-0_dp_kn": SS_SPACE_SIM(strategy=["d", "kn"]),
-    "s-0_dp_Zs": SS_SPACE_SIM(strategy=["dup", "-s", "kn"]),
-    "s-0_dp_dm": SS_SPACE_SIM(strategy=["dup", "dom", "kn"]),
-    "s-0_dp_nd": SS_SPACE_SIM(strategy=["dup", "nond", "kn"]),
-    "s-0_dp_ndXdm": SS_SPACE_SIM(strategy=["dup", "nd", "kn"]),
+    # "s-0_dp_kn": SS_SPACE_SIM(strategy=["dup","kn"]),
+    # "s-0_dp_d": SS_SPACE_SIM(strategy=["dup", "d", "kn"]),
+    # "s-0_dp_sXd": SS_SPACE_SIM(strategy=["dup", "sd", "kn"]),
+    # "s-0_dp_kn": SS_SPACE_SIM(strategy=["d", "kn"]),
+    # "s-0_dp_Zs": SS_SPACE_SIM(strategy=["dup", "-s", "kn"]),
+    # "s-0_dp_dm": SS_SPACE_SIM(strategy=["dup", "dom", "kn"]),
+    # "s-0_dp_nd": SS_SPACE_SIM(strategy=["dup", "nond", "kn"]),
+    # "s-0_dp_ndXdm": SS_SPACE_SIM(strategy=["dup", "nd", "kn"]),
 
-    "pg-1-50-80": PGS_SPACE_SIM(rank_penalty = 1, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
-    "pg-2-50-80": PGS_SPACE_SIM(rank_penalty = 2, min_exploitation_chance = 0.5, max_exploitation_chance = 0.8), 
-    "pg-2-80-90": PGS_SPACE_SIM(rank_penalty = 2, min_exploitation_chance = 0.8, max_exploitation_chance = 0.9),
-
-    "aco-50-25": ACO_SPACE_SIM(pheromone_decay = 0.5, dom_bonus = 1.1, span_penalty = 0.5),
-    "aco-80-25": ACO_SPACE_SIM(pheromone_decay = 0.8, dom_bonus = 1.1, span_penalty = 0.5),
-    "aco-80-50": ACO_SPACE_SIM(pheromone_decay = 0.8, dom_bonus = 1.1, span_penalty = 0.5)        
-
+    "ds-100-001": DS_SPACE_SIM(obj_bonus = 100, span_penalty = 0.01), 
+    "aco-08-10-100-001": ACO_SPACE_SIM(pheromone_decay = 0.8, pheromone_inc = 10, dom_bonus = 100, span_penalty = 0.01,)      
 }
 
 GAMES_CONFIG = list(product(GAMES.keys(), GAME_SIM.keys()))
@@ -252,11 +251,14 @@ CONFIG_GROUPS = {"game": GAMES_CONFIG, "space": SPACE_CONFIG}
 CONFIG = [ (group, *c) for group, cfgs in CONFIG_GROUPS.items() for c in cfgs ]
 
 from tabulate import tabulate
-if __name__ == '__main__':
+
+def print_config():
     # printing stats of all present configs
     print(f"{len(CONFIG)} configs present")
     print(f"{len(GAMES_CONFIG)} game configs: {len(GAMES)} games and {len(GAME_SIM)} simulations")
     print(f"{len(SPACE_CONFIG)} space configs: {len(SPACES)} spaces and {len(SPACE_SIM)} simulations")
     rows = [[i, group, game_name, sim_name] for i, (group, game_name, sim_name) in enumerate(CONFIG)]
     print(tabulate(rows, headers=["ID", "GROUP", "game", "simulation"], tablefmt="github"))
-        
+
+if __name__ == '__main__':
+    print_config()        
