@@ -12,7 +12,7 @@ from deca import extract_dims
 from population import OneTimeSequential, Population
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
         PARAM_MAX_INDS, PARAM_MAX_INTS, PARAM_UNIQ_INDS, rnd, param_reg_min_num, param_reg_max_num,\
-        param_min_num, param_max_num, param_space_popsize
+        param_min_num, param_max_num, param_space_popsize, param_draw_dynamics
 from tabulate import tabulate, SEPARATING_LINE
 
 import numpy as np
@@ -78,7 +78,7 @@ class GameSimulation(ABC):
 
 class StepGameSimulation(GameSimulation):
     ''' Defines step based game with group of interactions on each step '''
-    def __init__(self, game: InteractionGame, max_steps, draw_dynamics = False) -> None:
+    def __init__(self, game: InteractionGame, max_steps, draw_dynamics = param_draw_dynamics) -> None:
         super().__init__(game)
         self.max_steps = max_steps
         self.step = 0

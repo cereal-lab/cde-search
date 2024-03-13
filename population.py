@@ -3,7 +3,7 @@
 '''
 
 from abc import abstractmethod
-from collections import deque
+import json
 from math import sqrt
 from typing import Any
 from deca import extract_dims
@@ -18,6 +18,7 @@ class Population:
         self.population = [] #first call of get_inds should initialize
         self.interactions = {}
         self.all_inds = all_inds #pool of all possible individuals
+        self.all_inds_set = set(all_inds)
         self.pop_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
         self.pop_params = {"size": popsize, "class":self.__class__.__name__, **kwargs}
@@ -186,9 +187,10 @@ class HCPopulation(Population):
 class Sample(Population):
     ''' Population is a sample from interaction matrix or computed features '''
     def __init__(self, all_inds: list[Any], size:int, min_exploit_prop = 0.5, max_exploit_prop = 1, max_step = param_steps, 
-                    cut_features_prop = 2, **kwargs) -> None:
+                    directed_explore_prop = 0.5, cut_features_prop = 2, **kwargs) -> None:
         super().__init__(all_inds, size, **kwargs)        
-        self.pop_params.update(min_exploit_prop = min_exploit_prop, max_exploit_prop = max_exploit_prop, max_step = max_step, cut_features_prop = cut_features_prop)
+        self.pop_params.update(min_exploit_prop = min_exploit_prop, max_exploit_prop = max_exploit_prop, 
+                                directed_explore_prop = directed_explore_prop, max_step = max_step, cut_features_prop = cut_features_prop)
         self.t = 0
         self.min_exploit_prop = min_exploit_prop
         self.max_exploit_prop = max_exploit_prop
@@ -196,6 +198,7 @@ class Sample(Population):
         self.exploit_prop = self.min_exploit_prop
         self.cut_features_prop = cut_features_prop
         self.explore_interacted = True
+        self.directed_explore_prop = directed_explore_prop
         self.keys = []
 
     @abstractmethod
@@ -228,6 +231,8 @@ class Sample(Population):
         self.for_group = None
         self.t = 0
         self.keys = []
+        #for directed exploration
+        self.explore_child_parent = {}
 
     def get_same_interactions_percent(self):
         ''' We would like to avoid same interactions for the following steps
@@ -242,11 +247,66 @@ class Sample(Population):
                     if existing > 0}
         return scores 
     
+    def addDiff(self, addToInd, subFromInd, subInd, mul):
+        ''' Representation specific: TODO: move to ind representation '''
+        if type(addToInd) is int:
+            return addToInd + subFromInd - subInd 
+        if type(addToInd) is tuple and len(addToInd) > 0:
+            return tuple(a + (b - c) * mul for a,b,c in zip(addToInd, subFromInd, subInd))
+        assert False, f"Usupported representation of {addToInd} {type(addToInd)}"
+
+    def addSimpleDirection(self, addToInd):
+        ''' Representation specific: TODO: move to ind representation '''
+        if type(addToInd) is int:
+            all_dirs = [-1,1]
+            direction = rnd.choice(all_dirs)
+            return addToInd + direction
+        if type(addToInd) is tuple and len(addToInd) > 0:
+            all_dirs = [-1,1]
+            num_poss_to_modify = rnd.randint(1, len(addToInd))
+            poss_to_modify = set(rnd.choice(len(addToInd), size = num_poss_to_modify, replace=False))
+            all_dirs = [-1,1]            
+            return tuple((v + rnd.choice(all_dirs)) if i in poss_to_modify else v for i, v in enumerate(addToInd))
+        assert False, f"Usupported representation of {addToInd} {type(addToInd)}"        
+    
     def explore(self, selected: set[Any]) -> None:
         ''' Samples individuals based on interactions exploration. Contrast it to exploit selection 
             We assume that the search space is big and it is expensive to enumerate it/assign distribution per element.
             Adds exploration sample to given selected. 
         '''
+        #directed explore 
+        directed_explore_slots = round(max(0, self.size - len(selected)) * self.directed_explore_prop)
+        misses = 0
+        len_with_directed_explore = len(selected) + directed_explore_slots
+        if directed_explore_slots > 0 and len(selected) > 0:            
+            # cur_explore_child_parent = {k:v for k, v in self.explore_child_parent.items() if k in selected}
+            explore_child_parent = {}
+            while len(selected) < len_with_directed_explore and misses < 10:
+                selected_list = list(selected)
+                selected_index = rnd.randint(0, len(selected_list))
+                parent = selected_list[selected_index]
+                child = None
+                if parent in self.explore_child_parent: #parent was produced by directed explore and has its own parent
+                    grandparent, numTimes = self.explore_child_parent[parent]
+                    #TODO use representation specific diffAdd 
+                    child = self.addDiff(parent, grandparent, parent, numTimes)
+                    if child not in self.all_inds_set or child in selected:
+                        child = None
+                        # child = parent 
+                        # del self.explore_child_parent[parent]
+                if child is None: #parent does not have direction - sample simple one
+                    child = self.addSimpleDirection(parent)
+                    numTimes = 1
+                if child not in self.all_inds_set or child in selected or (self.explore_interacted and child in self.interactions):
+                    misses += 1
+                else:
+                    explore_child_parent[child] = (parent, numTimes + 1)
+                    selected.add(child)
+                    self.keys.append(f"{child} E {parent}")
+                    misses = 0
+            self.explore_child_parent = explore_child_parent
+
+        #random sampling
         misses = 0 # number of times we select same
         while len(selected) < self.size and misses < 100:
             selected_index = rnd.randint(0, len(self.all_inds))
@@ -275,20 +335,19 @@ class Sample(Population):
         
 class InteractionFeatureOrder(Sample):
     ''' Sampling of search space based on grouping by interactions features and ordering of the groups '''
-    def __init__(self, all_inds: list[Any], size: int, dedupl = False, anneal_max_time = param_steps, 
+    def __init__(self, all_inds: list[Any], size: int, dedupl = False,
                     strategy = None, epsilon = None, softmax = None, tau = 1,
                     **kwargs) -> None:
         super().__init__(all_inds, size, **kwargs)
-        self.pop_params.update(dedupl = dedupl, anneal_max_time = anneal_max_time, strategy = strategy, epsilon = epsilon, softmax = softmax, tau = tau)
+        self.pop_params.update(dedupl = dedupl, strategy = strategy, epsilon = epsilon, softmax = softmax, tau = tau)
         self.explore_interacted = False
-        self.epsilon = epsilon
+        self.epsilon = float(epsilon) if epsilon is not None else None
         self.softmax = softmax
-        self.tau = tau
-        self.dedupl = dedupl
-        self.anneal_max_time = anneal_max_time
+        self.tau = float(tau)
+        self.dedupl = bool(dedupl)
         self.features = {} #contains set of features per interacted individual 
         default_strategy = [{"t": 0, "keys": [["kn-rel", "kn", "nond", "sd", "dom"]] }]
-        strategy = default_strategy if strategy is None else strategy
+        strategy = default_strategy if strategy is None else json.loads(strategy) if type(strategy) is str else strategy
         if type(strategy) is list:
             if len(strategy) == 0:
                 strategy = default_strategy
@@ -375,21 +434,22 @@ class InteractionFeatureOrder(Sample):
         ''' function that builds selector of features based on keys '''
         return lambda scores: tuple(scores[k] for k in keys)
         
-    def exploit(self, size) -> set[Any]:
+    def exploit(self, sample_size) -> set[Any]:
         if len(self.features) == 0:
             return set()
         curr_key_spec = next(spec for spec in self.strategy if self.t >= spec["t"])["keys"]
-        seens_interaction_percents = self.get_same_interactions_percent()
-        excluded = {ind for ind, p in seens_interaction_percents.items() if rnd.rand() < p }
+        # seens_interaction_percents = self.get_same_interactions_percent()
+        # excluded = {ind for ind, p in seens_interaction_percents.items() if rnd.rand() < p }
+        excluded = set()
         selected = set()
         dupls = set()
         self.keys = []
-        start_explore_i = self.size
-        coef = 2 if len(self.for_group) > 0 else 1 #explore more
-        start_explore_i = self.size - max(0, (coef * self.size // 3) * (1 - self.t / self.anneal_max_time))
+        # start_explore_i = self.size
+        # coef = 2 if len(self.for_group) > 0 else 1 #explore more
+        # start_explore_i = self.size - max(0, (coef * self.size // 3) * (1 - self.t / self.max_step))
         i = 0
-        while i < self.size:
-            i_key_spec = ["-one", "kn"] if i >= start_explore_i else curr_key_spec[i] if i < len(curr_key_spec) else curr_key_spec[-1]
+        while i < sample_size:
+            i_key_spec = curr_key_spec[i] if i < len(curr_key_spec) else curr_key_spec[-1]
             if (self.epsilon is not None) and (rnd.rand() < self.epsilon): #apply default epsilon strategy - ordered exploration
                 i_key_spec = ["kn", "nond", "d"]
             elif self.softmax is not None:
@@ -426,9 +486,9 @@ class InteractionFeatureOrder(Sample):
                         softmax_sum += ind['softmax']
                     for ind in best_inds:
                         ind['softmax'] = ind['softmax'] / softmax_sum
-                    selected_index = rnd.choice(list(best_inds), p = [d['softmax'] for d in best_inds])
+                    selected_index = rnd.choice(len(best_inds), p = [d['softmax'] for d in best_inds])
                 else:
-                    selected_index = rnd.choice(list(best_inds))
+                    selected_index = rnd.choice(len(best_inds))
                 selected_ind = best_inds[selected_index]["ind"]
                 if self.dedupl and self.is_dupl(selected_ind, selected):
                     dupls.add(selected_ind)
@@ -565,13 +625,13 @@ class ACOPopulation(Sample):
         And gradually goes down to 1. 
     '''
     def __init__(self, all_inds: list[Any], size: int,
-                    pheromone_decay = 0.8, pheromone_inc = 10, dom_bonus = 100, span_penalty = 0.01, **kwargs) -> None:
+                    pheromone_decay = 0.5, pheromone_inc = 10, dom_bonus = 1, span_penalty = 1, **kwargs) -> None:
         super().__init__(all_inds, size, **kwargs)
         self.pop_params.update(pheromone_decay = pheromone_decay, dom_bonus = dom_bonus, span_penalty = span_penalty, pheromone_inc = pheromone_inc)
-        self.pheromone_decay = pheromone_decay
-        self.dom_bonus = dom_bonus
-        self.span_penalty = span_penalty
-        self.pheromone_inc = pheromone_inc
+        self.pheromone_decay = float(pheromone_decay)
+        self.dom_bonus = float(dom_bonus)
+        self.span_penalty = float(span_penalty)
+        self.pheromone_inc = float(pheromone_inc)
 
     def init_inds(self) -> None:
         super().init_inds()
@@ -612,30 +672,30 @@ class ACOPopulation(Sample):
         dominated_non_dominant = {ind:non_dominated_pairs(ind_dom) for ind, ind_dom in dominated.items()}
         spanned = set() 
         for ind, inds in dominated_non_dominant.items():
-            combined_ints = {} 
-            for ind1 in inds:
-                for ind2, o in self.interactions[ind1].items():
-                    combined_ints[ind2] = max(combined_ints.get(ind2, 0), o)
-            if all(o == combined_ints[ind2] for ind2, o in self.interactions[ind].items() if ind2 in combined_ints):
-                spanned.add(ind)
+            if len(inds) > 1:
+                combined_ints = {} 
+                for ind1 in inds:
+                    for ind2, o in self.interactions[ind1].items():
+                        combined_ints[ind2] = max(combined_ints.get(ind2, 0), o)
+                if all(o == combined_ints[ind2] for ind2, o in self.interactions[ind].items() if ind2 in combined_ints):
+                    spanned.add(ind)        
 
-        prev_desirability = {**self.desirability}
+        prev_desirability = self.desirability # {**self.desirability}
+        self.desirability = {}
         for ind in ind_ids:
-            w = self.span_penalty if ind in spanned else (self.dom_bonus * len(dominated.get(ind, [])))
-            if ind in self.desirability:
-                self.desirability[ind] = sqrt(w * self.desirability[ind]) 
-            else:
+            if len(dominated.get(ind, [])) > 0:
+                w = self.span_penalty if ind in spanned else (self.dom_bonus * len(dominated.get(ind, [])))
                 self.desirability[ind] = w
 
-        self.cut_features(self.desirability)
+        # self.cut_features(self.desirability)      
 
         for ind in self.pheromones.keys():
             self.pheromones[ind] = 1 + (self.pheromones[ind] - 1) * self.pheromone_decay
 
-        for k, v in self.desirability.keys():
-            v2 = prev_desirability.get(k, 0)
-            if v > v2:
-                self.pheromones[ind] = self.pheromones.get(ind, 0) + self.pheromone_inc
+        common_des = {ind: (self.desirability[ind], prev_desirability[ind]) for ind in self.desirability.keys() if ind in prev_desirability}
+        for ind, (d1, d2) in common_des.items():
+            if d1 > d2:
+                self.pheromones[ind] = self.pheromones.get(ind, 1) + self.pheromone_inc
         
     def exploit(self, size) -> set[Any]:
         ''' Sample with pheromones and desirability rule 
@@ -645,7 +705,12 @@ class ACOPopulation(Sample):
         #normalize scores from [min, max] -> [0, max2] - spanned point is on level of origin
         if len(self.desirability) == 0:
             return set()        
-        weights = {k: v * self.pheromones.get(k, 1) for k, v in self.desirability.items()}
+        
+        size_best = self.cut_features_prop * self.size
+        best_desirability_list = sorted(self.desirability.items(), key = lambda x: x[1], reverse=True)
+        best_desirability = {k: v for k, v in best_desirability_list[:size_best]}
+
+        weights = {k: v * self.pheromones.get(k, 1) for k, v in best_desirability.items()}
         sum_weight = sum(weights.values())     
 
         kprobs = [(k, w / sum_weight) for k, w in weights.items()]
@@ -653,6 +718,7 @@ class ACOPopulation(Sample):
         inds, probs = zip(*kprobs)
         selected_indexes = rnd.choice(len(inds), size = min(len(inds), size), replace = False, p = probs)
         selected = set(inds[i] for i in selected_indexes)
+        self.keys.extend(f"{inds[i]} D {round(best_desirability[inds[i]])} ph {ph_str} p {round(probs[i] * 100)}%" for i in selected_indexes for ph in [round(self.pheromones.get(inds[i], 1))] for ph_str in ["" if ph == 1 else ph])
         return selected
 
 class OneTimeSequential(Population):

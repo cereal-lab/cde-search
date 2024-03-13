@@ -11,6 +11,8 @@ param_testsize = 50
 
 param_space_popsize = 10
 
+param_draw_dynamics = True
+
 import numpy as np
 rnd = np.random.RandomState(param_seed)
 

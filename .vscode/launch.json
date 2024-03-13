@@ -16,12 +16,14 @@
             "name": "game simulation",
             "type": "python",
             "request": "launch",
-            "program": "simulation.py",
+            "program": "cli.py",
             "console": "integratedTerminal",
             "args": [
                 "game",
-                "-id", "0",
-                "--times", "1"
+                "-gid", "FocusingGame",
+                "-sid", "ds-100-001",
+                "--times", "1",
+                "obj_bonus=100"
             ],
             "justMyCode": true
         }
