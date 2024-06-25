@@ -8,7 +8,7 @@
 from abc import ABC, abstractmethod
 from itertools import product
 from typing import Any
-from deca import extract_dims
+from de import extract_dims
 from population import OneTimeSequential, Population
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
         PARAM_MAX_INDS, PARAM_MAX_INTS, PARAM_UNIQ_INDS, rnd, param_reg_min_num, param_reg_max_num,\

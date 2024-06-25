@@ -1,5 +1,5 @@
-''' Module that gennerates CDE space and corresponding interaction matrix
-    Idea of CDE is taken from: https://link.springer.com/chapter/10.1007/978-3-540-24854-5_53
+''' Module that generates dimension spaces and corresponding interaction matrix
+    Idea of DE is taken from: https://link.springer.com/chapter/10.1007/978-3-540-24854-5_53
 
     Ideally we would like the template to approximate main metrics:
     D - dimension discovery 

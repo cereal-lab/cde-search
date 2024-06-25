@@ -6,7 +6,7 @@ from abc import abstractmethod
 import json
 from math import sqrt
 from typing import Any
-from deca import extract_dims
+from de import extract_dims
 from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, param_steps, param_popsize
 
 class Population:
