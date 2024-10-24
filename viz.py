@@ -9,43 +9,41 @@ from matplotlib.font_manager import FontProperties
 legend_font = FontProperties(family='monospace', size=6)
 param_img_folder = "img"
 
-def draw_populations(candidate_parents, candidate_children, test_parents = [], test_children = [], prev = [],
-                        xrange = None, yrange = None, name="fig", fmt = "png", title = None, legend = []):
+def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt = "png", title = None):
     ''' creates an image of populaltion of 2-d numbers to track the dynamics '''
-    data = [(candidate_parents, 'o', '#151fd6', 30, 'C'), 
-            (candidate_children, 'o', '#28a4c9', 10, None), 
-            (test_parents, 'H', '#159e1b', 30, 'T'), 
-            (test_children, 'H', '#85ba6a', 10, None)]
+    # classes = {
+    #     "prev": dict(marker='o', s=8, c='#cfcfcf', alpha=0.5),
+    #     "ind": dict(marker='o', s=30, c='#151fd6'),
+    #     "child": dict(marker='o', s=10, c='#28a4c9'),
+    #     "cand": dict(marker='o', s=30, c='#151fd6'),
+    #     "cand_child": dict(marker='o', s=10, c='#28a4c9'),
+    #     "test": dict(marker='H', s=30, c='#159e1b'),
+    #     "test_child": dict(marker='H', s=10, c='#85ba6a'),
+    #     "target": dict(marker='x', s=20, c='#bf5a17')
+    # }
+    # data = [(g['xy'], g.get('legend', []), classes[g.get('class', 'ind')], 0 if g.get('class', 'ind') == 'prev' else 1) 
+    #             for g in point_groups if len(g.get('xy', [])) > 0]
+    # data.sort(key=lambda x: x[-1])
     plt.ioff()
-    if len(prev) > 0:
-        x, y = zip(*prev)
-        plt.scatter(x, y, marker='o', s=10, c='#cfcfcf', alpha=0.5)
-    # legend_labels = []
-    # legend_handles = []
-    handle_index = {}
-    for xy, marker, color, scale, key in data:
-        if len(xy) == 0:
+    handles = []
+    labels = []
+    point_groups.sort(key=lambda g:0 if "bg" in g else 1)
+    for g in point_groups:
+        if len(g["xy"]) == 0:
             continue
-        x, y = zip(*xy)
-        # if xy2 is not None:
-        #     for p1, p2 in list(zip(xy, xy2))[:num_legend]:
-        #         label = f"{p1} vs {p2}"
-        #         legend_labels.append(label)
-        #         arrow_properties = dict(arrowstyle='->', linestyle='dashed', linewidth=1, color='gray', alpha = 0.5)
-        #         plt.annotate('', p2, p1, arrowprops=arrow_properties)                
-        #         # plt.arrow(p1[0], p1[1], dxy[0], dxy[1], width=0.05, length_includes_head=True)
-        scatter = plt.scatter(x, y, marker=marker, s=scale, c=color)
-        handle_index[key] = scatter
-        # if xy2 is not None:
-        #     for _ in range(num_legend):
-        #         legend_handles.append(scatter)
+        x, y = zip(*g["xy"])
+        classes = g.get("class", {})
+        if "bg" in g:
+            classes = {**dict(marker='o', s=8, c='#cfcfcf', alpha=0.5), **classes}
+        scatter = plt.scatter(x, y, **classes)
+        for label in g.get("legend", []):
+            handles.append(scatter)
+            labels.append(label)
     if xrange is not None: 
         plt.xlim(xrange[0], xrange[1])
     if yrange is not None: 
         plt.ylim(yrange[0], yrange[1])  
-    handles = [handle_index[l[0]] for l in legend]
-    legend = [l[2:] for l in legend]
-    plt.legend(handles = handles, labels = legend, prop=legend_font, loc='upper left', bbox_to_anchor=(1, 1))
+    plt.legend(handles = handles, labels = labels, prop=legend_font, loc='upper left', bbox_to_anchor=(1, 1))
     if title:
         plt.title(title)
     plt.tight_layout()

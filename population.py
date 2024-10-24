@@ -6,22 +6,24 @@ from abc import abstractmethod
 import json
 from math import sqrt
 from typing import Any
-from de import extract_dims
-from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, param_steps, param_popsize
+from de import cosa_extract_archive, extract_dims, get_batch_pareto_layers
+from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, \
+    param_steps, param_popsize, param_batch_size, param_cut_features
 
 class Population:
     ''' Base class for population of candidates/tests which defines different ways of breeding 
         and going to next generation
     '''            
-    def __init__(self, all_inds: list[Any], popsize, **kwargs) -> None:
-        self.size = popsize 
+    def __init__(self, all_inds: list[Any], popsize = param_popsize, **kwargs) -> None:
+        self.size = int(popsize)
         self.population = [] #first call of get_inds should initialize
         self.interactions = {}
         self.all_inds = all_inds #pool of all possible individuals
         self.all_inds_set = set(all_inds)
         self.pop_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
-        self.pop_params = {"size": popsize, "class":self.__class__.__name__, **kwargs}
+        self.pop_params = {"size": self.size, "class":self.__class__.__name__, **kwargs}
+    
 
     def get_inds(self, **filters) -> list[Any]:
         return self.population
@@ -49,19 +51,23 @@ class Population:
     def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
         self.merge_interactions(interactions)
 
+    def get_for_drawing(self, role = "") -> list[dict]:
+        ''' Called to draw population'''
+        return []
+
 class HCPopulation(Population):
     ''' Population that evolves with parent-child hill climbing '''
-    def __init__(self, all_inds: list[Any], popsize = param_popsize,
+    def __init__(self, all_inds: list[Any],
                     mutation = "plus_minus_one", 
                     selection = "pareto_select", 
                     init = "rand_init", init_range = None,
                     ind_range = None, **kwargs) -> None:
-        super().__init__(all_inds, popsize, **{"mutation":mutation, "selection":selection, **kwargs})
+        super().__init__(all_inds, **{"mutation":mutation, "selection":selection, **kwargs})
         self.mutation_strategy = getattr(self, mutation)
         self.selection_strategy = getattr(self, selection)
         self.init_strategy = getattr(self, init)
         self.ind_range = (min(all_inds), max(all_inds)) if ind_range is None else ind_range
-        self.init_range = init_range
+        self.init_range = init_range if init_range is not None else self.ind_range
     
     def plus_minus_one(self, ind: tuple[int,int]):
         # Mutation for number games inds (i, j) -> (i+-1, j+-1)    
@@ -110,7 +116,7 @@ class HCPopulation(Population):
     def informativeness_select(self, i, all_ints):
         ''' selection based on informativeness score aggregation '''
         def informativeness_score(ints: list[int]):
-            ''' counts pairs of interactions of same outcome '''
+            ''' counts pairs of interactions of the same outcome '''
             # return sum(1 for i in range(len(ints)) for j in range(i+1, len(ints)) if ints[i] == ints[j])
             return sum(1 for s1 in ints for s2 in ints if s1 == s2)
         common_ints = [(co, po) for co, po in all_ints if co is not None and po is not None]
@@ -161,7 +167,7 @@ class HCPopulation(Population):
             child_dict = {k:v for k, v in child_ints}
             parent_counts = get_counts(parent_ints)
             child_counts = get_counts(child_ints)
-            key_set = set(*parent_dict.keys(), *child_dict.keys())
+            key_set = set([*parent_dict.keys(), *child_dict.keys()])
             int_dict = {k: (child_counts.get(k, 0), child_dict.get(k, None), parent_counts.get(k, 0), parent_dict.get(k, None)) for k in key_set}
             child_vect = []
             parent_vect = []
@@ -182,24 +188,33 @@ class HCPopulation(Population):
                 
         self.pop_metrics[PARAM_MAX_INDS] += 2 * self.size
         self.seen_inds.update(self.population, self.children)
-        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)    
+        self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds) 
+
+    def get_for_drawing(self, role = "") -> list[dict]:
+        class_parent, class_child = (dict(marker='o', s=30, c='#151fd6'), dict(marker='o', s=10, c='#28a4c9')) if role == "cand" else (dict(marker='H', s=30, c='#159e1b'), dict(marker='H', s=10, c='#85ba6a'))
+        return [
+                {"xy": self.seen_inds, "bg": True}, 
+                {"xy": self.population, "class": class_parent, "legend": [f"{p}".ljust(10) + "|" + f"{c}".ljust(10) for p, c in list(zip(self.population, self.children))[:20]]},
+                {"xy": self.children, "class": class_child}
+            ]
 
 class Sample(Population):
     ''' Population is a sample from interaction matrix or computed features '''
-    def __init__(self, all_inds: list[Any], size:int, min_exploit_prop = 0.5, max_exploit_prop = 1, max_step = param_steps, 
-                    directed_explore_prop = 0.5, cut_features_prop = 2, **kwargs) -> None:
-        super().__init__(all_inds, size, **kwargs)        
-        self.pop_params.update(min_exploit_prop = min_exploit_prop, max_exploit_prop = max_exploit_prop, 
-                                directed_explore_prop = directed_explore_prop, max_step = max_step, cut_features_prop = cut_features_prop)
-        self.t = 0
-        self.min_exploit_prop = min_exploit_prop
-        self.max_exploit_prop = max_exploit_prop
-        self.max_step = max_step
+    def __init__(self, all_inds: list[Any], min_exploit_prop = 0.2, max_exploit_prop = 0.8, max_step = param_steps, 
+                    directed_explore_prop = 0, cut_features_prop = param_cut_features, **kwargs) -> None:
+        super().__init__(all_inds, **kwargs)        
+        self.min_exploit_prop = float(min_exploit_prop)
+        self.max_exploit_prop = float(max_exploit_prop)
+        self.max_step = int(max_step)
         self.exploit_prop = self.min_exploit_prop
-        self.cut_features_prop = cut_features_prop
-        self.explore_interacted = True
-        self.directed_explore_prop = directed_explore_prop
-        self.keys = []
+        self.cut_features_prop = int(param_cut_features)
+        self.directed_explore_prop = float(directed_explore_prop)
+        self.pop_params.update(min_exploit_prop = self.min_exploit_prop, max_exploit_prop = self.max_exploit_prop, 
+                                directed_explore_prop = self.directed_explore_prop, max_step = self.max_step, 
+                                cut_features_prop = self.cut_features_prop)
+        self.t = 0        
+        self.explore_interacted = True   
+        self.ind_groups = {}             
 
     @abstractmethod
     def exploit(self, sample_size: int) -> set[Any]:
@@ -208,7 +223,7 @@ class Sample(Population):
     def cut_features(self, features: dict[Any, Any], size = None):
         ''' Preserves only size best features according to sorted order '''
         if size is None:
-            size = self.cut_features_prop * self.size
+            size = self.cut_features_prop
         if len(features) > size:
             sorted_features = sorted(features.items(), key = lambda x: x[1])
             for k, _ in sorted_features[:-size]:
@@ -228,24 +243,23 @@ class Sample(Population):
     def init_inds(self) -> None:
         super().init_inds()        
         self.population = None
-        self.for_group = None
-        self.t = 0
-        self.keys = []
+        # self.for_group = None
+        self.t = 0        
         #for directed exploration
         self.explore_child_parent = {}
 
-    def get_same_interactions_percent(self):
-        ''' We would like to avoid same interactions for the following steps
-            This method computes the percent of given group in self.for_group with already present interactions
-            It is up to concrete population how to handle same interactions (current simulations assume uselessness of such interactions)
-        '''
-        if len(self.for_group) == 0:
-            return {}
-        scores = {ind: existing / len(self.for_group)
-                    for ind, ind_ints in self.interactions.items()
-                    for existing in [sum(1 for t in self.for_group if t in ind_ints)]
-                    if existing > 0}
-        return scores 
+    # def get_same_interactions_percent(self):
+    #     ''' We would like to avoid same interactions for the following steps
+    #         This method computes the percent of given group in self.for_group with already present interactions
+    #         It is up to concrete population how to handle same interactions (current simulations assume uselessness of such interactions)
+    #     '''
+    #     if len(self.for_group) == 0:
+    #         return {}
+    #     scores = {ind: existing / len(self.for_group)
+    #                 for ind, ind_ints in self.interactions.items()
+    #                 for existing in [sum(1 for t in self.for_group if t in ind_ints)]
+    #                 if existing > 0}
+    #     return scores 
     
     def addDiff(self, addToInd, subFromInd, subInd, mul):
         ''' Representation specific: TODO: move to ind representation '''
@@ -264,15 +278,15 @@ class Sample(Population):
         if type(addToInd) is tuple and len(addToInd) > 0:
             all_dirs = [-1,1]
             num_poss_to_modify = rnd.randint(1, len(addToInd))
-            poss_to_modify = set(rnd.choice(len(addToInd), size = num_poss_to_modify, replace=False))
-            all_dirs = [-1,1]            
+            poss_to_modify = set(rnd.choice(len(addToInd), size = num_poss_to_modify, replace=False))          
             return tuple((v + rnd.choice(all_dirs)) if i in poss_to_modify else v for i, v in enumerate(addToInd))
         assert False, f"Usupported representation of {addToInd} {type(addToInd)}"        
     
     def explore(self, selected: set[Any]) -> None:
         ''' Samples individuals based on interactions exploration. Contrast it to exploit selection 
             We assume that the search space is big and it is expensive to enumerate it/assign distribution per element.
-            Adds exploration sample to given selected. 
+            Adds exploration sample to a given selected. 
+            Directed exploration, exploration towards most promising directions, between exploitation and random sampling
         '''
         #directed explore 
         directed_explore_slots = round(max(0, self.size - len(selected)) * self.directed_explore_prop)
@@ -297,12 +311,12 @@ class Sample(Population):
                 if child is None: #parent does not have direction - sample simple one
                     child = self.addSimpleDirection(parent)
                     numTimes = 1
-                if child not in self.all_inds_set or child in selected or (self.explore_interacted and child in self.interactions):
+                if child not in self.all_inds_set or child in selected or ((not self.explore_interacted) and child in self.interactions):
                     misses += 1
                 else:
                     explore_child_parent[child] = (parent, numTimes + 1)
                     selected.add(child)
-                    self.keys.append(f"{child} E {parent}")
+                    self.ind_groups.setdefault("directed_explore", []).append(child)
                     misses = 0
             self.explore_child_parent = explore_child_parent
 
@@ -311,20 +325,20 @@ class Sample(Population):
         while len(selected) < self.size and misses < 100:
             selected_index = rnd.randint(0, len(self.all_inds))
             selected_ind = self.all_inds[selected_index]
-            if selected_ind in selected or (self.explore_interacted and selected_ind in self.interactions):
+            if selected_ind in selected or ((not self.explore_interacted) and selected_ind in self.interactions):
                 misses += 1
             else:
                 selected.add(selected_ind)
-                self.keys.append(f"{selected_ind} E")
+                self.ind_groups.setdefault("explore", []).append(selected_ind)
                 misses = 0
 
-    def get_inds(self, *, for_group = [], **filters) -> list[Any]:
-        if self.population is not None and for_group == self.for_group:
+    def get_inds(self, **filters) -> list[Any]:
+        if self.population is not None: # and for_group == self.for_group:
             return self.population
-        self.for_group = for_group #adjusts sampling by avoiding repetitions of interactions - smaller chance to interruct again
+        self.ind_groups = {}
+        # self.for_group = for_group #adjusts sampling by avoiding repetitions of interactions - smaller chance to interruct again
         self.exploit_prop = self.min_exploit_prop + (self.t / self.max_step) * (self.max_exploit_prop - self.min_exploit_prop)
         exploit_slots = round(self.size * self.exploit_prop)
-        self.keys = []
         selected_inds = self.exploit(exploit_slots)
         self.explore(selected_inds)
         self.population = list(selected_inds)
@@ -332,13 +346,32 @@ class Sample(Population):
         self.seen_inds.update(self.population)
         self.pop_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds)
         return self.population
+    
+    def get_for_drawing(self, role = "") -> list[dict]:
+        pop = self.get_inds() #just to make sure that population is inited
+        directed_explore = self.ind_groups.get("directed_explore", [])
+        explore = self.ind_groups.get("explore", [])
+        exploit_groups = []
+        for k,v in self.ind_groups.items():
+            if k.startswith("exploit_"):
+                s = int(k.split("_")[-1])
+                exploit_groups.append({"xy": v, "class": dict(marker='o', s=s, c='#d662e3', alpha=0.5), "legend": [f"{t}".ljust(10) for t in v[:20]]})
+        exploit = self.ind_groups.get("exploit", [])
+        return [
+                {"xy": directed_explore, "class": dict(marker='o', s=10, c='#62c3e3', alpha=0.4), "legend": [f"{t}".ljust(10) for t in directed_explore[:20]]},
+                {"xy": explore, "class": dict(marker='o', s=10, c='#73e362', alpha=0.4), "legend": [f"{t}".ljust(10) for t in explore[:20]]},
+                *exploit_groups,
+                {"xy": exploit, "class": dict(marker='o', s=30, c='#d662e3', alpha=0.5), "legend": [f"{t}".ljust(10) for t in exploit[:20]]},
+            ]    
         
 class InteractionFeatureOrder(Sample):
-    ''' Sampling of search space based on grouping by interactions features and ordering of the groups '''
-    def __init__(self, all_inds: list[Any], size: int, dedupl = False,
+    ''' Sampling of search space based on grouping by interactions features and ordering of the groups 
+        Also we called this sampling strategies
+    '''
+    def __init__(self, all_inds: list[Any], dedupl = False,
                     strategy = None, epsilon = None, softmax = None, tau = 1,
                     **kwargs) -> None:
-        super().__init__(all_inds, size, **kwargs)
+        super().__init__(all_inds, **kwargs)
         self.pop_params.update(dedupl = dedupl, strategy = strategy, epsilon = epsilon, softmax = softmax, tau = tau)
         self.explore_interacted = False
         self.epsilon = float(epsilon) if epsilon is not None else None
@@ -359,12 +392,12 @@ class InteractionFeatureOrder(Sample):
             strategy = [strategy]
         strategy = sorted(strategy, key = lambda x: x["t"])
         if strategy[0]["t"] != 0:
-            strategy = [*default_strategy, *strategy]          
+            strategy = [*default_strategy, *strategy]
         self.strategy = list(reversed(strategy))
 
     def init_inds(self) -> None:
         super().init_inds()
-        self.features = {}        
+        self.features = {}
 
     def build_common_interactions(self, ind: Any, ind_ints: dict[Any, int], pool_inds):
         ''' computes common interactions with other inds of the pool '''
@@ -443,7 +476,6 @@ class InteractionFeatureOrder(Sample):
         excluded = set()
         selected = set()
         dupls = set()
-        self.keys = []
         # start_explore_i = self.size
         # coef = 2 if len(self.for_group) > 0 else 1 #explore more
         # start_explore_i = self.size - max(0, (coef * self.size // 3) * (1 - self.t / self.max_step))
@@ -494,37 +526,44 @@ class InteractionFeatureOrder(Sample):
                     dupls.add(selected_ind)
                     continue
                 selected_features = " ".join("{0} {1}".format(k, round(v)) for k, v in zip(i_key_spec, best_ind_key) if v != 0)
-                self.keys.append(f"{selected_ind} {selected_features}")
                 selected.add(selected_ind)
             i += 1
         return selected
 
-class DECABasedSample(Sample):
+class DECARanksSample(Sample):
     ''' Applies DECA on each game step to form local axes.
         Position in such local space gives rank for participated tests.
         The global ranks than updated, shifting conclusion based on one step performance.
         Update happens with geometric mean between globally recorded rank and concluded locally on one step.
         Sampling happens according to ranks. Only 2 *size best ranks are preserved.
     '''
-    def __init__(self, all_inds: list[Any], size: int, obj_bonus = 100, span_penalty = 0.01, **kwargs) -> None:
-        super().__init__(all_inds, size, **kwargs)
-        self.pop_params.update(obj_bonus = obj_bonus, span_penalty = span_penalty)
+    def __init__(self, all_inds: list[Any], 
+                span_pos_penalty = 5, max_inds_per_obj = 10, obj_bonus = 100, span_penalty = 0.01,
+                **kwargs) -> None:
+        super().__init__(all_inds, **kwargs)
         self.obj_bonus = float(obj_bonus)
-        self.span_penalty = float(span_penalty)        
+        self.span_penalty = float(span_penalty)
+        self.span_pos_penalty = float(span_pos_penalty)
+        self.max_inds_per_obj = int(max_inds_per_obj)
+        # self.ints_bonus = float(ints_bonus)
+        # self.pop_params.update(obj_bonus = self.obj_bonus, span_penalty = self.span_penalty, ints_bonus = self.ints_bonus)
+        self.pop_params.update(obj_bonus = self.obj_bonus, 
+                                span_pos_penalty = self.span_pos_penalty, max_inds_per_obj = self.max_inds_per_obj,
+                                span_penalty = self.span_penalty)
+
+        # self.ind_objs = {} # per each ind, stores id of the objective and the weight on the axis (0 - best)
+        # self.obj_inds = {} # per each obj, stores list of lists of inds, starting from end of axis, back to origin 
 
     def init_inds(self) -> None:
         super().init_inds() 
-        self.ranks = {}
+        self.ranks = {} 
         # self.spanned = set() #could potentially become the end of axes
 
     def update_features(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
-        ''' Applies DECA to given local ints and extract axes '''        
+        ''' Applies DECA to a given local ints and extract axes '''        
         tests = [[o for _, o in ind_ints] for _, ind_ints in interactions.items() ]
         inds = [ind for ind, _ in interactions.items() ]
         dims, _, spanned, _ = extract_dims(tests)
-        # dom_sets = {best_ind: set(other_ind for other_point in other for other_ind in other_point)
-        # to_remove = set()
-        # to_add = {}
         present_axes = set(self.ranks.keys())
         for dim in dims:
             for point_id, group in enumerate(dim):
@@ -533,83 +572,426 @@ class DECABasedSample(Sample):
                     w += self.obj_bonus
                 for i in group:
                     ind = inds[i]
-                    if ind not in present_axes: #check if we can remove any other axis by checking common interactions
-                        self.ranks[ind] = w
-                        # for ind2 in self.ranks.keys():
-                        #     common_ints = self.get_common_ints(self.interactions[ind], self.interactions[ind2])
-                        #     if len(common_ints) > 1:
-                        #         if all(o1 >= o2 for o1, o2 in common_ints.values()) and any(o1 > o2 for o1, o2 in common_ints.values()):
-                        #             to_remove.add(ind2)
-                        #         elif all(o2 >= o1 for o1, o2 in common_ints.values()) and any(o2 > o1 for o1, o2 in common_ints.values()):
-                        #             del to_add[ind]
-                    else:
+                    if ind in present_axes:
                         self.ranks[ind] = sqrt(w * self.ranks[ind])
+                    else:
+                        self.ranks[ind] = w
 
-        for i in spanned:
+        for i, _ in spanned.items():
             ind = inds[i]
-            if ind not in self.ranks:
-                self.ranks[ind] = self.span_penalty
+            rank = self.span_penalty
+            if ind in self.ranks:
+                self.ranks[ind] = sqrt(self.ranks[ind] * rank)
             else:
-                self.ranks[ind] = sqrt(self.span_penalty * self.ranks[ind])
-        # for k, v in to_add.items():              
-        #     self.ranks[k] = v
-        # self.axes_ends.difference_update(to_remove)
-        # filtered_spanned = set([ind for i in spanned for ind in [inds[i]] if ind not in self.axes_ends])
-        # self.spanned.update(filtered_spanned)
-        # # for ind in self.spanned:
-        # #     keys = set(self.interactions[ind].keys())
-        # #     combined = {}
-        # #     for ind2 in self.axes_ends:
-        # #         for k, o in self.interactions[ind2].items():
-        # #             if k in keys:
-        # #                 combined.setdefault(k, []).append(o)
-        # #     combined_vals = {k:max(combined.get(k, []), default=None) for k in keys}
-        # #     co, so = zip(*[(combined_vals[k], self.interactions[ind][k]) for k in keys if combined_vals[k] is not None])
-        # #     if co != so:
-        # #         to_remove.add(ind)
-        # self.spanned.difference_update(set(inds) - filtered_spanned)
-        
-        # dropping low score 
-        self.cut_features(self.ranks)              
+                self.ranks[ind] = rank   
 
-    # def get_common_ints(self, ind1_ints: dict[Any, int], ind2_ints: dict[Any, int]):
-    #     res = {k: (o, ind2_ints[k]) for k, o in ind1_ints.items() if k in ind2_ints}
-    #     return res
+        self.cut_features(self.ranks)              
 
     def exploit(self, sample_size) -> set[Any]:
         
-        #exploration vs exploitation - some tests are not in the Pareto graph yet. We need also decide how to balance here
-        #we use annealing with game step increase the chance for exploitation with time 
-
-        # interacted_weights = {ind: 1 - p for ind, p in self.get_same_interactions_percent().items()}
         if len(self.ranks) == 0:
             return set()
-        if len(self.for_group) > 0:
-            sample_size = self.size
-
-        # sampling order: axes (exploit), unknown (explore), spanned (exploit, 0.1), origin (explore, 0.1)
-        # test_weights = {**self.ranks}
-
-        # while len(test_weights) > 0 and sample_size > 0:
-        #     sum_node_weights = sum(test_weights.values())
-        #     test_list, p = zip(*[ (ind, w / sum_node_weights) for ind, w in test_weights.items()])
-        #     test_id = rnd.choice(len(test_list), p = list(p))
-        #     selected_test = test_list[test_id]
-        #     if selected_test not in selected:
-        #         selected.add(selected_test)
-        #         is_axes = "ax" if test_weights[selected_test] > 0.5 else "sp"
-        #         self.keys.append(f"{selected_test} {is_axes} {round(p[test_id] * 100)}% {len(test_list)}")                
-        #         sample_size -= 1
-        #     del test_weights[selected_test]
+        # if len(self.for_group) > 0:
+        #     sample_size = self.size
 
         sum_weights = sum(self.ranks.values())
         ind_list, p = zip(*[ (ind, w / sum_weights) for ind, w in self.ranks.items()])
         ind_ids = rnd.choice(len(ind_list), size = min(sample_size, len(ind_list)), p = list(p), replace=False)
         selected = set(ind_list[i] for i in ind_ids)
-        self.keys.extend(f"{ind_list[i]} {is_axis} {round(p[i] * 100)}% {len(ind_list)}" 
-                            for i in ind_ids for is_axis in [("ax" if self.ranks[ind_list[i]] > 0.01 else "sp")])
+        self.ind_groups.setdefault(f"exploit", []).extend(selected)
+        return selected
+
+
+class DECASample(Sample):
+    ''' Classic DECA implementation form Antony's article. 
+        Note: DECA requests interations on demand
+    '''
+    def __init__(self, all_inds: list[Any], **kwargs) -> None:
+        super().__init__(all_inds, **kwargs)
+
+    def init_inds(self) -> None:
+        super().init_inds() 
+        self.ranks = {} 
+        # self.spanned = set() #could potentially become the end of axes
+
+    def update_features(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Applies DECA to a given local ints and extract axes '''        
+        tests = [[o for _, o in ind_ints] for _, ind_ints in interactions.items() ]
+        inds = [ind for ind, _ in interactions.items() ]
+        dims, _, spanned, _ = extract_dims(tests)
+        present_axes = set(self.ranks.keys())
+        for dim in dims:
+            for point_id, group in enumerate(dim):
+                w = (point_id + 1) / len(dim)
+                if len(dim) == (point_id + 1):
+                    w += self.obj_bonus
+                for i in group:
+                    ind = inds[i]
+                    if ind in present_axes:
+                        self.ranks[ind] = sqrt(w * self.ranks[ind])
+                    else:
+                        self.ranks[ind] = w
+
+        for i, _ in spanned.items():
+            ind = inds[i]
+            rank = self.span_penalty
+            if ind in self.ranks:
+                self.ranks[ind] = sqrt(self.ranks[ind] * rank)
+            else:
+                self.ranks[ind] = rank   
+
+        self.cut_features(self.ranks)              
+
+    def exploit(self, sample_size) -> set[Any]:
+        
+        if len(self.ranks) == 0:
+            return set()
+        # if len(self.for_group) > 0:
+        #     sample_size = self.size
+
+        sum_weights = sum(self.ranks.values())
+        ind_list, p = zip(*[ (ind, w / sum_weights) for ind, w in self.ranks.items()])
+        ind_ids = rnd.choice(len(ind_list), size = min(sample_size, len(ind_list)), p = list(p), replace=False)
+        selected = set(ind_list[i] for i in ind_ids)
+        self.ind_groups.setdefault(f"exploit", []).extend(selected)
+        return selected
+
+class UneqGroupsSample(Sample):
+    ''' Finds unequality groups and samples them supposing that they are objectivees
+    '''
+    def __init__(self, all_inds: list[Any], **kwargs) -> None:
+        super().__init__(all_inds, **kwargs)
+        # self.ints_bonus = float(ints_bonus)
+        # self.pop_params.update(obj_bonus = self.obj_bonus, span_penalty = self.span_penalty, ints_bonus = self.ints_bonus)
+        # self.pop_params.update()
+
+        # self.ind_objs = {} # per each ind, stores id of the objective and the weight on the axis (0 - best)
+        # self.obj_inds = {} # per each obj, stores list of lists of inds, starting from end of axis, back to origin 
+
+    def init_inds(self) -> None:
+        super().init_inds() 
+        self.pair_diffs = {} # for a pair of tests stores candidate ids by which outcomes are different
+        self.uneq_sets = {} #for tried ind, defines detected set of uneq inds by objective (with dim_extraction)        
+        self.main_set = set() 
+        self.all_eq_sets = []
+        # self.num_wins = {} #for each ind, number of 1 in interactions
+        # self.last_num_wins = {}
+        self.win_rate = {}
+        self.main_axes = []
+        self.spanned_axes = []
+
+    def update_features(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Extract new uneq and trivials '''
+        all_local_ints = [ (tid, [o for _, o in ind_ints]) for tid, ind_ints in interactions.items() ]
+        candidate_ids = [cid for cid, _ in next(iter(interactions.values()))]
+        num_wins = {}
+        for i in range(len(all_local_ints)):
+            ind1, ints1 = all_local_ints[i]
+            if ind1 not in self.main_set:
+                self.main_set.add(ind1)
+            wins, count = self.win_rate.get(ind1, (0, 0))
+            num_wins[ind1] = sum(ints1)
+            self.win_rate[ind1] = (wins + num_wins[ind1], count + len(ints1))
+            # self.last_num_wins[ind1] = self.num_wins[ind1]
+            for j in range(i + 1, len(all_local_ints)):
+                ind2, ints2 = all_local_ints[j]
+                if ind1 in self.uneq_sets and ind2 in self.uneq_sets[ind1]:
+                    continue
+                pair = (ind1, ind2) if ind1 < ind2 else (ind2, ind1)
+                cids = [candidate_ids[k] for k, (o1, o2) in enumerate(zip(ints1, ints2)) if o1 != o2]
+                if len(cids) > 0:
+                    self.pair_diffs.setdefault(pair, set()).update(cids)
+                    if any(self.interactions[pair[0]][cid] > self.interactions[pair[1]][cid] for cid in self.pair_diffs[pair]) and \
+                        any(self.interactions[pair[1]][cid] > self.interactions[pair[0]][cid] for cid in self.pair_diffs[pair]):
+                        self.uneq_sets.setdefault(pair[0], set()).add(pair[1])
+                        self.uneq_sets.setdefault(pair[1], set()).add(pair[0])  
+                        del self.pair_diffs[pair]
+        eq_sets = [[]]        
+        def ind_score(ind):
+            wins, count = self.win_rate.get(ind, (0, 0))
+            rate = wins / (1 if count == 0 else count)
+            return num_wins[ind], rate
+        for ind, _ in sorted(all_local_ints, key=lambda x: ind_score(x[0]), reverse=True):
+            uneq_set = self.uneq_sets.get(ind, set())
+            new_eq_sets = []
+            # eq_sets_to_possibly_add = set()
+
+            compatible_sets = []
+            incompatible_sets = [] 
+            for eq_set in eq_sets:
+                if any(el in uneq_set for el in eq_set):
+                    incompatible_sets.append(eq_set)
+                else:
+                    compatible_sets.append(eq_set)
+
+            other_candidiates_ordered = []
+            if len(compatible_sets) == 0:
+                # are there other sets with incompatible elements which could be removed and form a compatible set?
+                # incompatible element could be removed if there is at least one other incompatible set with it. 
+                other_candidiates = []
+                uneq_el_present_count = { el: len([eq_set2 for eq_set2 in incompatible_sets if el in eq_set2]) for el in uneq_set }
+                for eq_set_id, eq_set in enumerate(incompatible_sets):
+                    present_uneq_els = [ el for el in eq_set if el in uneq_set ]
+                    present_counts = [ uneq_el_present_count[el] for el in present_uneq_els ]
+                    present_uneq_els_set = set(present_uneq_els)
+                    other_candidiates_ordered.append((eq_set, present_uneq_els_set))
+                    if all(c > 1 for c in present_counts):
+                        other_candidiates.append((eq_set_id, eq_set, present_uneq_els_set))
+                other_candidiates.sort(key = lambda x: len(x[1]) - len(x[2]), reverse=True)
+                if len(other_candidiates) > 0:
+                    eq_set_id, eq_set, present_uneq_els_set = other_candidiates[0]
+                    del incompatible_sets[eq_set_id]
+                    new_eq_set = [ el for el in eq_set if el not in present_uneq_els_set ]
+                    compatible_sets.append(new_eq_set)                    
+
+            if len(compatible_sets) == 0:
+                #take only one such set
+                other_candidiates_ordered.sort(key = lambda x: len(x[0]) - len(x[1]), reverse=True)
+                eq_set, present_uneq_els_set = other_candidiates_ordered[0]
+                new_eq_sets.append(eq_set) #   
+                new_eq_set = [ el for el in eq_set if el not in present_uneq_els_set ]
+                new_eq_set.append(ind)
+                new_eq_sets.append(new_eq_set)
+            else:
+                for eq_set in compatible_sets:
+                    eq_set.append(ind)
+                    new_eq_sets.append(eq_set)
+                new_eq_sets.extend(incompatible_sets)
+            # for eq_set in eq_sets_to_possibly_add:
+            #     if any(eq_set.issubset(eq_set1) for eq_set1 in new_eq_sets):
+            #         continue
+            #     new_eq_sets.add(eq_set)            
+            eq_sets = new_eq_sets
+        # searching for axes, we remove all eq_sets that are subsets of any other eq_set
+
+        ind_num_sets = {}
+        for eq_set in eq_sets:
+            for ind in eq_set:
+                ind_num_sets[ind] = ind_num_sets.get(ind, 0) + 1
+
+        main_axes = [[ind for ind in eq_set if ind_num_sets[ind] == 1] for eq_set in eq_sets ]
+        main_eq_sets = [ eq_set for ax, eq_set in zip(main_axes, eq_sets) if len(ax) > 0 ]
+        ind_num_sets = {}
+        for eq_set in main_eq_sets:
+            for ind in eq_set:
+                ind_num_sets[ind] = ind_num_sets.get(ind, 0) + 1        
+        # spanned_axes = [[ind for ind in eq_set if ind_num_sets[ind] > 1] for eq_set in main_eq_sets ]   
+        self.main_axes = main_axes
+        # self.spanned_axes = spanned_axes
+        self.spanned_axes = []
+
+
+        # eq_sets_list = list(eq_sets)
+        # eq_sets_list.sort(key = lambda x: len(x), reverse=True)
+        # axes = []
+        # for eq_set in eq_sets_list:
+        #     ax_candidate = eq_set
+        #     for ax in axes:
+        #         ax_candidate -= ax
+        #     if len(ax_candidate) > 0:
+        #         axes.append(eq_set)
+        # self.all_eq_sets = axes
+
+        # eq_sets = set()
+        # left_inds = set()
+        # for ind in self.main_set:
+        #     ind_eq_set = frozenset(self.main_set - self.uneq_sets.get(ind, set()))
+        #     eq_sets.add(ind_eq_set)    
+        #     left_inds.add(ind)
+        # axes = []
+        # while len(left_inds) > 0:
+        #     ind, ax = max(((ind, frozenset.intersection(*[eq_set for eq_set in eq_sets if ind in eq_set])) for ind in left_inds), key=lambda x: len(x[1]))
+        #     axes.append(ax)
+        #     left_inds -= ax
+        #     eq_sets = set(new_eq_set for eq_set in eq_sets for new_eq_set in [eq_set - ax] if len(new_eq_set) > 0)
+
+        # self.all_eq_sets = axes 
+            
+        
+
+        # new_inds = [ind for ind, _ in all_local_ints if ind not in self.main_set]
+        # old_inds = [ind for ind, _ in all_local_ints if ind in self.main_set]
+        # for ind1 in old_inds:
+        #     uneq_set = uneq_sets.get(ind1, set())
+        #     ind1_eq_sets = [(i, eq_set) for i, eq_set in enumerate(self.all_eq_sets) if ind1 in eq_set]
+        #     for ind2 in uneq_set:
+        #         shared_eq_set = [(i, eq_set) for (i, eq_set) in ind1_eq_sets if ind2 in eq_set]
+        #         if len(shared_eq_set) == 0:
+        #             if ind2 in self.main_set:
+        #                 uneq_sets[ind2].discard(ind1)
+        #             continue 
+        #         elif len(shared_eq_set) == 1:
+        #             i, eq_set = shared_eq_set[0]
+        #             # eq_set1 = set(eq_set)
+        #             eq_set2 = set(eq_set)
+        #             eq_set.discard(ind2)
+        #             eq_set2.discard(ind1)
+        #             # self.all_eq_sets[i] = eq_set1
+        #             self.all_eq_sets.append(eq_set2)
+        #             uneq_sets[ind2].discard(ind1)
+        #         else:
+        #             inds = [ind2, ind1]
+        #             for j, (i, eq_set) in enumerate(shared_eq_set):
+        #                 ind = inds[j % 2]
+        #                 eq_set.discard(ind)           
+        #             uneq_sets[ind2].discard(ind1) 
+
+        # new_ind_possible_sets = {} 
+        # for ind1 in new_inds:
+        #     uneq_set = uneq_sets.get(ind1, set())
+        #     old_uneq_set = set()
+        #     new_uneq_set = set()
+        #     for ind2 in uneq_set:
+        #         if ind2 in self.main_set:
+        #             old_uneq_set.add(ind2)
+        #         else:
+        #             new_uneq_set.add(ind2)                
+        #     for eq_set in self.all_eq_sets:
+        #         if any(ind2 in eq_set for ind2 in old_uneq_set):
+        #             continue
+        #         new_ind_possible_sets.setdefault(ind1, []).append(eq_set)
+        #     uneq_sets[ind1] = new_uneq_set
+        # for ind1 in new_inds:
+        #     if ind1 not in new_ind_possible_sets:
+        #         self.all_eq_sets.append({ind1})
+        #     for ind2 in uneq_sets[ind1]:
+        #         self.all_eq_sets.append({ind1, ind2})
+        #     self.main_set.add(ind1)
+        pass #for breakpoint
+        
+    def exploit(self, sample_size) -> set[Any]:
+        main_axes = self.main_axes
+        spanned_axes = self.spanned_axes
+        sample_size = max(sample_size, len(main_axes))
+        # 0 if not spanned and 1 if spanned
+        # ind_num_axes = {}
+        # for ax in axes:
+        #     for ind in ax:
+        #         ind_num_axes[ind] = ind_num_axes.get(ind, 0) + 1
+        # # we split axes int many by spanned criteria of ind_rank
+        # main_axes = [[ind for ind in ax if ind_num_axes[ind] == 1] for ax in axes]
+        # spanned_axes = [[ind for ind in ax if ind_num_axes[ind] > 1] for ax in axes]
+        selected = set()
+        pos_id = 0
+        has_axes = True
+        while len(selected) < sample_size and has_axes:
+            has_axes = False
+            for ax in main_axes:
+                if pos_id < len(ax):
+                    ind = ax[pos_id]
+                    selected.add(ind)
+                    has_axes = True
+                    if len(selected) == sample_size:
+                        break
+            if len(selected) == sample_size:
+                break
+            for ax in spanned_axes:
+                if pos_id < len(ax):
+                    ind = ax[pos_id]
+                    selected.add(ind)
+                    has_axes = True
+                    if len(selected) == sample_size:
+                        break
+            pos_id += 1
+        self.ind_groups.setdefault(f"exploit", []).extend(selected)
+        return selected
+    
+    # def get_for_drawing(self, role = "") -> list[dict]:
+    #     pop = self.get_inds()
+    #     return [
+    #             {"xy": pop, "class": dict(marker='o', s=30, c='#151fd6'), "legend": [f"{t}".ljust(10) for t in pop[:20]]},
+    #         ]    
+
+class ParetoRankBasedSample(Sample):
+    ''' Sampling is based on pareto ranks (see LAPCA) and corresponding archive '''
+    def __init__(self, all_inds: list[Any], rank_bonus = 10, max_layers = 2, **kwargs) -> None:
+        super().__init__(all_inds, **kwargs)
+        self.rank_bonus = float(rank_bonus)
+        self.max_layers = int(max_layers)
+        self.pop_params.update(rank_bonus = self.rank_bonus, max_layers = self.max_layers)
+
+    def init_inds(self) -> None:
+        super().init_inds() 
+        self.ranks = {}
+
+    def update_features(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Applies DECA to given local ints and extract axes '''        
+        tests = [[o for _, o in ind_ints] for _, ind_ints in interactions.items() ]
+        inds = [ind for ind, _ in interactions.items() ]
+
+        layers = get_batch_pareto_layers(tests, max_layers=self.max_layers)
+
+        for ind_id in self.ranks.keys():
+            self.ranks[ind_id] = self.ranks[ind_id] * 0.9
+
+        for layer_id, layer in enumerate(layers):
+            bonus = self.rank_bonus ** (len(layers) - layer_id)
+            for i in layer:
+                ind = inds[i]
+                if ind in self.ranks:
+                    self.ranks[ind] = sqrt(bonus * self.ranks[ind])                    
+                else:
+                    self.ranks[ind] = bonus
+                    
+                 
+        self.cut_features(self.ranks) # dropping low score
+
+    def exploit(self, sample_size) -> set[Any]:
+        
+        if len(self.ranks) == 0:
+            return set()
+        # if len(self.for_group) > 0:
+        #     sample_size = self.size
+
+        sum_weights = sum(self.ranks.values())
+        ind_list, p = zip(*[ (ind, w / sum_weights) for ind, w in self.ranks.items()])
+        ind_ids = rnd.choice(len(ind_list), size = min(sample_size, len(ind_list)), p = list(p), replace=False)
+        selected = set(ind_list[i] for i in ind_ids)
             
         return selected
+    
+class CosaBasedSample(Sample):
+    ''' Sampling based on COSA archive and way to figure out antichain '''
+    def __init__(self, all_inds: list[Any], archive_bonus = 100, **kwargs) -> None:
+        super().__init__(all_inds, **kwargs)
+        self.archive_bonus = float(archive_bonus)
+        self.pop_params.update(archive_bonus = self.archive_bonus)
+
+    def init_inds(self) -> None:
+        super().init_inds() 
+        self.ranks = {}
+
+    def update_features(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
+        ''' Applies DECA to given local ints and extract axes '''        
+        tests = [[o for _, o in ind_ints] for _, ind_ints in interactions.items() ]
+        inds = [ind for ind, _ in interactions.items() ]
+
+        archive = cosa_extract_archive(tests)
+
+        for ind_id in self.ranks.keys():
+            self.ranks[ind_id] = self.ranks[ind_id] * 0.9
+
+        for i in archive:
+            ind = inds[i]
+            if ind in self.ranks:
+                self.ranks[ind] = sqrt(self.archive_bonus * self.ranks[ind])                
+            else:
+                self.ranks[ind] = self.archive_bonus
+                                 
+        self.cut_features(self.ranks) # dropping low score
+
+    def exploit(self, sample_size) -> set[Any]:
+        
+        if len(self.ranks) == 0:
+            return set()
+        # if len(self.for_group) > 0:
+        #     sample_size = self.size
+
+        sum_weights = sum(self.ranks.values())
+        ind_list, p = zip(*[ (ind, w / sum_weights) for ind, w in self.ranks.items()])
+        ind_ids = rnd.choice(len(ind_list), size = min(sample_size, len(ind_list)), p = list(p), replace=False)
+        selected = set(ind_list[i] for i in ind_ids)
+        return selected    
 
 class ACOPopulation(Sample):
     ''' Population that changes by principle of pheromone distribution 
@@ -706,7 +1088,7 @@ class ACOPopulation(Sample):
         if len(self.desirability) == 0:
             return set()        
         
-        size_best = self.cut_features_prop * self.size
+        size_best = self.cut_features_prop
         best_desirability_list = sorted(self.desirability.items(), key = lambda x: x[1], reverse=True)
         best_desirability = {k: v for k, v in best_desirability_list[:size_best]}
 
@@ -718,14 +1100,13 @@ class ACOPopulation(Sample):
         inds, probs = zip(*kprobs)
         selected_indexes = rnd.choice(len(inds), size = min(len(inds), size), replace = False, p = probs)
         selected = set(inds[i] for i in selected_indexes)
-        self.keys.extend(f"{inds[i]} D {round(best_desirability[inds[i]])} ph {ph_str} p {round(probs[i] * 100)}%" for i in selected_indexes for ph in [round(self.pheromones.get(inds[i], 1))] for ph_str in ["" if ph == 1 else ph])
         return selected
 
 class OneTimeSequential(Population):
     ''' Solits all_inds onto self.size and gives each chunk only once  
         Repeats if there are more requests
     '''
-    def __init__(self, all_inds: list[Any],  size: int, shuffle = True) -> None:
+    def __init__(self, all_inds: list[Any], size: int = param_batch_size, shuffle = True, **kwargs) -> None:
         super().__init__(all_inds, size)
         self.shuffle = shuffle            
         self.cur_pos = 0
@@ -748,3 +1129,13 @@ class OneTimeSequential(Population):
 
     def update(self, interactions: dict[Any, list[tuple[Any, int]]]) -> None:
         self.population = self.get_group()
+
+    def get_inds(self, only_children = False, **filters) -> list[Any]:
+        if only_children:
+            return []    
+        return self.population        
+    
+    def get_for_drawing(self, role = "") -> list[dict]:
+        return [
+                {"xy": self.population, "class": dict(marker='x', s=20, c='#bf5a17')}
+            ]

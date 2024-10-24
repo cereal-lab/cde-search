@@ -20,12 +20,27 @@
             "console": "integratedTerminal",
             "args": [
                 "game",
-                "-gid", "FocusingGame",
-                "-sid", "ds-100-001",
+                "-gid", "GreaterThanGame",
+                "-sid", "pphc-r-p",
                 "--times", "1",
-                "obj_bonus=100"
+                "test_popsize=6"
             ],
             "justMyCode": true
-        }
+        },
+        {
+            "name": "game simulation 2",
+            "type": "python",
+            "request": "launch",
+            "program": "cli.py",
+            "console": "integratedTerminal",
+            "args": [
+                "game",
+                "-gid", "FocusingGame",
+                "-sid", "ug",
+                "--times", "1",
+                "test_popsize=12"
+            ],
+            "justMyCode": true
+        }        
     ]
 }

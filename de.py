@@ -28,7 +28,7 @@ def extract_dims(tests: list[list[int]]):
     NOTE: in tests, we have 0-s for candidate to solve the test and 1-s when test wins
     '''
     origin = [] # tests that are placed at the origin of coordinate system
-    spanned = [] # tests that are combinations of tests on axes (union of CFS)
+    spanned = {} # tests that are combinations of tests on axes (union of CFS)
     dimensions = [] # tests on axes 
     # duplicates = [] # same behavior (CFS) tests
 
@@ -39,7 +39,7 @@ def extract_dims(tests: list[list[int]]):
             continue
         test_dims = [] # set of dimensions to which current test could belong
         is_dup = False # is there already same test
-        for dim in dimensions:
+        for dim_id, dim in enumerate(dimensions):
             # dim[-1] - last point on axis, dim[-1][1] - CFS of the last point
             if all(t == d for t, d in zip(test, dim[-1][1])): #match of performance of last point
                 # duplicates.append(test_id)
@@ -52,22 +52,22 @@ def extract_dims(tests: list[list[int]]):
                 while i >= 0:
                     # check that current test dominates the point on at least one candidate
                     if all(t >= d for t, d in zip(test, dim[i][1])) and any(t > d for t, d in zip(test, dim[i][1])):
-                        test_dims.append((dim, i))   #the test dominates the point, so it can be a part of this axis
+                        test_dims.append((dim, dim_id, i))   #the test dominates the point, so it can be a part of this axis
                         break 
                     i -= 1 # if nondominant - test would not have this dim in test_dims
         if is_dup: #for duplicates noop 
             continue
         # unique point should be created in the space, is this spanned point?
-        all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_pos) in test_dims])]
+        all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
         # all_ands represent the union of CFS of all axes which were (minimally) dominated by the test
         # it is the check that the test belongs to spanned point
         if all_ands == test: #spanned, TODO: add identification of axes which were joined
-            spanned.append(test_id)
+            spanned[test_id] = {dim_id: dim_pos for (_, dim_id, dim_pos) in test_dims}
             continue 
         elif len(all_ands) == 0: #test is not a union of any axes, new dimension
             dimensions.append([([test_id], test)])
         else: # test can extends one of  the existend dimensions
-            at_ends_dims = [dim for dim, pos in test_dims if pos == len(dim) - 1]
+            at_ends_dims = [dim for dim, dim_id, pos in test_dims if pos == len(dim) - 1]
             if len(at_ends_dims) > 0: #is there dimensions which could be extended at the end?
                 at_ends_dims[0].append(([test_id], test)) #at new end of axis
             else: # otherwise, the axis should fork, we cannot allow this, but create new axis instead
@@ -77,11 +77,67 @@ def extract_dims(tests: list[list[int]]):
     duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
     return dims, origin, spanned, duplicates
 
+
+# def extract_dims_mod(tests: dict[Any, list[int]], uneq_sets: dict[Any, set[Any]]):
+#     ''' Modification of the DE from above with an extension of uneq_sets that enforce 
+#         placement of tests of different coordinates in case if they are unequal 
+#         :param tests have test_id to outcomes association 
+#         :param uneq_sets have test_id to uneq test_id sets association 
+#     '''
+#     origin = [] # tests that are placed at the origin of coordinate system
+#     spanned = {} # tests that are combinations of tests on axes (union of CFS)
+#     dimensions = [] # tests on axes 
+
+#     # iteration through tests from those that fail least students to those that fail most
+#     for test_id, test in sorted(tests.items(), key=lambda x: sum(x[1])):        
+#         test_dims = [] # set of dimensions to which current test could belong
+#         is_dup = False # is there already same test
+#         for dim_id, dim in enumerate(dimensions):
+#             if all(t == 0 for t in test): #trivial tests 
+#                 origin.append(test_id)
+#                 continue            
+#             # dim[-1] - last point on axis, dim[-1][1] - CFS of the last point 
+#             #                               dim[*][0] - set of tests (test_id) associated to this point of the space
+#             if all(t == d for t, d in zip(test, dim[-1][1])): #match of performance of the last point
+#                 #we add the test to only this dimension
+#                 dim[-1][0].append(test_id)
+#                 is_dup = True
+#                 break 
+#             else: #something unique for this dim
+#                 i = len(dim) - 1 # iterating from the last point on the axis to the first one
+#                 while i >= 0:
+#                     # check that the current test test_id dominates the point i of this axis on at least one candidate
+#                     if all(t >= d for t, d in zip(test, dim[i][1])) and any(t > d for t, d in zip(test, dim[i][1])):
+#                         test_dims.append((dim, dim_id, i))  #the test dominates the point, so it can be a part of this axis
+#                         break #we added the axis, its position to the test possible dimensions test_dims
+#                     i -= 1 # if nondominant - test would not have this dim in test_dims
+#         if is_dup: #for duplicates - continue to the next test_id, duplicate is already placed on the axis 
+#             continue
+#         # to test if this is spanned point, we AND all test dimensions to check if the test CFS is a union of some CFSs of points on the axes
+#         all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
+#         # all_ands represent the union of CFS of all axes which were (minimally) dominated by the test
+#         # it is the check that the test belongs to spanned point
+#         if all_ands == test: #spanned, TODO: add identification of axes which were joined
+#             spanned[test_id] = {dim_id: dim_pos for (_, dim_id, dim_pos) in test_dims}
+#             continue 
+#         elif len(all_ands) == 0: #test is not a union of any axes, new dimension
+#             dimensions.append([([test_id], test)])
+#         else: # test can extends one of  the existend dimensions
+#             at_ends_dims = [dim for dim, dim_id, pos in test_dims if pos == len(dim) - 1]
+#             if len(at_ends_dims) > 0: #is there dimensions which could be extended at the end?
+#                 at_ends_dims[0].append(([test_id], test)) #at new end of axis
+#             else: # otherwise, the axis should fork, we cannot allow this, but create new axis instead
+#                 dimensions.append([([test_id], test)])
+
+#     dims = [[test_ids for test_ids, _ in dim] for dim in dimensions] #pick only test sets
+#     duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
+#     return dims, spanned, duplicates
+
 # TODO: organize archive variables as state accessible to populations - probably encapsulate into Archive instance 
 # TODO: DECA as archive. By itself it is ocmputationally heavy operation to compute dimensions on all previous interactions 
 #       as result, we resort to dimensions from most resent batch. 
 #       But the intermediate approach could also consider archive individuals in addition to batch        
-def cosa_extract_dims(tests: list[list[int]]):
+def cosa_extract_archive(tests: list[list[int]]):
     ''' Procedure to extract test basis based on COSA article: 
             
         Wojciech Ja ́skowski and Krzysztof Krawiec. “Coordinate System Archive
@@ -299,6 +355,23 @@ def get_batch_pareto_layers(tests: list[list[int]], max_layers = 1):
 # 2. Stochastic multiobjective optimization - what would be simplest algo 
 # 3. Item discrimination 
 
+# def get_eq_groups(unequiv_sets: dict[int, list[int]]) -> list[set[int]]:
+#     ''' unequal_test_sets - Foreach test_id has set of unequal by objective tests 
+#         Returns minimal set of equivalence groups.
+#     '''
+#     eq_groups = [] 
+#     for tid, uneq_set in unequiv_sets.items():
+#         found_eq_sets = []
+#         for eq_set in eq_groups:
+#             if set.isdisjoint(eq_set, uneq_set):
+#                 found_eq_sets.append(eq_set)
+#         if len(found_eq_sets) == 0:
+#             eq_groups.append(set([tid]))
+#         elif len(found_eq_sets) == 1:
+#             found_eq_sets[0].add(tid)
+#         else: #possible spanned point, several equiv_groups 
+            
+#     return eq_groups
 
 if __name__ == "__main__":
     #testing of de module functions 
@@ -332,7 +405,7 @@ if __name__ == "__main__":
         
     print(extract_dims(tests))
 
-    print(cosa_extract_dims(tests))
+    print(cosa_extract_archive(tests))
 
     
 

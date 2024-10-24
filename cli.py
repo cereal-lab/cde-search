@@ -14,11 +14,12 @@
 #conda add click + how to run deps on cluster + bash scripts
 
 import json
+import os
 import click
 from cde import CDESpace
-from config import CONFIG, GAME_GROUPS, SIM_GROUPS, GAMES, SPACES, GAME_SIM, SPACE_SIM, print_config
+from config import GAMES, SIM, print_config
 from games import GameSimulation, InteractionGame 
-from params import param_seed
+from params import param_seed, param_draw_dynamics
 import fcntl
 import time
 import numpy as np
@@ -130,13 +131,12 @@ def show_config():
     ignore_unknown_options=True,
     allow_extra_args=True,
 ))
-@click.option("-id", type = int, default = 0)
-@click.option("-gid", type = str)
-@click.option("-sid", type = str)
+@click.option("-gid", type = str, required=True)
+@click.option("-sid", type = str, required=True)
 @click.option('--times', type=int, default = 1)
 @click.option("-m", "--metrics", type = str, default = "metrics.jsonlist")
 @click.pass_context
-def run_game(ctx, id = 0, gid = None, sid = None, times = 1, metrics = ""):
+def run_game(ctx, gid, sid, times = 1, metrics = ""):
     game_dynamic_args = dict()
     sim_dynamic_args = dict()
     for item in ctx.args:
@@ -145,36 +145,29 @@ def run_game(ctx, id = 0, gid = None, sid = None, times = 1, metrics = ""):
             game_dynamic_args.update([nameVal])
         else:
             sim_dynamic_args.update([nameVal])
-    if gid is not None and sid is not None:
-        sim_name = sid 
-        game_name = gid
-        if gid in GAMES:
-            group = "game"
-            game_builder = GAMES[gid]
-            sim_builder = GAME_SIM[sid]            
-        else:
-            group = "space"
-            game_builder = SPACES[gid]
-            sim_builder = SPACE_SIM[sim]
-    else:
-        group, game_name, sim_name = CONFIG[id]    
-        game_builder = GAME_GROUPS[group][game_name]
-        sim_builder = SIM_GROUPS[group][sim_name]
-    click.echo(f"Running simulation {sim_name} on game {game_name} from group '{group}'")
-    game : InteractionGame = game_builder(**game_dynamic_args)
-    sim : GameSimulation = sim_builder(game, **sim_dynamic_args)
-    for i in range(times): 
-        start_ms = int(time.time() * 1000)
-        sim.play()
-        end_ms = int(time.time() * 1000)
-        metric_data = {"config_id": id, "sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
-                            "duration_ms": end_ms - start_ms,
-                            "params":{"seed": param_seed, "game":game.game_params, "sim":sim.sim_params}, **sim.game_metrics}
-        click.echo(f"{metric_data}")
-        with open(metrics, "a") as f:                
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
-            fcntl.flock(f, fcntl.LOCK_UN)
+    sim_names = sid.split(",")
+    game_names = gid.split(",")
+    for sim_name in sim_names:
+        for game_name in game_names:
+            game_builder = GAMES[game_name]
+            sim_builder = SIM[sim_name]            
+            click.echo(f"Running simulation {sim_name} on game {game_name}")
+            game : InteractionGame = game_builder(**game_dynamic_args)
+            sim : GameSimulation = sim_builder(game, **sim_dynamic_args)
+            for i in range(times): 
+                start_ms = int(time.time() * 1000)
+                sim.play()
+                end_ms = int(time.time() * 1000)
+                metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
+                                    "duration_ms": end_ms - start_ms,
+                                    "params":{"seed": param_seed, "game":game.game_params, "sim":sim.sim_params}, **sim.game_metrics}
+                click.echo(f"{metric_data}")
+                with open(metrics, "a") as f:                
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                    f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
+                    fcntl.flock(f, fcntl.LOCK_UN)
+                if param_draw_dynamics and i == 0:
+                    os.system(f"./togif.sh '{game_name}_{sim_name}'")
             
 if __name__ == '__main__':
     ''' Entry for running games and collecting data '''
