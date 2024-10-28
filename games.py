@@ -84,6 +84,8 @@ class GreaterThanGame(NumberGame):
             check ints_ of this game - almost each number is uniq dim/underlying objective
             returns in metrics the percent of underlying objectives
         '''
+        if len(numbers) == 0:
+            return
         goal = sum(abs(self.max_num - n[0]) for n in numbers) / len(numbers)
         metrics[PARAM_GAME_GOAL] = goal        
         story = metrics.setdefault(PARAM_GAME_GOAL_STORY, [])
@@ -107,6 +109,8 @@ class IntransitiveGame(NumberGame):
             check ints_ of this game - almost each number is uniq dim/underlying objective
             returns in metrics the percent of underlying objectives
         '''
+        if len(numbers) == 0:
+            return        
         uniq_nums = set([self.region_id(n) for n in numbers])
         delta = 0
         # if (self.max_num, self.max_num) in uniq_nums and (self.max_num - 1, self.max_num - 1) in uniq_nums:
@@ -172,6 +176,8 @@ class FocusingGame(NumberGame):
             Check ints_ file of this game to understand thee structure of underelying objectives
             We compute average distance to either of two objectives. But two objectives should be discovered
         '''
+        if len(numbers) == 0:
+            return        
         goals = [(0, self.max_num), (self.max_num, 0)]
         goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
         number_goals = [np.argmin(n) for n in goal_dists]
@@ -202,6 +208,8 @@ class CompareOnOneGame(NumberGame):
             Check ints_ file of this game to understand thee structure of underelying objectives
             We compute average distance to either of two objectives. But two objectives should be discovered
         '''
+        if len(numbers) == 0:
+            return        
         goals = [(0, self.max_num), (self.max_num, 0)]
         goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
         number_goals = [np.argmin(n) for n in goal_dists]
@@ -235,6 +243,8 @@ class CDESpaceGame(InteractionGame):
     
     def update_game_metrics(self, tests, metrics: dict, is_final = False):
         ''' Update game metrics with space metrics. '''
+        if len(tests) == 0:
+            return        
         if is_final:
             DC = self.space.dimension_coverage(tests)
             ARR, ARRA = self.space.avg_rank_of_repr(tests)
@@ -255,9 +265,9 @@ def step_game(step: int, num_steps: int, candidates_pop: Selection, tests_pop: S
     candidates = candidates_pop.get_selection() 
     tests = tests_pop.get_selection()
     if candidates_pop is not OneTimeSequential:
-        game.update_game_metrics(candidates, candidates_pop.sel_metrics, is_final = step == num_steps)
+        game.update_game_metrics(candidates_pop.get_best(), candidates_pop.sel_metrics, is_final = step == num_steps)
     if tests_pop is not OneTimeSequential:
-        game.update_game_metrics(tests, tests_pop.sel_metrics, is_final = step == num_steps)    
+        game.update_game_metrics(tests_pop.get_best(), tests_pop.sel_metrics, is_final = step == num_steps)    
 
     if step == num_steps:
         return False

@@ -464,20 +464,25 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1):
     layers = []
     layer_num = 0 
     test_map = {}
+    discarded = set()
+    duplicates = { }
     for test_id, test in enumerate(tests):
         if all(o == 0 for o in test if o is not None):
+            discarded.add(test_id)
             continue
-        is_dupl = False 
+        dupl_of_test = None
         for test_id2 in range(test_id + 1, len(tests)):
             t2 = tests[test_id2]
             if all(o1 == o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None): #duplicate 
-                is_dupl = True 
+                dupl_of_test = test_id2 
                 break 
-        if is_dupl:
+        if dupl_of_test is not None:
+            duplicates.setdefault(dupl_of_test, set()).add(test_id)
             continue
         dominated_tests = [t2 for t2 in tests if all(o1 >= o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None) and any(o1 > o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None)]
         and_all = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*dominated_tests)]
         if len(and_all) > 0 and all(o1 == o2 for o1, o2 in zip(test, and_all) if o1 is not None and o2 is not None):
+            discarded.add(test_id)
             continue 
         test_map[test_id] = test
     while layer_num < max_layers and len(test_map) > 0: 
@@ -514,7 +519,8 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1):
                 del test_map[test_id]
         layer_num += 1
 
-    return layers 
+    layers = [[el2 for el in layer for el2 in [el, *duplicates.get(el, [])]] for layer in layers]
+    return layers, discarded
 
 
 # TODO: 

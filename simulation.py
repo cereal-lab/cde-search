@@ -147,7 +147,8 @@ SIM = {
     "deca-d-g": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_group_approx_strategy"), 
     "deca-d-s": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_subgroup_approx_strategy"), 
     "deca-d-d": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="extract_dims_approx_strategy"),         
-    "pareto-layers": simulate(ParetoLayersSelection),
+    "pareto-layers-l": simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy"),
+    "pareto-layers-d": simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy"),
     # "pr-10-2": PR_SIM(rank_bonus = 10, max_layers = 2),
     # "cb-100": PR_SIM(archive_bonus = 100)
     # "aco-05-10-1-1": ACO_SIM(pheromone_decay = 0.5, pheromone_inc = 10, dom_bonus = 1, span_penalty = 1)      

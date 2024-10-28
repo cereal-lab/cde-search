@@ -5,8 +5,7 @@ param_max_num = 100
 # param_reg_min_num = 30
 # param_reg_max_num = 49
 num_intransitive_regions = 3
-param_selection_size = 12
-param_cut_features = 10
+param_selection_size = 10
 param_batch_size = 10 #for OneTimeSequence population
 param_draw_dynamics = 1
 
