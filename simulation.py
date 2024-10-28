@@ -8,9 +8,9 @@
 from itertools import product
 from typing import Any
 from cde import CDESpace
-from games import PCHC, PPHC, CDESpaceGame, CandidateTestInteractions, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, RandSampling
+from games import CDESpaceGame, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, run_game
 
-from population import CosaBasedSample, HCPopulation, OneTimeSequential, DECARanksSample, UneqGroupsSample, InteractionFeatureOrder, ParetoRankBasedSample
+from population import HillClimbing, OneTimeSequential, InteractionFeatureOrder, ParetoLayersSelection, DECASelection, RandSelection
 from params import *
 
 def get_args(kwargs: dict[str, Any], prefix):
@@ -19,71 +19,13 @@ def get_args(kwargs: dict[str, Any], prefix):
     params = {**glob_params, **specific_params}
     return params
 
-# def PCHC_SIM(**kwargs):
-#     def b(game: InteractionGame, **kwargs2):
-#         kwargsAll = {**kwargs, **kwargs2}
-#         return PCHC(game, HCPopulation(game.get_all_candidates(), **kwargsAll))
-#     return b
-
-def RAND_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
+def simulate(algo, *, cand_algo = OneTimeSequential, **kwargs):
+    def start(game: InteractionGame, **kwargs2) -> dict:
         kwargsAll = {**kwargs, **kwargs2}
-        return RandSampling(game, **kwargsAll)
-    return b 
-
-def PPHC_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
-        kwargsAll = {**kwargs, **kwargs2}
-        candidates = OneTimeSequential(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = HCPopulation(game.get_all_tests(), **get_args(kwargsAll, "test_"))
-        sim = PPHC(game, candidates, tests)
-        return sim
-    return b
-
-def SS_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
-        kwargsAll = {**kwargs, **kwargs2}
-        candidates = OneTimeSequential(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = InteractionFeatureOrder(game.get_all_tests(), **get_args(kwargsAll, "test_"))
-        sim = CandidateTestInteractions(game, candidates, tests)
-        return sim    
-    return b
-
-def DS_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
-        kwargsAll = {**kwargs, **kwargs2}
-        candidates = OneTimeSequential(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = DECARanksSample(game.get_all_tests(), **get_args(kwargsAll, "test_"))
-        sim = CandidateTestInteractions(game, candidates, tests)
-        return sim 
-    return b   
-
-def UG_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
-        kwargsAll = {**kwargs, **kwargs2}
-        candidates = OneTimeSequential(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = UneqGroupsSample(game.get_all_tests(), **get_args(kwargsAll, "test_"))
-        sim = CandidateTestInteractions(game, candidates, tests)
-        return sim 
-    return b   
-
-def PR_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
-        kwargsAll = {**kwargs, **kwargs2}
-        candidates = OneTimeSequential(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = ParetoRankBasedSample(game.get_all_tests(), **get_args(kwargsAll, "test_"))
-        sim = CandidateTestInteractions(game, candidates, tests)
-        return sim 
-    return b   
-
-def CB_SIM(**kwargs):
-    def b(game: InteractionGame, **kwargs2):
-        kwargsAll = {**kwargs, **kwargs2}
-        candidates = OneTimeSequential(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = CosaBasedSample(game.get_all_tests(), **get_args(kwargsAll, "test_"))
-        sim = CandidateTestInteractions(game, candidates, tests)
-        return sim 
-    return b 
+        candidates = cand_algo(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
+        tests = algo(game.get_all_tests(), **get_args(kwargsAll, "test_"))
+        return run_game(game, candidates, tests, **get_args(kwargsAll, "sim_"))
+    return start  
 
 NUMBER_GAMES = {game.__name__: game for game in [ GreaterThanGame, FocusingGame, IntransitiveRegionGame, CompareOnOneGame ] }
 
@@ -167,14 +109,14 @@ GAMES = {
 }
 
 SIM = {
-    "rand-10": RAND_SIM(),
+    "rand": simulate(RandSelection),
     # "pchc-pmo-w": PCHC_SIM(mutation = "plus_minus_one", init="zero_init", ind_range=(param_min_num, param_max_num), selection = "num_wins", init_range=3), 
     # "pchc-r-w": PCHC_SIM(mutation = "resample", selection = "num_wins", init="zero_init", init_range=3),
-    "pphc-pmo-i": PPHC_SIM(mutation = "plus_minus_one", ind_range=(param_min_num, param_max_num), test_selection="informativeness_select"), # init="zero_init", init_range=3), 
-    "pphc-pmo-p": PPHC_SIM(mutation = "plus_minus_one", ind_range=(param_min_num, param_max_num), test_selection="pareto_select"), # init="zero_init", init_range=3),
-    "pphc-r-i": PPHC_SIM(mutation = "resample", test_selection="informativeness_select"), # init="zero_init", init_range=3), 
-    "pphc-r-p": PPHC_SIM(mutation = "resample", test_selection="pareto_select"), # init="zero_init", init_range=3),
-    "s-0_nd": SS_SIM(strategy=["nond", "dom", "kn"]),
+    "hc-pmo-i": simulate(HillClimbing, test_mutation_strategy = "plus_minus_one", test_selection_strategy="informativeness_select"),
+    "hc-pmo-p": simulate(HillClimbing, test_mutation_strategy = "plus_minus_one", test_selection_strategy="pareto_select"),
+    "hc-r-i": simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="informativeness_select"),
+    "hc-r-p": simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="pareto_select"),
+    "if-nd": simulate(InteractionFeatureOrder, test_strategy=["nond", "dom", "d"], test_dedupl=True),
     # "s-0_ndXdm": SS_SIM(strategy=["nd", "kn"]),
     # "s-0_dm": SS_SIM(strategy=["dom", "kn"]),
     # "s-0_d": SS_SIM(strategy=["d", "kn"]),
@@ -192,10 +134,22 @@ SIM = {
     # "s-0_dp_ndXdm": SS_SIM(strategy=["dup", "nd", "kn"]),
 
     # "ds-100-001": DS_SIM(directed_explore_prop = 0.5, obj_bonus = 100, span_penalty = 0.01), 
-    "ds-100-001": DS_SIM(obj_bonus = 100, span_penalty = 0.01), 
-    "ug": UG_SIM(),
-    "pr-10-2": PR_SIM(rank_bonus = 10, max_layers = 2),
-    "cb-100": PR_SIM(archive_bonus = 100)
+    "deca-l": simulate(DECASelection, test_cand_sel_strategy = "local_cand_sel_strategy"), 
+    # "deca-g-0": simulate(DECASelection, test_cand_sel_strategy = "global_cand_sel_strategy", test_approx_strategy="zero_approx_strategy"), 
+    # "deca-g-1": simulate(DECASelection, test_cand_sel_strategy = "global_cand_sel_strategy", test_approx_strategy="one_approx_strategy"), 
+    # "deca-g-m": simulate(DECASelection, test_cand_sel_strategy = "global_cand_sel_strategy", test_approx_strategy="majority_approx_strategy"), 
+    # "deca-g-g": simulate(DECASelection, test_cand_sel_strategy = "global_cand_sel_strategy", test_approx_strategy="candidate_group_approx_strategy"), 
+    # "deca-g-s": simulate(DECASelection, test_cand_sel_strategy = "global_cand_sel_strategy", test_approx_strategy="candidate_subgroup_approx_strategy"), 
+    # "deca-g-d": simulate(DECASelection, test_cand_sel_strategy = "global_cand_sel_strategy", test_approx_strategy="extract_dims_approx_strategy"), 
+    "deca-d-0": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="zero_approx_strategy"), 
+    "deca-d-1": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="one_approx_strategy"), 
+    "deca-d-m": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="majority_approx_strategy"), 
+    "deca-d-g": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_group_approx_strategy"), 
+    "deca-d-s": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_subgroup_approx_strategy"), 
+    "deca-d-d": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="extract_dims_approx_strategy"),         
+    "pareto-layers": simulate(ParetoLayersSelection),
+    # "pr-10-2": PR_SIM(rank_bonus = 10, max_layers = 2),
+    # "cb-100": PR_SIM(archive_bonus = 100)
     # "aco-05-10-1-1": ACO_SIM(pheromone_decay = 0.5, pheromone_inc = 10, dom_bonus = 1, span_penalty = 1)      
 }
 

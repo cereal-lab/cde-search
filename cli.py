@@ -17,8 +17,8 @@ import json
 import os
 import click
 from cde import CDESpace
-from config import GAMES, SIM, print_config
-from games import GameSimulation, InteractionGame 
+from simulation import GAMES, SIM, print_config
+from games import InteractionGame 
 from params import param_seed, param_draw_dynamics
 import fcntl
 import time
@@ -150,17 +150,16 @@ def run_game(ctx, gid, sid, times = 1, metrics = ""):
     for sim_name in sim_names:
         for game_name in game_names:
             game_builder = GAMES[game_name]
-            sim_builder = SIM[sim_name]            
+            sim_starter = SIM[sim_name]            
             click.echo(f"Running simulation {sim_name} on game {game_name}")
             game : InteractionGame = game_builder(**game_dynamic_args)
-            sim : GameSimulation = sim_builder(game, **sim_dynamic_args)
             for i in range(times): 
                 start_ms = int(time.time() * 1000)
-                sim.play()
+                results = sim_starter(game, **sim_dynamic_args)
                 end_ms = int(time.time() * 1000)
                 metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
                                     "duration_ms": end_ms - start_ms,
-                                    "params":{"seed": param_seed, "game":game.game_params, "sim":sim.sim_params}, **sim.game_metrics}
+                                    "seed": param_seed, **results}
                 click.echo(f"{metric_data}")
                 with open(metrics, "a") as f:                
                     fcntl.flock(f, fcntl.LOCK_EX)

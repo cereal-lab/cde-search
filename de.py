@@ -17,6 +17,9 @@
     c4 1   1  1
 '''
 
+from typing import Any, Optional
+
+
 def extract_dims(tests: list[list[int]]):
     ''' Ideas from article (with modifications)
 
@@ -69,7 +72,8 @@ def extract_dims(tests: list[list[int]]):
         else: # test can extends one of  the existend dimensions
             at_ends_dims = [dim for dim, dim_id, pos in test_dims if pos == len(dim) - 1]
             if len(at_ends_dims) > 0: #is there dimensions which could be extended at the end?
-                at_ends_dims[0].append(([test_id], test)) #at new end of axis
+                dim = min(at_ends_dims, key=lambda dim: (len(dim), len(dim[-1][0])))
+                dim.append(([test_id], test)) #at new end of axis
             else: # otherwise, the axis should fork, we cannot allow this, but create new axis instead
                 dimensions.append([([test_id], test)])
 
@@ -77,61 +81,166 @@ def extract_dims(tests: list[list[int]]):
     duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
     return dims, origin, spanned, duplicates
 
+''' Inserts a new test into multidimensional space. Assumes all values of test are defined
+'''
+def add_one_to_dims(test_id: int, test: list[int], origin_or_spanned: set[int], dimensions: list[list[tuple[list[int], list[int]]]], *, add_to_one = False):
+    if all(t == 0 for t in test): #trivial tests 
+        origin_or_spanned.add(test_id)
+        return []
+    test_dims = [] # set of dimensions to which current test could belong
+    for dim_id, dim in enumerate(dimensions):                
+        for point_id, point in reversed(list(enumerate(dim))):
+            if all(t == d for t, d in zip(test, point[1])):
+                point[0].add(test_id) #point[0] is set of tests that belongs to this space point
+                return []
+            # check that current test dominates the point on at least one candidate
+            if all(t >= d for t, d in zip(test, point[1])) and any(t > d for t, d in zip(test, point[1])):
+                test_dims.append((dim, dim_id, point_id))  #the test dominates the point, so it can be a part of this axis
+                break 
 
-# def extract_dims_mod(tests: dict[Any, list[int]], uneq_sets: dict[Any, set[Any]]):
-#     ''' Modification of the DE from above with an extension of uneq_sets that enforce 
-#         placement of tests of different coordinates in case if they are unequal 
-#         :param tests have test_id to outcomes association 
-#         :param uneq_sets have test_id to uneq test_id sets association 
-#     '''
-#     origin = [] # tests that are placed at the origin of coordinate system
-#     spanned = {} # tests that are combinations of tests on axes (union of CFS)
-#     dimensions = [] # tests on axes 
+    all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
 
-#     # iteration through tests from those that fail least students to those that fail most
-#     for test_id, test in sorted(tests.items(), key=lambda x: sum(x[1])):        
-#         test_dims = [] # set of dimensions to which current test could belong
-#         is_dup = False # is there already same test
-#         for dim_id, dim in enumerate(dimensions):
-#             if all(t == 0 for t in test): #trivial tests 
-#                 origin.append(test_id)
-#                 continue            
-#             # dim[-1] - last point on axis, dim[-1][1] - CFS of the last point 
-#             #                               dim[*][0] - set of tests (test_id) associated to this point of the space
-#             if all(t == d for t, d in zip(test, dim[-1][1])): #match of performance of the last point
-#                 #we add the test to only this dimension
-#                 dim[-1][0].append(test_id)
-#                 is_dup = True
-#                 break 
-#             else: #something unique for this dim
-#                 i = len(dim) - 1 # iterating from the last point on the axis to the first one
-#                 while i >= 0:
-#                     # check that the current test test_id dominates the point i of this axis on at least one candidate
-#                     if all(t >= d for t, d in zip(test, dim[i][1])) and any(t > d for t, d in zip(test, dim[i][1])):
-#                         test_dims.append((dim, dim_id, i))  #the test dominates the point, so it can be a part of this axis
-#                         break #we added the axis, its position to the test possible dimensions test_dims
-#                     i -= 1 # if nondominant - test would not have this dim in test_dims
-#         if is_dup: #for duplicates - continue to the next test_id, duplicate is already placed on the axis 
-#             continue
-#         # to test if this is spanned point, we AND all test dimensions to check if the test CFS is a union of some CFSs of points on the axes
-#         all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
-#         # all_ands represent the union of CFS of all axes which were (minimally) dominated by the test
-#         # it is the check that the test belongs to spanned point
-#         if all_ands == test: #spanned, TODO: add identification of axes which were joined
-#             spanned[test_id] = {dim_id: dim_pos for (_, dim_id, dim_pos) in test_dims}
-#             continue 
-#         elif len(all_ands) == 0: #test is not a union of any axes, new dimension
-#             dimensions.append([([test_id], test)])
-#         else: # test can extends one of  the existend dimensions
-#             at_ends_dims = [dim for dim, dim_id, pos in test_dims if pos == len(dim) - 1]
-#             if len(at_ends_dims) > 0: #is there dimensions which could be extended at the end?
-#                 at_ends_dims[0].append(([test_id], test)) #at new end of axis
-#             else: # otherwise, the axis should fork, we cannot allow this, but create new axis instead
-#                 dimensions.append([([test_id], test)])
+    if len(all_ands) == 0: #test is not a union of any axes, new dimension        
+        dimensions.append([(set([test_id]), test)])
+    elif all(o1 == o2 for o1, o2 in zip(all_ands, test) if o1 is not None and o2 is not None): #spanned
+        origin_or_spanned.add(test_id)      
+    else: # test can extends one of the existing dimensions       
+        at_ends_dims = [dim for dim, dim_id, pos in test_dims if pos == len(dim) - 1]
+        if len(at_ends_dims) > 0: #is there dimensions which could be extended at the end?
+            if add_to_one:
+                dim = min(at_ends_dims, key=lambda d: len(d))
+                dim.append((set([test_id]), test))
+            else:
+                for dim in at_ends_dims:
+                    dim.append((set([test_id]), test)) #at new end of axis
+        else: #test leads to fork, we create new dimension
+            dimensions.append([(set([test_id]), test)])
+    return []
 
-#     dims = [[test_ids for test_ids, _ in dim] for dim in dimensions] #pick only test sets
-#     duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
-#     return dims, spanned, duplicates
+''' Inserts a new test into multidimensional space 
+    if given test contains at least one None (unknown outcome), the insertion will approximate this value according to current dimensions
+    Note, however, that one test could belong to several axes in this procedure
+'''
+def approx_one_to_dims(test_id: int, test: list[int], origin_or_spanned: set[int], dimensions: list[list[tuple[list[int], list[int]]]]):
+    if all(t == 0 for t in test if t is not None): #trivial tests 
+        origin_or_spanned.add(test_id)
+        for candidate_id, outcome in enumerate(test):
+            if outcome is None:
+                test[candidate_id] = 0 
+        return []
+    test_dims = [] # set of dimensions to which current test could belong
+    # check for duplicates from origin to ends
+    for dim_id, dim in enumerate(dimensions):
+        for point_id, point in enumerate(dim):
+            if all(t == d for t, d in zip(test, point[1]) if t is not None and d is not None):
+                point[0].add(test_id) #point[0] is set of tests that belongs to this space point
+                for candidate_id, (outcome, point_outcome) in enumerate(zip(test, point[1])):
+                    if outcome is None:
+                        test[candidate_id] = point_outcome
+                return []
+    # check for position on axes from ends to origin
+    for dim_id, dim in enumerate(dimensions):                
+        for point_id, point in reversed(list(enumerate(dim))):
+            # check that current test dominates the point on at least one candidate
+            if all(t >= d for t, d in zip(test, point[1]) if t is not None and d is not None) and any(t > d for t, d in zip(test, point[1]) if t is not None and d is not None):
+                test_dims.append((dim, dim_id, point_id))  #the test dominates the point, so it can be a part of this axis
+                break 
+
+    all_ands = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
+
+    if len(all_ands) == 0: #test is not a union of any axes, new dimension      
+        # test could be just first point
+        for candidate_id, outcome in enumerate(test):
+            if outcome is None:
+                test[candidate_id] = 0          
+        test_dims = [(dim, dim_id, -1) for dim_id, dim in enumerate(dimensions) if all(o1 <= o2 for o1, o2 in zip(test, dim[0][1]))]
+        if len(test_dims) == 0:
+            dimensions.append([(set([test_id]), test)]) 
+            return []
+        pass 
+    else:
+        for candidate_id, (outcome, all_outcome) in enumerate(zip(test, all_ands)):
+            if outcome is None:
+                test[candidate_id] = all_outcome       
+
+        if all(o1 == o2 for o1, o2 in zip(all_ands, test) if o1 is not None and o2 is not None): #spanned
+            origin_or_spanned.add(test_id)
+            return []
+        pass
+
+    to_reinsert = [] 
+    already_in_to_reinsert = set()
+    for dim, dim_id, pos in test_dims:
+        for group, outcomes in dim[pos+1:]:
+            for group_test_id in group:
+                if group_test_id not in already_in_to_reinsert:
+                    to_reinsert.append((group_test_id, outcomes))
+                    already_in_to_reinsert.add(group_test_id)
+    if len(to_reinsert) > 0:
+        for dim_id, dim in enumerate(dimensions):
+            new_dim = [] 
+            for group, outcomes in dim:
+                new_group = set.difference(group, [tid for tid, _ in to_reinsert])
+                if len(new_group) > 0:
+                    new_dim.append((new_group, outcomes))
+            dimensions[dim_id] = new_dim
+    for dim, dim_id, _ in test_dims:
+        dimensions[dim_id].append((set([test_id]), test))
+    dims_to_del = [dim_id for dim_id, dim in reversed(list(enumerate(dimensions))) if len(dim) == 0]
+    for dim_id in dims_to_del:
+        del dimensions[dim_id]
+    return to_reinsert
+
+def extract_dims_mod(tests: list[list[Optional[int]]]):
+    ''' Modification of the DE for case of sparse matrix '''
+    origin_or_spanned = set() # test that either too easy or to difficult
+    dimensions = [] # tests on axes 
+
+    # we split tests by number of unknown elements in them, algorithm will try to restore unknown values
+    grouped_tests = {}
+    for test_id, test in enumerate(tests):
+        missing_els = sum(1 for o in test if o is None)
+        grouped_tests.setdefault(missing_els, []).append((test_id, test))
+
+    grouped_tests_list = sorted(grouped_tests.items(), key = lambda x: x[0])
+
+    for missing_count, test_group in grouped_tests_list:
+        add_to_dims = add_one_to_dims if missing_count == 0 else approx_one_to_dims
+        for test_id, test in sorted(test_group, key=lambda x: sum(o for o in x[1] if o is not None)): 
+            to_reinsert = add_to_dims(test_id, test, origin_or_spanned, dimensions)
+            for test_id, test in to_reinsert:
+                add_one_to_dims(test_id, test, origin_or_spanned, dimensions)
+
+    # here we have all None values approximated 
+    dimensions = []
+    for test_id, test in sorted(enumerate(tests), key=lambda x: sum(x[1])):
+        if test_id not in origin_or_spanned:
+            add_one_to_dims(test_id, test, origin_or_spanned, dimensions, add_to_one=True)
+
+    dims = [[list(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
+    return dims, origin_or_spanned
+
+def extract_dims_approx(tests: list[list[Optional[int]]]):
+    ''' Modification of the DE for case of sparse matrix '''
+    origin_or_spanned = set() # test that either too easy or to difficult
+    dimensions = [] # tests on axes 
+
+    # we split tests by number of unknown elements in them, algorithm will try to restore unknown values
+    grouped_tests = {}
+    for test_id, test in enumerate(tests):
+        missing_els = sum(1 for o in test if o is None)
+        grouped_tests.setdefault(missing_els, []).append((test_id, test))
+
+    grouped_tests_list = sorted(grouped_tests.items(), key = lambda x: x[0])
+
+    for missing_count, test_group in grouped_tests_list:
+        add_to_dims = add_one_to_dims if missing_count == 0 else approx_one_to_dims
+        for test_id, test in sorted(test_group, key=lambda x: sum(o for o in x[1] if o is not None)): 
+            to_reinsert = add_to_dims(test_id, test, origin_or_spanned, dimensions)
+            for test_id, test in to_reinsert:
+                add_one_to_dims(test_id, test, origin_or_spanned, dimensions)
+
+    return # here all unknown values are approximated
 
 # TODO: organize archive variables as state accessible to populations - probably encapsulate into Archive instance 
 # TODO: DECA as archive. By itself it is ocmputationally heavy operation to compute dimensions on all previous interactions 
@@ -314,7 +423,7 @@ def get_batch_pareto_layers(tests: list[list[int]], max_layers = 1):
     for test_id in list(test_map.keys()):
         if all(o == 0 for o in test_map[test_id]):
             del test_map[test_id]
-    while layer_num < max_layers: 
+    while layer_num < max_layers and len(test_map) > 0:  
         tests_archive = {} #map of test_id to set of semantically same tests 
         for test_id, test in test_map.items():
             dominates = set() 
@@ -350,6 +459,64 @@ def get_batch_pareto_layers(tests: list[list[int]], max_layers = 1):
 
     return layers 
 
+def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1):
+    ''' Works with sparsed matrices '''
+    layers = []
+    layer_num = 0 
+    test_map = {}
+    for test_id, test in enumerate(tests):
+        if all(o == 0 for o in test if o is not None):
+            continue
+        is_dupl = False 
+        for test_id2 in range(test_id + 1, len(tests)):
+            t2 = tests[test_id2]
+            if all(o1 == o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None): #duplicate 
+                is_dupl = True 
+                break 
+        if is_dupl:
+            continue
+        dominated_tests = [t2 for t2 in tests if all(o1 >= o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None) and any(o1 > o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None)]
+        and_all = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*dominated_tests)]
+        if len(and_all) > 0 and all(o1 == o2 for o1, o2 in zip(test, and_all) if o1 is not None and o2 is not None):
+            continue 
+        test_map[test_id] = test
+    while layer_num < max_layers and len(test_map) > 0: 
+        tests_archive = {} #map of test_id to set of semantically same tests 
+        for test_id, test in test_map.items():
+            dominates = set() 
+            dominated_by = set()
+            same_to = None
+            for arch_id in tests_archive.keys():
+                arch = test_map[arch_id]
+                has_any_in_test = any(o1 > o2 for o1, o2 in zip(test, arch) if o1 is not None and o2 is not None)
+                has_any_in_arch = any(o1 > o2 for o1, o2 in zip(arch, test) if o1 is not None and o2 is not None)
+                if has_any_in_test and has_any_in_arch: # non-dominant 
+                    pass 
+                elif has_any_in_test and not has_any_in_arch: # remove from arch
+                    dominates.add(arch_id)
+                elif not has_any_in_test and has_any_in_arch: # weaker test 
+                    dominated_by.add(arch_id)
+                else: # same 
+                    same_to = arch_id 
+                    break 
+            if same_to is not None:
+                tests_archive[same_to].add(test_id)
+            elif len(dominated_by) == 0:
+                for arch_id in dominates:
+                    del tests_archive[arch_id]
+                tests_archive[test_id] = set([test_id])
+            else: # dominated by archive - noop
+                pass
+        layers.append([test_id for test_ids in tests_archive.values() for test_id in test_ids])
+        #filter out processed tests:
+        for test_ids in tests_archive.values():
+            for test_id in test_ids:
+                del test_map[test_id]
+        layer_num += 1
+
+    return layers 
+
+
 # TODO: 
 # 1. Read dynamic optimization vs coevolution, IEA etc 
 # 2. Stochastic multiobjective optimization - what would be simplest algo 
@@ -381,7 +548,18 @@ if __name__ == "__main__":
         [1,1,1,0,0,0], #c 2
         [1,1,0,1,1,1], #d 3
         [1,1,1,1,1,1], #f 4
-    ]
+        [1,1,0,1,1,1], #e 5
+    ]    
+    # tests = [
+    #     [None,1,0,0,None,0], #a 0
+    #     [None,0,None,0,1,1], #b 1
+    #     [None,None,1,0,None,None], #c 2
+    #     [1,1,0,1,1,1], #d 3
+    #     [1,None,1,1,1,1], #f 4
+    # ]
+
+    layers = get_batch_pareto_layers2(tests, 3)
+    pass
     tests2 = [
         [0,1,0,1,0,0],
         [0,0,1,1,0,0],
@@ -391,6 +569,8 @@ if __name__ == "__main__":
         [0,0,0,1,0,1],
         [1,0,0,0,0,1]
     ]    
+    layers = get_batch_pareto_layers2(tests2, 3)
+    pass    
     tests1 = [
         [0,0,0]
     ]
@@ -403,9 +583,66 @@ if __name__ == "__main__":
     for cid, candidate in enumerate(candidates):
         print(f"{cid}:{candidate}")
         
-    print(extract_dims(tests))
+    # print(extract_dims(tests))
 
-    print(cosa_extract_archive(tests))
+    # tests = [
+    #     [1,1,0,0,0,0], #a 0
+    #     [0,0,0,0,1,1], #b 1
+    #     [1,1,None,0,0,0], #c 2
+    #     [1,1,0,1,1,1], #d 3
+    #     [1,1,1,1,1,1], #f 4
+    # ]    
+
+    # tests = [
+    #     [1,1,0,0,0,0], #a 0
+    #     [0,0,0,0,1,1], #b 1
+    #     [None,1,1,0,0,0], #c 2
+    #     [1,1,0,1,1,1], #d 3
+    #     [1,1,1,1,1,1], #f 4
+    # ]        
+
+    # print("-- mod --")
+    print(extract_dims_mod(tests))
+
+    print("res tests")
+    for test_id, test in enumerate(tests):
+        print(f"{test_id}:{test}")    
+
+    pass 
+
+    #we expect that extract_dims and extract_dims_mod return same results when matrices are not sparsed 
+    n = 4
+    k = 3
+    fail = 0 
+    succ = 0
+    for i in range(2 ** (n * k)):
+        test_linear = [0 for _ in range(n*k)]
+        idx = i 
+        j = 0
+        while idx > 0:
+            if (idx % 2) == 1:
+                test_linear[j] = 1
+            idx = idx // 2
+            j += 1
+        test = [[test_linear[i * k + j] for j in range(k)] for i in range(n)]
+        # print("matrix --", test)
+        a, _, _, _ = extract_dims(test)
+        b, _ = extract_dims_mod(test)
+        if a != b:
+            print("---------------")
+            print("Missmatch on matrix")
+            print(test)
+            print("A:")
+            print(a)
+            print("B:")
+            print(b)
+            fail += 1
+        else: 
+            succ += 1
+    print("Failed: ", fail, "Success", succ)
+    pass 
+
+    # print(cosa_extract_archive(tests))
 
     
 
