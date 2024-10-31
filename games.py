@@ -19,6 +19,8 @@ import numpy as np
 from cde import CDESpace
 from viz import draw_populations
 
+import json
+
 from population import OneTimeSequential, Selection
     
 class InteractionGame(ABC):
@@ -44,6 +46,9 @@ class InteractionGame(ABC):
 
     def get_all_tests(self):
         return self.get_all_candidates()
+    
+    def get_extracted_dimensions(self):
+        return [], {}, set()
 
 # set of games 
 class NumberGame(InteractionGame):
@@ -59,24 +64,46 @@ class NumberGame(InteractionGame):
         self.max_num = max_num
         self.game_params["min_num"] = min_num
         self.game_params["max_num"] = max_num
+        self.space = None
     
     def get_interaction_matrix(self):
         ''' returns rows as test outcomes:
             test1: [cand1_outcome, cand2_outcome, ...] 
             test2: [cand1_outcome, cand2_outcome, ...]
             ... 
-            NOTE: Test wins when candidate loses
+            NOTE: Test wins when candidate loses, therefore 1 - 
+            We are interested in finding best tests 
         '''
-        ints = [[1 - self.interact(candidate, test) for candidate in self.all_numbers] for test in self.all_numbers ]
+        ints = [[ 1 - self.interact(candidate, test) for candidate in self.all_numbers] for test in self.all_numbers ]
         return ints  
 
     def get_all_candidates(self):
         return self.all_numbers  
+    
+    def save_space(self):
+        dims, o, sp, _ = extract_dims(self.get_interaction_matrix())
+        spanned = [[tid, list(coords)] for tid, coords in sp.items()]
+        json_space = json.dumps(dict(axes = dims, origin = o, spanned = spanned))
+        with open(self.__class__.__name__ + "-space.json", "w") as f:
+            f.write(json_space)
+
+    def load_space(self):
+        with open(self.__class__.__name__ + "-space.json", "r") as f:
+            json_space = json.loads(f.read())
+        axes = [ [set([self.all_numbers[i] for i in point]) for point in dim ] for dim in json_space["axes"] ]
+        origin = set([self.all_numbers[i] for i in json_space["origin"]])
+        spanned = {self.all_numbers[i]: tuple(sp_dims) for i, sp_dims in json_space["spanned"]}
+        self.space = (axes, origin, spanned)
+    
+    def get_extracted_dimensions(self):
+        if self.space is None:
+            self.load_space()      
+        return self.space
 
 class GreaterThanGame(NumberGame):
     ''' testing game to see how everything works '''
     def interact(self, candidate, test, **args) -> int:
-        ''' 1 - candidate is better thah test, 0 - test fails candidate '''
+        ''' 1 - candidate is better than test, 0 - test fails the candidate, test is better '''
         return 1 if candidate[0] > test[0] else 0
     
     def update_game_metrics(self, numbers, metrics, is_final = False):
@@ -96,7 +123,7 @@ class GreaterThanGame(NumberGame):
 class IntransitiveGame(NumberGame):
     ''' The IG as it was stated in Bucci article '''
     def interact(self, candidate, test, **args) -> int:
-        ''' 1 - candidate is better thah test, 0 - test fails candidate '''
+        ''' 1 - candidate is better than test, 0 - test fails the candidate '''
         abs_diffs = [abs(x - y) for x, y in zip(candidate, test)]
         res = 1 if (abs_diffs[0] > abs_diffs[1] and candidate[1] > test[1]) or (abs_diffs[1] > abs_diffs[0] and candidate[0] > test[0]) else 0
         return res
@@ -160,15 +187,16 @@ class IntransitiveRegionGame(IntransitiveGame):
         return super().interact(r1, r2)
 
 class FocusingGame(NumberGame):
-    ''' The FG as it was stated in Bucci article '''
+    ''' The FG as it was stated in Bucci (not Golam's) article '''
     def interact(self, candidate, test, **args) -> int:
-        ''' 1 - candidate is better than test, 0 - test fails candidate '''
-        # res = 1 if (test[0] > test[1] and candidate[0] > test[0]) or (test[1] > test[0] and candidate[1] > test[1]) else 0
-        # if candidate[0] > candidate[1]:
+        ''' 1 - candidate is better than test, 0 - test fails candidate '''        
+        # next is according to Golam article
+        # if test[0] > test[1]:
         #     res = 1 if candidate[0] > test[0] else 0
         # else:
         #     res = 1 if candidate[1] > test[1] else 0
-        res = 1 if (candidate[0] > candidate[1] and candidate[0] > test[0]) or (candidate[1] > candidate[0] and candidate[1] > test[1]) else 0
+        # note: next is according to Bucci article
+        res = 1 if (test[0] > test[1] and candidate[0] > test[0]) or (test[1] > test[0] and candidate[1] > test[1]) else 0
         return res
     
     def update_game_metrics(self, numbers, metrics, is_final = False):
@@ -177,7 +205,14 @@ class FocusingGame(NumberGame):
             We compute average distance to either of two objectives. But two objectives should be discovered
         '''
         if len(numbers) == 0:
-            return        
+            return      
+
+        goal1_scores = [ self.max_num - n[1] for n in numbers if n[0] == self.max_num or n[1] == self.max_num or n[0] == n[1] ]
+        goal2_scores = [ self.max_num - n[0] for n in numbers if n[0] >= n[1] ]
+        goal1_score = self.max_num if len(goal1_scores) == 0 else sum(goal1_scores) / len(goal1_scores)
+        goal2_score = self.max_num if len(goal2_scores) == 0 else sum(goal2_scores) / len(goal2_scores)
+        score = (goal1_score + goal2_score) / 2
+
         goals = [(0, self.max_num), (self.max_num, 0)]
         goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
         number_goals = [np.argmin(n) for n in goal_dists]
@@ -210,18 +245,16 @@ class CompareOnOneGame(NumberGame):
         '''
         if len(numbers) == 0:
             return        
-        goals = [(0, self.max_num), (self.max_num, 0)]
-        goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
-        number_goals = [np.argmin(n) for n in goal_dists]
-        numbers_by_goals = [[], []]
-        for goal_id, dists in zip(number_goals, goal_dists):
-            numbers_by_goals[goal_id].append(dists[goal_id])
-        goal_scores = [min(gd, default=self.max_num) for gd in numbers_by_goals]
-        score = sum(goal_scores) / len(goal_scores)
-        metrics["game_goal_1"] = goal_scores[0]
-        metrics["game_goal_2"] = goal_scores[1]
-        metrics.setdefault("game_goal_1_story", []).append(goal_scores[0])
-        metrics.setdefault("game_goal_2_story", []).append(goal_scores[1])
+        # goals = [(0, self.max_num), (self.max_num, 0)]
+        goal1_scores = [ self.max_num - n[1] for n in numbers if n[0] < n[1] ]
+        goal2_scores = [ self.max_num - n[0] for n in numbers if n[0] >= n[1] ]
+        goal1_score = self.max_num if len(goal1_scores) == 0 else sum(goal1_scores) / len(goal1_scores)
+        goal2_score = self.max_num if len(goal2_scores) == 0 else sum(goal2_scores) / len(goal2_scores)
+        score = (goal1_score + goal2_score) / 2
+        metrics["game_goal_1"] = goal1_score
+        metrics["game_goal_2"] = goal2_score
+        metrics.setdefault("game_goal_1_story", []).append(goal1_score)
+        metrics.setdefault("game_goal_2_story", []).append(goal2_score)
         metrics[PARAM_GAME_GOAL] = score #smaller is better
         metrics.setdefault(PARAM_GAME_GOAL_STORY, []).append(score)
         if is_final:
@@ -235,7 +268,8 @@ class CDESpaceGame(InteractionGame):
         self.candidates = sorted(space.get_candidates())
         self.tests = sorted(space.get_tests())
         self.all_fails = space.get_candidate_fails()
-        self.game_params["space"] = space.to_dict()            
+        self.game_params["space"] = space.to_dict()      
+        self.space_plain = None      
 
     def interact(self, candidate, test, **args) -> int:
         ''' 1 - candidate wins, 0 - test wins '''
@@ -260,48 +294,60 @@ class CDESpaceGame(InteractionGame):
     
     def get_all_tests(self):
         return self.tests
+    
+    def get_extracted_dimensions(self):
+        if self.space_plain is None:
+            axes = [[set(point.tests) for point in axis] for axis in self.space.axes]
+            origin = set(self.space.origin.tests)
+            spanned = {test: pos for position, point in self.space.spanned.items() for pos in [{axis_id: pos_id for axis_id, pos_id in position}] for test in point.tests}
+            self.space_plain = (axes, origin, spanned)
+        return self.space_plain
 
-def step_game(step: int, num_steps: int, candidates_pop: Selection, tests_pop: Selection, game: InteractionGame) -> None:
-    candidates = candidates_pop.get_selection() 
-    tests = tests_pop.get_selection()
-    if candidates_pop is not OneTimeSequential:
-        game.update_game_metrics(candidates_pop.get_best(), candidates_pop.sel_metrics, is_final = step == num_steps)
-    if tests_pop is not OneTimeSequential:
-        game.update_game_metrics(tests_pop.get_best(), tests_pop.sel_metrics, is_final = step == num_steps)    
+def step_game(step: int, num_steps: int, sel1: Selection, sel2: Selection, game: InteractionGame) -> None:
+    selection1 = sel1.get_selection() 
+    selection2 = sel2.get_selection()
+    sel1.collect_metrics(*game.get_extracted_dimensions(), is_final = step == num_steps)
+    sel2.collect_metrics(*game.get_extracted_dimensions(), is_final = step == num_steps)
+    #     game.update_game_metrics(sel1.get_best(), sel1.sel_metrics, is_final = step == num_steps)
+    # if sel2 is not OneTimeSequential:
+    #     game.update_game_metrics(sel2.get_best(), sel2.sel_metrics, is_final = step == num_steps)    
 
     if step == num_steps:
         return False
         
-    candidate_ints = {}
-    test_ints = {}
-    uniq_candidates = set(candidates)
-    uniq_tests = set(tests)
-    for cand in uniq_candidates:
-        candidate_ints[cand] = {test:game.interact(cand, test, step = step, num_steps = num_steps) for test in uniq_tests}
-    for test in uniq_tests: # NOTE: test wins when candidate fails
-        test_ints[test] = {cand:1 - candidate_ints[cand][test] for cand in uniq_candidates}
-    all_candidate_ints = {cand:{test: cand_ints[test] for test in tests} for cand, cand_ints in candidate_ints.items()} 
-    all_test_ints = {test:{cand: t_ints[cand] for cand in candidates} for test, t_ints in test_ints.items()} 
-    candidates_pop.update(all_candidate_ints, uniq_tests)
-    tests_pop.update(all_test_ints, uniq_candidates)
+    set1 = set(selection1)
+    set2 = set(selection2)
+
+    # here we test set2 on set1 (set1 plays role of tests) and we adjust set of tests, sel1
+    # test win when candidate loses, therefore 1 -, because interact is not symmetric 
+    # and we pick best tests on update 
+    if sel1 is not OneTimeSequential:
+        ints = {test: {cand:1 - game.interact(cand, test, step = step, num_steps = num_steps) for cand in set2} for test in set1}
+        sel1.update(ints, set2)
+
+    # here we test set1 on set2 (set2 plays role of tests) and we adjust set of tests, sel2
+    if sel2 is not OneTimeSequential:
+        ints = {test: {cand:1 - game.interact(cand, test, step = step, num_steps = num_steps) for cand in set1} for test in set2}
+        sel2.update(ints, set1)        
+
     return True
  
-def run_game(game: InteractionGame, candidates: Selection, tests: Selection, *, num_steps: int = param_steps, draw_dynamics = param_draw_dynamics, **kwargs) -> None:
+def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_steps: int = param_steps, draw_dynamics = param_draw_dynamics, **kwargs) -> None:
     num_steps = int(num_steps)
     draw_dynamics = int(param_draw_dynamics) == 1
-    candidates.init_selection()
-    tests.init_selection()
-    candidates.sel_metrics[PARAM_MAX_INTS] = tests.sel_metrics[PARAM_MAX_INTS] = len(candidates.get_pool()) * len(tests.get_pool())
+    sel1.init_selection()
+    sel2.init_selection()
+    sel1.sel_metrics[PARAM_MAX_INTS] = sel2.sel_metrics[PARAM_MAX_INTS] = len(sel1.get_pool()) * len(sel2.get_pool())
     step = 0
     should_continue = True 
     while should_continue:
-        should_continue = step_game(step, num_steps, candidates, tests, game)
+        should_continue = step_game(step, num_steps, sel1, sel2, game)
         if draw_dynamics and isinstance(game, NumberGame):
-            cand_points = candidates.get_for_drawing(role = "cand")
-            test_points = tests.get_for_drawing(role = "test")
+            cand_points = sel1.get_for_drawing(role = "cand")
+            test_points = sel2.get_for_drawing(role = "test")
             if len(test_points) > 0:
                 point_groups = [*cand_points, *test_points]
-                pop_name = tests.__class__.__name__
+                pop_name = sel2.__class__.__name__
                 name = f"{step}"
                 name = name if len(name) >= 4 else ("0" * (4 - len(name)) + name)
                 draw_populations(point_groups,
@@ -309,8 +355,8 @@ def run_game(game: InteractionGame, candidates: Selection, tests: Selection, *, 
                                     name = f"step-{name}", title = f"Step {name}, {pop_name} on {game.__class__.__name__}")
         step += 1
     return dict(params = dict(game = dict(num_steps = num_steps, draw_dynamics=draw_dynamics, **game.game_params), 
-                                cand = candidates.sel_params, test = tests.sel_params), 
-                    metrics = dict(cand = candidates.sel_metrics, test = tests.sel_metrics))
+                                sel = sel2.sel_params), 
+                    metrics = dict(sel = sel2.sel_metrics))
         
 if __name__ == '__main__':
     ''' This entry is used currently only to figure out the CDE space of different number games 
@@ -318,10 +364,13 @@ if __name__ == '__main__':
     '''
     # game = IntransitiveRegionGame(1, 4, 0, 5)
     # game = OrigIntransitiveGame(0, 3)
-    game = IntransitiveRegionGame(num_intransitive_regions=2, min_num=0, max_num = 4)
+    # game = IntransitiveRegionGame(num_intransitive_regions=2, min_num=0, max_num = 4)
+    game = CompareOnOneGame()
+    game.save_space()
+    # game = FocusingGame(0, 5)
     ints = game.get_interaction_matrix()
     dims, origin, spanned, duplicates = extract_dims(ints)
-    dim_nums = [[game.all_numbers[test_ids[0]] for test_ids in dim] for dim in dims]
+    dim_nums = [[[game.all_numbers[i] for i in test_ids] for test_ids in dim] for dim in dims]
     origin_nums = [game.all_numbers[i] for i in origin]
     spanned_nums = [game.all_numbers[i] for i in spanned.keys()]
     duplicates_nums = [game.all_numbers[i] for i in duplicates]
@@ -333,15 +382,16 @@ if __name__ == '__main__':
     rows = []    
     for dim_id, dim in enumerate(sorted(dims, key = lambda dim:game.all_numbers[dim[-1][0]])):
         # print(f"Dim {dim_id}")
-        for test_ids in dim:
+        for point_id, test_ids in enumerate(dim):
             # print(f"{game.all_numbers[i]}: {ints[i]}")
-            i = test_ids[0]
-            row = []
-            num = game.all_numbers[i]
-            row.append(dim_id)
-            row.append(f"{num[0]},{num[1]}")
-            row.extend(["" if o == 0 else 1 for o in ints[i]])
-            rows.append(row)    
+            for i in test_ids:
+                row = []
+                num = game.all_numbers[i]
+                row.append(dim_id)
+                row.append(point_id)
+                row.append(f"{num[0]},{num[1]}")
+                row.extend(["" if o == 0 else 1 for o in ints[i]])
+                rows.append(row)    
         rows.append(SEPARATING_LINE)
     if len(origin) > 0:        
         for num, i in zip(origin_nums, origin):
@@ -362,7 +412,7 @@ if __name__ == '__main__':
         print(tabulate(int_rows, headers=int_headers, tablefmt = "simple", numalign="center", stralign="center"), file=f)
         print("\n", file=f)
         print(f"Dims: {len(dim_nums)}, points={max_dim} Origin: {len(origin_nums)} Spanned: {len(spanned_nums)} Duplicates: {len(duplicates_nums)}", file=f)
-        print(tabulate(rows, headers=["dim", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]], tablefmt='simple', numalign="center", stralign="center"), file=f)
+        print(tabulate(rows, headers=["dim", "pos", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]], tablefmt='simple', numalign="center", stralign="center"), file=f)
     # print(f"{game.all_numbers}")
 
     # print(f"Spanned")

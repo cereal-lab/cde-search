@@ -129,17 +129,8 @@ def approx_one_to_dims(test_id: int, test: list[int], origin_or_spanned: set[int
                 test[candidate_id] = 0 
         return []
     test_dims = [] # set of dimensions to which current test could belong
-    # check for duplicates from origin to ends
-    for dim_id, dim in enumerate(dimensions):
-        for point_id, point in enumerate(dim):
-            if all(t == d for t, d in zip(test, point[1]) if t is not None and d is not None):
-                point[0].add(test_id) #point[0] is set of tests that belongs to this space point
-                for candidate_id, (outcome, point_outcome) in enumerate(zip(test, point[1])):
-                    if outcome is None:
-                        test[candidate_id] = point_outcome
-                return []
     # check for position on axes from ends to origin
-    for dim_id, dim in enumerate(dimensions):                
+    for dim_id, dim in enumerate(dimensions):  
         for point_id, point in reversed(list(enumerate(dim))):
             # check that current test dominates the point on at least one candidate
             if all(t >= d for t, d in zip(test, point[1]) if t is not None and d is not None) and any(t > d for t, d in zip(test, point[1]) if t is not None and d is not None):
@@ -148,8 +139,15 @@ def approx_one_to_dims(test_id: int, test: list[int], origin_or_spanned: set[int
 
     all_ands = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
 
-    if len(all_ands) == 0: #test is not a union of any axes, new dimension      
+    if len(all_ands) == 0: #test is not a union of any axes, new dimension?     
         # test could be just first point
+        for dim in dimensions:
+            if all(o1 == o2 for o1, o2 in zip(test, dim[0][1]) if o1 is not None and o2 is not None):
+                dim[0][0].add(test_id)
+                for candidate_id, outcome in enumerate(test):
+                    if outcome is None:
+                        test[candidate_id] = dim[0][1][candidate_id]
+                return []      
         for candidate_id, outcome in enumerate(test):
             if outcome is None:
                 test[candidate_id] = 0          
@@ -157,15 +155,37 @@ def approx_one_to_dims(test_id: int, test: list[int], origin_or_spanned: set[int
         if len(test_dims) == 0:
             dimensions.append([(set([test_id]), test)]) 
             return []
-        pass 
+        pass
     else:
         for candidate_id, (outcome, all_outcome) in enumerate(zip(test, all_ands)):
             if outcome is None:
                 test[candidate_id] = all_outcome       
 
+        # check for duplicates from origin to ends
+        # for dim_id, dim in enumerate(dimensions):
+        #     for point_id, point in enumerate(dim):
+        #         if all(t == d for t, d in zip(test, point[1]) if t is not None and d is not None):
+        #             point[0].add(test_id) #point[0] is set of tests that belongs to this space point
+        #             for candidate_id, (outcome, point_outcome) in enumerate(zip(test, point[1])):
+        #                 if outcome is None:
+        #                     test[candidate_id] = point_outcome
+        #             return []
+
         if all(o1 == o2 for o1, o2 in zip(all_ands, test) if o1 is not None and o2 is not None): #spanned
             origin_or_spanned.add(test_id)
-            return []
+            return []        
+        
+        # check for duplicates - we need to check only next point 
+        for dim, dim_id, dim_pos in test_dims:
+            if dim_pos + 1 < len(dim):
+                next_point = dim[dim_pos + 1]
+                if all(o1 == o2 for o1, o2 in zip(test, next_point[1]) if o1 is not None and o2 is not None):
+                    next_point[0].add(test_id)
+                    for candidate_id, (outcome, point_outcome) in enumerate(zip(test, next_point[1])):
+                        if outcome is None:
+                            test[candidate_id] = point_outcome
+                    return []    
+
         pass
 
     to_reinsert = [] 

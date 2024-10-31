@@ -7,6 +7,7 @@ import json
 from math import sqrt
 from typing import Any, Iterable, Optional
 from de import extract_dims, get_batch_pareto_layers2
+from metrics import avg_rank_of_repr, dimension_coverage, duplication, redundancy, trivial
 from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, \
     param_steps, param_selection_size, param_batch_size, rnd
 import approx
@@ -58,6 +59,23 @@ class Selection:
         return [
             {"xy": self.selection, "class": dict(marker='o', s=30, c='#151fd6'), "legend": [s for s in self.selection[:20]]}
         ]
+    
+    def collect_metrics(self, axes, origin, spanned, *, is_final = False):
+        sample = self.get_best()
+        DC = dimension_coverage(axes, sample)
+        ARR, ARRA = avg_rank_of_repr(axes, sample)
+        Dup = duplication(axes, spanned, origin, sample)
+        R = redundancy(spanned, sample)
+        tr = trivial(axes, sample)
+        self.sel_metrics.setdefault("DC", []).append(DC)
+        self.sel_metrics.setdefault("ARR", []).append(ARR)
+        self.sel_metrics.setdefault("ARRA", []).append(ARRA)
+        self.sel_metrics.setdefault("Dup", []).append(Dup)
+        self.sel_metrics.setdefault("R", []).append(R)
+        self.sel_metrics.setdefault("tr", []).append(tr)
+        if is_final:
+            self.sel_metrics["sample"] = sample
+
 
 class HillClimbing(Selection):
     ''' Population that evolves with parent-child hill climbing approach '''
@@ -307,7 +325,8 @@ class ExploitExploreSelection(Selection):
 
     def discr_cand_sel_strategy(self, last_btach_tests:Iterable[Any], last_batch_candidates: set[Any]):
         discriminating_candidates = self.get_discriminating_set(set(last_btach_tests))
-        return list(discriminating_candidates) # list(set.union(discriminating_candidates, last_batch_candidates))    
+        return list(discriminating_candidates) # 
+        #return list(set.union(discriminating_candidates, last_batch_candidates))    
         
 class InteractionFeatureOrder(ExploitExploreSelection):
     ''' Sampling of search space based on grouping by interactions features and ordering of the groups 

@@ -257,64 +257,64 @@ class CDESpace(JSONSerializable):
         return len(self.candidate_remap) / self.next_candidate_id
 
     # Test sample metrics 
-    def dimension_coverage(self, tests_sample: set[int]):
-        ''' Computes DC metric based on DECA axes and given tests sample (ex., last population of P-PHC)
-            :param tests_sample - ids of tests in the space 
-            :returns percent of axes covered by sample
-        '''
-        sample_axes = [axis for axis in self.axes if any(t in tests_sample for point in axis for t in point.tests)]
-        dim_coverage = len(sample_axes) / len(self.axes)
-        return dim_coverage
+    # def dimension_coverage(self, tests_sample: set[int]):
+    #     ''' Computes DC metric based on DECA axes and given tests sample (ex., last population of P-PHC)
+    #         :param tests_sample - ids of tests in the space 
+    #         :returns percent of axes covered by sample
+    #     '''
+    #     sample_axes = [axis for axis in self.axes if any(t in tests_sample for point in axis for t in point.tests)]
+    #     dim_coverage = len(sample_axes) / len(self.axes)
+    #     return dim_coverage
 
-    def avg_rank_of_repr(self, tests_sample:set[int]):
-        ''' Computes ARR for a given sample 
-            :param tests_sample - set of tests from the space
-            :returns - tuple of ARR and ARRA
-        '''
-        axes_ranks = [next((point_id + 1 for point_id, point in reversed(list(enumerate(axis))) 
-                            if any(t in tests_sample for t in point.tests)), 0) / len(axis)
-                        for axis in self.axes]
-        axes_ranks_no_zero = [r for r in axes_ranks if r > 0]
-        arr = 0 if len(axes_ranks_no_zero) == 0 else (sum(axes_ranks_no_zero) / len(axes_ranks_no_zero))
-        arra = sum(axes_ranks) / len(axes_ranks)
-        return (arr, arra)
+    # def avg_rank_of_repr(self, tests_sample:set[int]):
+    #     ''' Computes ARR for a given sample 
+    #         :param tests_sample - set of tests from the space
+    #         :returns - tuple of ARR and ARRA
+    #     '''
+    #     axes_ranks = [next((point_id + 1 for point_id, point in reversed(list(enumerate(axis))) 
+    #                         if any(t in tests_sample for t in point.tests)), 0) / len(axis)
+    #                     for axis in self.axes]
+    #     axes_ranks_no_zero = [r for r in axes_ranks if r > 0]
+    #     arr = 0 if len(axes_ranks_no_zero) == 0 else (sum(axes_ranks_no_zero) / len(axes_ranks_no_zero))
+    #     arra = sum(axes_ranks) / len(axes_ranks)
+    #     return (arr, arra)
 
-    def redundancy(self, tests_sample:set[int]):
-        ''' Computes redundancy - percent of spanned points in the selection 
-            :param tests_sample - set of tests from the space
-            :returns redundancy of the sample
-        '''
-        spanned_set = {t for spanned in self.spanned.values() for t in spanned.tests}
-        spanned_sample = spanned_set & tests_sample
-        R = len(spanned_sample) / len(tests_sample) 
-        return R
+    # def redundancy(self, tests_sample:set[int]):
+    #     ''' Computes redundancy - percent of spanned points in the selection 
+    #         :param tests_sample - set of tests from the space
+    #         :returns redundancy of the sample
+    #     '''
+    #     spanned_set = {t for spanned in self.spanned.values() for t in spanned.tests}
+    #     spanned_sample = spanned_set & tests_sample
+    #     R = len(spanned_sample) / len(tests_sample) 
+    #     return R
 
-    def duplication(self, tests_sample:set[int]):
-        ''' Computes percent of dumplications in tests sample according to CDE space
-            :param tests_sample - set of tests from the space
-        '''
-        space_tests = { **{t:((axis_id, point_id),)
-                            for axis_id, axis in enumerate(self.axes) for point_id, point in enumerate(axis)
-                            for t in point.tests},
-                        **{t:coord_id for coord_id, spanned in self.spanned.items() for t in spanned.tests},
-                        **{t:() for t in self.origin.tests}}
-        Dup = 0 
-        present = set()
-        for t in tests_sample:
-            pos = space_tests[t]
-            if pos in present:
-                Dup += 1 
-            else:
-                present.add(pos)
-        Dup = Dup / len(tests_sample)
-        return Dup
+    # def duplication(self, tests_sample:set[int]):
+    #     ''' Computes percent of dumplications in tests sample according to CDE space
+    #         :param tests_sample - set of tests from the space
+    #     '''
+    #     space_tests = { **{t:((axis_id, point_id),)
+    #                         for axis_id, axis in enumerate(self.axes) for point_id, point in enumerate(axis)
+    #                         for t in point.tests},
+    #                     **{t:coord_id for coord_id, spanned in self.spanned.items() for t in spanned.tests},
+    #                     **{t:() for t in self.origin.tests}}
+    #     Dup = 0 
+    #     present = set()
+    #     for t in tests_sample:
+    #         pos = space_tests[t]
+    #         if pos in present:
+    #             Dup += 1 
+    #         else:
+    #             present.add(pos)
+    #     Dup = Dup / len(tests_sample)
+    #     return Dup
 
-    def noninformative(self, tests_sample:set[int]):
-        ''' percent of population that is not represented by axes or spanned (in space['zero']) '''
-        zero_set = set(self.origin.tests)
-        noninfo = [t for t in tests_sample if t in zero_set]
-        nonI = len(noninfo) / len(tests_sample)
-        return nonI    
+    # def noninformative(self, tests_sample:set[int]):
+    #     ''' percent of population that is not represented by axes or spanned (in space['zero']) '''
+    #     zero_set = set(self.origin.tests)
+    #     noninfo = [t for t in tests_sample if t in zero_set]
+    #     nonI = len(noninfo) / len(tests_sample)
+    #     return nonI    
 
     @staticmethod
     def from_json(json_str: str):
