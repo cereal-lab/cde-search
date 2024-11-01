@@ -25,6 +25,19 @@
                 "--times", "1"
             ],
             "justMyCode": true
-        }
+        },
+        {
+            "name": "num game space",
+            "type": "python",
+            "request": "launch",
+            "program": "cli.py",
+            "console": "integratedTerminal",
+            "args": [
+                "game-space",
+                "-gid", "GreaterThanGame",
+                "-out", "num-game-spaces"
+            ],
+            "justMyCode": true
+        }        
     ]
 }

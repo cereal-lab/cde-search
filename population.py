@@ -627,3 +627,6 @@ class OneTimeSequential(Selection):
         return [
                 {"xy": self.selection, "class": dict(marker='x', s=20, c='#bf5a17')}
             ]
+    
+    def collect_metrics(self, axes, origin, spanned, *, is_final = False):
+        pass

@@ -167,7 +167,29 @@ def run_game(ctx, gid, sid, times = 1, metrics = ""):
                     fcntl.flock(f, fcntl.LOCK_UN)
                 if param_draw_dynamics and i == 0:
                     os.system(f"./togif.sh '{game_name}_{sim_name}'")
-            
+
+@cli.command("game-space", context_settings=dict(
+    ignore_unknown_options=True,
+    allow_extra_args=True,
+))
+@click.option("-gid", type = str, required=True)
+@click.option("-out", type = str, default = ".")
+@click.pass_context
+def save_game_space(ctx, gid: str, out:str):
+    game_dynamic_args = dict()
+    for item in ctx.args:
+        nameVal = item.split('=')
+        if nameVal[0].startswith("g_"):
+            game_dynamic_args.update([nameVal])
+    game_names = gid.split(",")
+    os.makedirs(out, exist_ok=True)
+    for game_name in game_names:
+        game = GAMES[game_name](**game_dynamic_args)
+        print(game_name + " starts")
+        game.save_space(out)
+        print(game_name + " space saved")
+    pass
+
 if __name__ == '__main__':
     ''' Entry for running games and collecting data '''
     cli()

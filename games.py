@@ -7,10 +7,11 @@
 
 from abc import ABC, abstractmethod
 from itertools import product
+import os
 from typing import Any
 from de import extract_dims
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
-        PARAM_MAX_INTS, num_intransitive_regions, \
+        PARAM_MAX_INTS, param_num_intransitive_regions, \
         param_min_num, param_max_num, param_draw_dynamics, param_steps
 from tabulate import tabulate, SEPARATING_LINE
 
@@ -33,11 +34,6 @@ class InteractionGame(ABC):
     @abstractmethod
     def interact(self, candidate, test, **args) -> int:
         ''' Should return 1 when candidate succeeds on the test (test is not better than candidate)! '''
-        pass     
-
-    @abstractmethod
-    def update_game_metrics(self, inds, metrics, is_final = False):
-        ''' Update game metrics with game-specific metrics. '''
         pass
 
     @abstractmethod
@@ -80,15 +76,15 @@ class NumberGame(InteractionGame):
     def get_all_candidates(self):
         return self.all_numbers  
     
-    def save_space(self):
+    def save_space(self, dir = "."):
         dims, o, sp, _ = extract_dims(self.get_interaction_matrix())
         spanned = [[tid, list(coords)] for tid, coords in sp.items()]
         json_space = json.dumps(dict(axes = dims, origin = o, spanned = spanned))
-        with open(self.__class__.__name__ + "-space.json", "w") as f:
+        with open(os.path.join(dir, self.__class__.__name__ + "-space.json"), "w") as f:
             f.write(json_space)
 
-    def load_space(self):
-        with open(self.__class__.__name__ + "-space.json", "r") as f:
+    def load_space(self, dir = "."):
+        with open(os.path.join(dir, self.__class__.__name__ + "-space.json"), "r") as f:
             json_space = json.loads(f.read())
         axes = [ [set([self.all_numbers[i] for i in point]) for point in dim ] for dim in json_space["axes"] ]
         origin = set([self.all_numbers[i] for i in json_space["origin"]])
@@ -101,65 +97,12 @@ class NumberGame(InteractionGame):
         return self.space
 
 class GreaterThanGame(NumberGame):
-    ''' testing game to see how everything works '''
     def interact(self, candidate, test, **args) -> int:
         ''' 1 - candidate is better than test, 0 - test fails the candidate, test is better '''
         return 1 if candidate[0] > test[0] else 0
-    
-    def update_game_metrics(self, numbers, metrics, is_final = False):
-        ''' the goal of this game is to check how diverse the numbers are 
-            check ints_ of this game - almost each number is uniq dim/underlying objective
-            returns in metrics the percent of underlying objectives
-        '''
-        if len(numbers) == 0:
-            return
-        goal = sum(abs(self.max_num - n[0]) for n in numbers) / len(numbers)
-        metrics[PARAM_GAME_GOAL] = goal        
-        story = metrics.setdefault(PARAM_GAME_GOAL_STORY, [])
-        story.append(goal)
-        if is_final:
-            metrics["sample"] = numbers
-        
+                
 class IntransitiveGame(NumberGame):
     ''' The IG as it was stated in Bucci article '''
-    def interact(self, candidate, test, **args) -> int:
-        ''' 1 - candidate is better than test, 0 - test fails the candidate '''
-        abs_diffs = [abs(x - y) for x, y in zip(candidate, test)]
-        res = 1 if (abs_diffs[0] > abs_diffs[1] and candidate[1] > test[1]) or (abs_diffs[1] > abs_diffs[0] and candidate[0] > test[0]) else 0
-        return res
-    
-    def region_id(self, n):
-        return n
-    
-    def update_game_metrics(self, numbers, metrics, is_final = False):
-        ''' the goal of this game is to check how diverse the numbers are 
-            check ints_ of this game - almost each number is uniq dim/underlying objective
-            returns in metrics the percent of underlying objectives
-        '''
-        if len(numbers) == 0:
-            return        
-        uniq_nums = set([self.region_id(n) for n in numbers])
-        delta = 0
-        # if (self.max_num, self.max_num) in uniq_nums and (self.max_num - 1, self.max_num - 1) in uniq_nums:
-        #     delta -= 1 
-        # if (self.min_num, self.min_num) in uniq_nums:
-        #     delta -= 1 
-        goal = (len(uniq_nums) + delta) / len(numbers)
-        metrics[PARAM_GAME_GOAL] = goal        
-        # dim1 = 0 if len(uniq_nums) == 0 else round(sum(c[0] for c in uniq_nums) / len(uniq_nums))
-        # dim2 = 0 if len(uniq_nums) == 0 else round(sum(c[1] for c in uniq_nums) / len(uniq_nums))
-        # metrics["game_goal_1"] = dim1        
-        # metrics["game_goal_2"] = dim2
-        story = metrics.setdefault(PARAM_GAME_GOAL_STORY, [])
-        story.append(goal)
-        # metrics.setdefault("game_goal_1_story", []).append(dim1)
-        # metrics.setdefault("game_goal_2_story", []).append(dim2)
-        if goal > 0.9:
-            metrics[PARAM_GAME_GOAL_MOMENT] = len(story)
-        if is_final:
-            metrics["sample"] = numbers
-    
-class OrigIntransitiveGame(IntransitiveGame):
     def interact(self, candidate, test, **args) -> int:
         abs_diffs = [abs(x - y) for x, y in zip(candidate, test)]
         idx = 0 if abs_diffs[0] < abs_diffs[1] else 1
@@ -170,21 +113,21 @@ class IntransitiveRegionGame(IntransitiveGame):
     ''' As IG but only applies IG rule in small region, subject for search
         All other points repond with 0 - no-information
     '''
-    def __init__(self, num_intransitive_regions = num_intransitive_regions, **kwargs) -> None:
+    def __init__(self, *, num_intransitive_regions = param_num_intransitive_regions, **kwargs) -> None:
         super().__init__(**{"num_intransitive_regions":num_intransitive_regions, **kwargs})
         self.num_intransitive_regions = num_intransitive_regions
-        self.region_size = (self.max_num - self.min_num) // num_intransitive_regions
+        self.region_size = ((self.max_num - self.min_num) // num_intransitive_regions) + 1
 
-    def region_id(self, n):
+    def remap(self, n):
         n1 = n[0] // self.region_size
         n2 = n[1] // self.region_size
         return (n1, n2)
     
     def interact(self, candidate, test, **args) -> int:
         ''' 1 - candidate is better than test, 0 - test fails candidate '''
-        r1 = self.region_id(candidate)
-        r2 = self.region_id(test)        
-        return super().interact(r1, r2)
+        c = self.remap(candidate)
+        t = self.remap(test)        
+        return super().interact(c, t)
 
 class FocusingGame(NumberGame):
     ''' The FG as it was stated in Bucci (not Golam's) article '''
@@ -199,37 +142,6 @@ class FocusingGame(NumberGame):
         res = 1 if (test[0] > test[1] and candidate[0] > test[0]) or (test[1] > test[0] and candidate[1] > test[1]) else 0
         return res
     
-    def update_game_metrics(self, numbers, metrics, is_final = False):
-        ''' the goal of this game is to focus on two axes (0, max_dim) and (max_dim, 0)
-            Check ints_ file of this game to understand thee structure of underelying objectives
-            We compute average distance to either of two objectives. But two objectives should be discovered
-        '''
-        if len(numbers) == 0:
-            return      
-
-        goal1_scores = [ self.max_num - n[1] for n in numbers if n[0] == self.max_num or n[1] == self.max_num or n[0] == n[1] ]
-        goal2_scores = [ self.max_num - n[0] for n in numbers if n[0] >= n[1] ]
-        goal1_score = self.max_num if len(goal1_scores) == 0 else sum(goal1_scores) / len(goal1_scores)
-        goal2_score = self.max_num if len(goal2_scores) == 0 else sum(goal2_scores) / len(goal2_scores)
-        score = (goal1_score + goal2_score) / 2
-
-        goals = [(0, self.max_num), (self.max_num, 0)]
-        goal_dists = [[sum(abs(a - b) for a, b in zip(g, n)) for g in goals] for n in numbers]
-        number_goals = [np.argmin(n) for n in goal_dists]
-        numbers_by_goals = [[], []]
-        for goal_id, dists in zip(number_goals, goal_dists):
-            numbers_by_goals[goal_id].append(dists[goal_id])
-        goal_scores = [min(gd, default=self.max_num) for gd in numbers_by_goals]
-        score = sum(goal_scores) / len(goal_scores)
-        metrics["game_goal_1"] = goal_scores[0]
-        metrics["game_goal_2"] = goal_scores[1]
-        metrics.setdefault("game_goal_1_story", []).append(goal_scores[0])
-        metrics.setdefault("game_goal_2_story", []).append(goal_scores[1])
-        metrics[PARAM_GAME_GOAL] = score #smaller is better
-        metrics.setdefault(PARAM_GAME_GOAL_STORY, []).append(score)
-        if is_final:
-            metrics["sample"] = numbers    
-    
 class CompareOnOneGame(NumberGame):
     ''' Game as it was stated in Golam article '''
     def interact(self, candidate, test, **args) -> int:
@@ -237,29 +149,7 @@ class CompareOnOneGame(NumberGame):
         max_pos = np.argmax(test)
         res = 1 if candidate[max_pos] >= test[max_pos] else 0
         return res
-    
-    def update_game_metrics(self, numbers, metrics, is_final = False):
-        ''' the goal of this game is to focus on two axes (0, max_dim) and (max_dim, 0)
-            Check ints_ file of this game to understand thee structure of underelying objectives
-            We compute average distance to either of two objectives. But two objectives should be discovered
-        '''
-        if len(numbers) == 0:
-            return        
-        # goals = [(0, self.max_num), (self.max_num, 0)]
-        goal1_scores = [ self.max_num - n[1] for n in numbers if n[0] < n[1] ]
-        goal2_scores = [ self.max_num - n[0] for n in numbers if n[0] >= n[1] ]
-        goal1_score = self.max_num if len(goal1_scores) == 0 else sum(goal1_scores) / len(goal1_scores)
-        goal2_score = self.max_num if len(goal2_scores) == 0 else sum(goal2_scores) / len(goal2_scores)
-        score = (goal1_score + goal2_score) / 2
-        metrics["game_goal_1"] = goal1_score
-        metrics["game_goal_2"] = goal2_score
-        metrics.setdefault("game_goal_1_story", []).append(goal1_score)
-        metrics.setdefault("game_goal_2_story", []).append(goal2_score)
-        metrics[PARAM_GAME_GOAL] = score #smaller is better
-        metrics.setdefault(PARAM_GAME_GOAL_STORY, []).append(score)
-        if is_final:
-            metrics["sample"] = numbers    
-    
+      
 class CDESpaceGame(InteractionGame):
     ''' Loads given CDE space and provide interactions based on it '''
     def __init__(self, space: CDESpace, **kwargs) -> None:
@@ -274,20 +164,6 @@ class CDESpaceGame(InteractionGame):
     def interact(self, candidate, test, **args) -> int:
         ''' 1 - candidate wins, 0 - test wins '''
         return 0 if test in self.all_fails.get(candidate, set()) else 1
-    
-    def update_game_metrics(self, tests, metrics: dict, is_final = False):
-        ''' Update game metrics with space metrics. '''
-        if len(tests) == 0:
-            return        
-        if is_final:
-            DC = self.space.dimension_coverage(tests)
-            ARR, ARRA = self.space.avg_rank_of_repr(tests)
-            Dup = self.space.duplication(tests)
-            R = self.space.redundancy(tests)
-            nonI = self.space.noninformative(tests)
-            metric_data = { "DC": DC, "ARR": ARR, "ARRA": ARRA, "Dup": Dup, "R": R, "nonI": nonI, "sample": tests}
-            for k, v in metric_data.items():
-                metrics[k] = v
 
     def get_all_candidates(self):
         return self.candidates
@@ -308,9 +184,6 @@ def step_game(step: int, num_steps: int, sel1: Selection, sel2: Selection, game:
     selection2 = sel2.get_selection()
     sel1.collect_metrics(*game.get_extracted_dimensions(), is_final = step == num_steps)
     sel2.collect_metrics(*game.get_extracted_dimensions(), is_final = step == num_steps)
-    #     game.update_game_metrics(sel1.get_best(), sel1.sel_metrics, is_final = step == num_steps)
-    # if sel2 is not OneTimeSequential:
-    #     game.update_game_metrics(sel2.get_best(), sel2.sel_metrics, is_final = step == num_steps)    
 
     if step == num_steps:
         return False
