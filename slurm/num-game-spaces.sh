@@ -12,4 +12,8 @@ games=('GreaterThanGame',
 
 game=${games[$SLURM_ARRAY_TASK_ID]}
 
-python3 cli.py game-space -gid "$game" -out "$WORK/num-game-spaces"
+module load apps/anaconda/5.3.1
+
+source activate cde-search-env
+
+python ~/cde-search/cli.py game-space -gid "$game" -out "$WORK/num-game-spaces"
