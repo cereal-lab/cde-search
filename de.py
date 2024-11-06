@@ -292,73 +292,79 @@ def approx_one_to_dims(test_id: int, test: list[Optional[int]], origin_or_spanne
 
 def extract_dims_approx(tests: list[list[Optional[int]]]):
     ''' Modification of the DE for case of sparse matrix '''
-    origin_or_spanned = set() # test that either too easy or to difficult
-    dimensions = [] # tests on axes - first point is origin and spanned
 
     # we split tests by number of unknown elements in them, algorithm will try to restore unknown values
-    grouped_tests = {}
+    undefined_tests = {}
     for test_id, test in enumerate(tests):
-        missing_els = sum(1 for o in test if o is None)
-        grouped_tests.setdefault(missing_els, []).append((test_id, test))
+        has_missing_els = any(o is None for o in test)
+        undefined_tests.setdefault(has_missing_els, {}).update([(test_id, test)])
+    
+    fully_defined = undefined_tests.get(False, {})
+    fully_defined_list = [fully_defined[tid] for tid in fully_defined.keys()]
+    fully_defined_ids = list(fully_defined.keys())
 
-    grouped_tests_list = sorted(grouped_tests.items(), key = lambda x: x[0])
+    dims, origin, spanned, _ = extract_dims(fully_defined_list)
 
-    for _, test_group in grouped_tests_list:
-        # one_groups = {}
-        # for test_id, test in test_group:
-        #     key = sum(o for o in test if o is not None)
-        #     one_groups.setdefault(key, []).append((test_id, test))
-        test_to_insert = []
-        for test_id, test in test_group:
-            if all(t is None or t == 0 for t in test):
-                set_unknown_to_const(test, 0)
+    dimensions = [[(set(mapped), fully_defined[mapped[0]]) for point in dim for mapped in [[fully_defined_ids[i] for i in point]]] for dim in dims] # tests on axes - first point is origin and spanned
+    origin_or_spanned = set((*(fully_defined_ids[i] for i in spanned.keys()), *(fully_defined_ids[i] for i in origin))) # test that either too easy or to difficult
+
+    with_undefined = undefined_tests.get(True, {})
+
+    test_to_insert = []
+
+    for test_id, test in with_undefined.items():
+        if all(t is None or t == 0 for t in test):
+            set_unknown_to_const(test, 0)
+            origin_or_spanned.add(test_id)
+        else:
+            test_to_insert.append((test_id, test))
+
+    while len(test_to_insert) > 0:
+        test_poss = []
+        for test_id, test in test_to_insert:
+            test_pos = get_test_pos(test, dimensions)
+            is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
+            if is_spanned:
+                set_unknown_to_vect(test, spanned_approx)
                 origin_or_spanned.add(test_id)
+                continue
+            dupl_pos = [(dim_id, point_id) for is_not_dupl, dim_id, point_id in test_pos if is_not_dupl == 0]
+            if len(dupl_pos) > 0: #is_duplicate                 
+                for dim_id, point_id in dupl_pos:
+                    dimensions[dim_id][point_id][0].add(test_id)
+                    approx_values = dimensions[dim_id][point_id][1]
+                set_unknown_to_vect(test, approx_values)
+                continue
+            # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
+            this_test_pos = [(-1, 0, (-1, 0))] if len(test_pos) == 0 else [(dim_id, point_id, (point_id, len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos]
+            this_test_pos.sort(key=lambda x: x[2])
+            test_poss.append((test_id, test, this_test_pos))  
+        test_to_insert = []  
+        if len(test_poss) > 0:
+            test_poss.sort(key=lambda x: (len(x[2]), sum(1 for o in x[1] if o is None), sum(o for o in x[1] if o is not None), x[2][0][2]))
+            # min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (len(x[2]), x[2][0][2]))
+            min_test_id, min_test, min_test_pos = test_poss[0]
+            dim_id, point_id, pos_score = min_test_pos[0]
+            test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
+            if dim_id == -1: #new dimension
+                set_unknown_to_const(min_test, 0)
+                dimensions.append([(set([min_test_id]), min_test)])
             else:
-                test_to_insert.append((test_id, test))
-        while len(test_to_insert) > 0:
-            test_poss = []
-            for test_id, test in test_to_insert:
-                test_pos = get_test_pos(test, dimensions)
-                is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
-                if is_spanned:
-                    set_unknown_to_vect(test, spanned_approx)
-                    origin_or_spanned.add(test_id)
-                    continue
-                dupl_pos = [(dim_id, point_id) for is_not_dupl, dim_id, point_id in test_pos if is_not_dupl == 0]
-                if len(dupl_pos) > 0: #is_duplicate                 
-                    for dim_id, point_id in dupl_pos:
-                        dimensions[dim_id][point_id][0].add(test_id)
-                        approx_values = dimensions[dim_id][point_id][1]
-                    set_unknown_to_vect(test, approx_values)
-                    continue
-                # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
-                this_test_pos = [(-1, 0, (-1, 0))] if len(test_pos) == 0 else [(dim_id, point_id, (len(dimensions[dim_id]) - point_id, len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos]
-                this_test_pos.sort(key=lambda x: x[2])
-                test_poss.append((test_id, test, this_test_pos))  
-            test_to_insert = []  
-            if len(test_poss) > 0:
-                min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (x[2][0][2], len(x[2])))
-                dim_id, point_id, pos_score = min_test_pos[0]
-                test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
-                if dim_id == -1: #new dimension
-                    set_unknown_to_const(min_test, 0)
-                    dimensions.append([(set([min_test_id]), min_test)])
-                else:
-                    approx_pos = point_id - 1
-                    if approx_pos < 0:
-                        approx_pos = 0
-                    prev_point = dimensions[dim_id][approx_pos]
-                    set_unknown_to_vect(min_test, prev_point[1])
-                    dim = dimensions[dim_id]
-                    dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
-                    # dimensions[dim_id].append((set([min_test_id]), min_test))
-                    # for point in dim[point_id:]:
-                    #     for group_test_id in point[0]:
-                    #         if group_test_id not in already_in_to_reinsert:
-                    #             already_in_to_reinsert.add(group_test_id)
-                    #             test_to_insert.append((group_test_id, point[1]))
-            pass
-        pass        
+                approx_pos = point_id - 1
+                if approx_pos < 0:
+                    approx_pos = 0
+                prev_point = dimensions[dim_id][approx_pos]
+                set_unknown_to_vect(min_test, prev_point[1])
+                dim = dimensions[dim_id]
+                dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
+                # dimensions[dim_id].append((set([min_test_id]), min_test))
+                # for point in dim[point_id:]:
+                #     for group_test_id in point[0]:
+                #         if group_test_id not in already_in_to_reinsert:
+                #             already_in_to_reinsert.add(group_test_id)
+                #             test_to_insert.append((group_test_id, point[1]))
+        pass
+    pass
 
     return dimensions # here all unknown values are approximated
 
