@@ -50,7 +50,7 @@ def duplication(axes: list[list[set[Any]]], spanned: dict[Any, dict[int, int]], 
                         for axis_id, axis in enumerate(axes) for point_id, point in enumerate(axis)
                         for t in point},
                     **{t:tuple(sorted(spanned.items())) for t, spanned in spanned.items()},
-                    **{t:() for t in origin.tests}}
+                    **{t:() for t in origin}}
     Dup = 0 
     present = set()
     for t in sample:

@@ -74,7 +74,7 @@ class NumberGame(InteractionGame):
         return ints  
 
     def get_all_candidates(self):
-        return self.all_numbers  
+        return list(self.all_numbers)
     
     def save_space(self, dir = "."):
         dims, o, sp, _ = extract_dims(self.get_interaction_matrix())
@@ -84,17 +84,18 @@ class NumberGame(InteractionGame):
             f.write(json_space)
 
     def load_space(self, dir = "."):
+        if self.space is not None:
+            return self.space
         with open(os.path.join(dir, self.__class__.__name__ + "-space.json"), "r") as f:
             json_space = json.loads(f.read())
         axes = [ [set([self.all_numbers[i] for i in point]) for point in dim ] for dim in json_space["axes"] ]
         origin = set([self.all_numbers[i] for i in json_space["origin"]])
         spanned = {self.all_numbers[i]: tuple(sp_dims) for i, sp_dims in json_space["spanned"]}
         self.space = (axes, origin, spanned)
-    
-    def get_extracted_dimensions(self):
-        if self.space is None:
-            self.load_space()      
         return self.space
+    
+    def get_extracted_dimensions(self):        
+        return self.load_space()
 
 class GreaterThanGame(NumberGame):
     def interact(self, candidate, test, **args) -> int:
@@ -166,10 +167,10 @@ class CDESpaceGame(InteractionGame):
         return 0 if test in self.all_fails.get(candidate, set()) else 1
 
     def get_all_candidates(self):
-        return self.candidates
+        return list(self.candidates)
     
     def get_all_tests(self):
-        return self.tests
+        return list(self.tests)
     
     def get_extracted_dimensions(self):
         if self.space_plain is None:
@@ -213,19 +214,30 @@ def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_ste
     sel1.sel_metrics[PARAM_MAX_INTS] = sel2.sel_metrics[PARAM_MAX_INTS] = len(sel1.get_pool()) * len(sel2.get_pool())
     step = 0
     should_continue = True 
+    matrix = None
     while should_continue:
         should_continue = step_game(step, num_steps, sel1, sel2, game)
         if draw_dynamics and isinstance(game, NumberGame):
             cand_points = sel1.get_for_drawing(role = "cand")
             test_points = sel2.get_for_drawing(role = "test")
             if len(test_points) > 0:
+                if matrix is None:
+                    axes, _, _ = game.space
+                    matrix = [[0 for _ in range(game.max_num + 1)] for _ in range(game.max_num + 1)]
+                    for ax in axes:
+                        for point_id, point in enumerate(ax):
+                            c = (point_id + 1) / len(ax)
+                            for test in point:
+                                matrix[test[1]][test[0]] = c
+                # dots = [ {"xy": point, "class": dict(c=(c, c, c), s=2)} ]]
                 point_groups = [*cand_points, *test_points]
                 pop_name = sel2.__class__.__name__
                 name = f"{step}"
                 name = name if len(name) >= 4 else ("0" * (4 - len(name)) + name)
                 draw_populations(point_groups,
                                     xrange=(game.min_num, game.max_num), yrange=(game.min_num, game.max_num),
-                                    name = f"step-{name}", title = f"Step {name}, {pop_name} on {game.__class__.__name__}")
+                                    name = f"step-{name}", title = f"Step {name}, {pop_name} on {game.__class__.__name__}",
+                                    matrix = matrix)
         step += 1
     return dict(params = dict(game = dict(num_steps = num_steps, draw_dynamics=draw_dynamics, **game.game_params), 
                                 sel = sel2.sel_params), 

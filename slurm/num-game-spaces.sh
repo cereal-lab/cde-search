@@ -5,9 +5,9 @@
 #SBATCH --mem=8G
 #SBATCH --array=0-3
 
-games=('GreaterThanGame',
-    'IntransitiveRegionGame',
-    'FocusingGame',
+games=('GreaterThanGame'
+    'IntransitiveRegionGame'
+    'FocusingGame'
     'CompareOnOneGame')
 
 game=${games[$SLURM_ARRAY_TASK_ID]}

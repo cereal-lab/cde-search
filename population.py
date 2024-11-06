@@ -62,6 +62,8 @@ class Selection:
     
     def collect_metrics(self, axes, origin, spanned, *, is_final = False):
         sample = self.get_best()
+        if len(sample) == 0:
+            return
         DC = dimension_coverage(axes, sample)
         ARR, ARRA = avg_rank_of_repr(axes, sample)
         Dup = duplication(axes, spanned, origin, sample)
@@ -227,6 +229,7 @@ class ExploitExploreSelection(Selection):
         super().update(interactions, int_keys)
         self.update_features(interactions, int_keys)
         # self.t += 1  
+        self.exploited_inds = [] if self.selection is None else self.selection
         self.selection = None
 
     def init_selection(self) -> None:
@@ -264,7 +267,6 @@ class ExploitExploreSelection(Selection):
         # exploit_slots = round(self.size * self.exploit_prop)
         selected_inds = self.exploit(self.size)
         self.exploited = list(selected_inds)
-        self.exploited_inds.update(selected_inds)
         self.explore(selected_inds)
         self.selection = list(selected_inds)
         self.sel_metrics[PARAM_MAX_INDS] += len(selected_inds)
@@ -286,9 +288,9 @@ class ExploitExploreSelection(Selection):
         exploit = self.ind_groups.get("exploit", [])
         return [
                 {"xy": self.exploited_inds, "bg": True}, 
-                {"xy": explore, "class": dict(marker='o', s=10, c='#73e362', alpha=0.4), "legend": [f"{t}".ljust(10) for t in explore[:20]]},
+                {"xy": explore, "class": dict(marker='o', s=20, c='blue', edgecolor='white'), "legend": [f"{t}".ljust(10) for t in explore[:20]]},
                 *exploit_groups,
-                {"xy": exploit, "class": dict(marker='o', s=30, c='#d662e3', alpha=0.5), "legend": [f"{t}".ljust(10) for t in exploit[:20]]},
+                {"xy": exploit, "class": dict(marker='o', s=30, c='black', edgecolor='white'), "legend": [f"{t}".ljust(10) for t in exploit[:20]]},
             ]
     
     def get_discriminating_set(self, selected_inds: set[Any]) -> set[Any]:
@@ -475,9 +477,9 @@ class DECASelection(ExploitExploreSelection):
         candidate_ids = self.cand_sel_strategy(test_ids, int_keys)
         tests = [[self.interactions[test_id].get(candidate_id, None) for candidate_id in candidate_ids] for test_id in  test_ids]
         approx_counts = {test_id: c for test_id, c in zip(test_ids, self.get_approx_counts(tests))}
-        self.approx_strategy(tests) #fillin Nones
+        approx_dims, _ = self.approx_strategy(tests) #fillin Nones
         
-        dims, origin, _, _ = extract_dims(tests)  
+        dims, origin, spanned, _ = extract_dims(tests)  
 
         self.origin = [test_ids[i] for i in origin]       
         self.origin.sort(key = lambda x: len(self.interactions[x]), reverse=True)

@@ -9,7 +9,7 @@ from matplotlib.font_manager import FontProperties
 legend_font = FontProperties(family='monospace', size=6)
 param_img_folder = "img"
 
-def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt = "png", title = None):
+def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt = "png", title = None, matrix = None):
     ''' creates an image of populaltion of 2-d numbers to track the dynamics '''
     # classes = {
     #     "prev": dict(marker='o', s=8, c='#cfcfcf', alpha=0.5),
@@ -28,13 +28,15 @@ def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt
     handles = []
     labels = []
     point_groups.sort(key=lambda g:0 if "bg" in g else 1)
+    if matrix is not None:
+        plt.imshow(matrix, cmap='gray', interpolation='nearest')
     for g in point_groups:
         if len(g["xy"]) == 0:
             continue
         x, y = zip(*g["xy"])
         classes = g.get("class", {})
         if "bg" in g:
-            classes = {**dict(marker='o', s=8, c='#cfcfcf', alpha=0.5), **classes}
+            classes = {**dict(marker='o', s=20, c='gray', alpha=0.5, edgecolor="white"), **classes}
         scatter = plt.scatter(x, y, **classes)
         for label in g.get("legend", []):
             handles.append(scatter)

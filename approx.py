@@ -124,9 +124,10 @@ def candidate_subgroup_approx_strategy(interactions: list[list[Optional[int]]]) 
 
 def extract_dims_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
     idxs = [(i, j) for i in range(len(interactions)) for j in range(len(interactions[0])) if interactions[i][j] is None]
-    extract_dims_approx(interactions)
+    approx_dims = extract_dims_approx(interactions)
     approx_vector = [interactions[i][j] for i, j in idxs]
-    return approx_vector
+    approx_dims2 = [[sorted(p[0]) for p in dim] for dim in approx_dims]
+    return approx_dims2, approx_vector
 
 if __name__ == "__main__":
 
