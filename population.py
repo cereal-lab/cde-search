@@ -468,6 +468,7 @@ class DECASelection(ExploitExploreSelection):
         super().init_selection()
         self.axes = []
         self.origin = []
+        self.prev_axes = [] #for debugging
         # self.discarded_exploited_tests = []
         # self.prev_exploited = set()
 
@@ -484,11 +485,13 @@ class DECASelection(ExploitExploreSelection):
         self.origin = [test_ids[i] for i in origin]       
         self.origin.sort(key = lambda x: len(self.interactions[x]), reverse=True)
 
+        self.prev_axes = self.axes
         self.axes = []
         for dim in dims:
             axes_tests = [(test_ids[i], (len(dim) - point_id - 1, -len(self.interactions[test_ids[i]]), approx_counts.get(test_ids[i], 0))) for point_id, group in enumerate(dim) for i in group]
             axes_tests.sort(key = lambda x: x[1], reverse=True)
             self.axes.append(axes_tests)
+        pass
 
         # # fail sets of objectives (ends of axes)
         # cf_sets = [{candidate_ids[i] for i, o in enumerate(tests[dim[-1][0]]) if o == 1} for dim in dims]
@@ -499,17 +502,18 @@ class DECASelection(ExploitExploreSelection):
         selected = set()
 
         axe_id = 0 
-        while len(selected) < sample_size and len(self.axes) > 0:
-            axe = self.axes[axe_id]
+        axes = [[point for point in dim] for dim in self.axes]
+        while len(selected) < sample_size and len(axes) > 0:
+            axe = axes[axe_id]
             ind, _ = axe.pop()
             selected.add(ind)
             if len(axe) == 0:
-                self.axes.pop(axe_id)
-                if len(self.axes) == 0:
+                axes.pop(axe_id)
+                if len(axes) == 0:
                     break
             else:
                 axe_id += 1
-            axe_id %= len(self.axes)
+            axe_id %= len(axes)
 
         for ind in self.origin:
             if len(selected) >= sample_size:

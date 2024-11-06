@@ -145,6 +145,7 @@ def get_test_pos(test: list[Optional[int]], dimensions: list[list[tuple[list[int
     # check for position on axes from ends to origin
     for dim_id, dim in enumerate(dimensions):  
         found_dim_pos = False
+        is_incompatable = False
         for point_id, point in reversed(list(enumerate(dim))):
             if all(t == d for t, d in zip(test, point[1]) if t is not None):
                 test_pos.append((0, dim_id, point_id)) # 0 at start means duplicate
@@ -154,6 +155,11 @@ def get_test_pos(test: list[Optional[int]], dimensions: list[list[tuple[list[int
                 test_pos.append((1, dim_id, point_id + 1))  #the test dominates the point, so it can be a part of this axis
                 found_dim_pos = True 
                 break
+            if any(t > d for t, d in zip(test, point[1]) if t is not None) and any(t < d for t, d in zip(test, point[1]) if t is not None):
+                is_incompatable = True
+                break
+        if is_incompatable:
+            continue
         if not found_dim_pos and all(t <= d for t, d in zip(test, dim[0][1]) if t is not None) and any(t < d for t, d in zip(test, dim[0][1]) if t is not None):
             test_pos.append((1, dim_id, 0))
     return test_pos    
@@ -298,61 +304,61 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
     grouped_tests_list = sorted(grouped_tests.items(), key = lambda x: x[0])
 
     for _, test_group in grouped_tests_list:
-        one_groups = {}
+        # one_groups = {}
+        # for test_id, test in test_group:
+        #     key = sum(o for o in test if o is not None)
+        #     one_groups.setdefault(key, []).append((test_id, test))
+        test_to_insert = []
         for test_id, test in test_group:
-            key = sum(o for o in test if o is not None)
-            one_groups.setdefault(key, []).append((test_id, test))
-        for num_ones, one_group in sorted(one_groups.items(), key = lambda x: x[0]):
-            if num_ones == 0:
-                for test_id, test in one_group:
-                    set_unknown_to_const(test, 0)
+            if all(t is None or t == 0 for t in test):
+                set_unknown_to_const(test, 0)
+                origin_or_spanned.add(test_id)
+            else:
+                test_to_insert.append((test_id, test))
+        while len(test_to_insert) > 0:
+            test_poss = []
+            for test_id, test in test_to_insert:
+                test_pos = get_test_pos(test, dimensions)
+                is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
+                if is_spanned:
+                    set_unknown_to_vect(test, spanned_approx)
                     origin_or_spanned.add(test_id)
-                continue
-            test_to_insert = one_group
-            while len(test_to_insert) > 0:
-                test_poss = []
-                for test_id, test in test_to_insert:
-                    test_pos = get_test_pos(test, dimensions)
-                    is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
-                    if is_spanned:
-                        set_unknown_to_vect(test, spanned_approx)
-                        origin_or_spanned.add(test_id)
-                        continue
-                    dupl_pos = [(dim_id, point_id) for is_not_dupl, dim_id, point_id in test_pos if is_not_dupl == 0]
-                    if len(dupl_pos) > 0: #is_duplicate                 
-                        for dim_id, point_id in dupl_pos:
-                            dimensions[dim_id][point_id][0].add(test_id)
-                            approx_values = dimensions[dim_id][point_id][1]
-                        set_unknown_to_vect(test, approx_values)
-                        continue
-                    # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
-                    this_test_pos = [(-1, 0, (-1, 0))] if len(test_pos) == 0 else [(dim_id, point_id, (len(dimensions[dim_id]) - point_id, len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos]
-                    this_test_pos.sort(key=lambda x: x[2])
-                    test_poss.append((test_id, test, this_test_pos))  
-                test_to_insert = []  
-                if len(test_poss) > 0:
-                    min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (x[2][0][2], len(x[2])))
-                    dim_id, point_id, pos_score = min_test_pos[0]
-                    test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
-                    if dim_id == -1: #new dimension
-                        set_unknown_to_const(min_test, 0)
-                        dimensions.append([(set([min_test_id]), min_test)])
-                    else:
-                        approx_pos = point_id - 1
-                        if approx_pos < 0:
-                            approx_pos = 0
-                        prev_point = dimensions[dim_id][approx_pos]
-                        set_unknown_to_vect(min_test, prev_point[1])
-                        dim = dimensions[dim_id]
-                        dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
-                        # dimensions[dim_id].append((set([min_test_id]), min_test))
-                        # for point in dim[point_id:]:
-                        #     for group_test_id in point[0]:
-                        #         if group_test_id not in already_in_to_reinsert:
-                        #             already_in_to_reinsert.add(group_test_id)
-                        #             test_to_insert.append((group_test_id, point[1]))
-                pass
-            pass        
+                    continue
+                dupl_pos = [(dim_id, point_id) for is_not_dupl, dim_id, point_id in test_pos if is_not_dupl == 0]
+                if len(dupl_pos) > 0: #is_duplicate                 
+                    for dim_id, point_id in dupl_pos:
+                        dimensions[dim_id][point_id][0].add(test_id)
+                        approx_values = dimensions[dim_id][point_id][1]
+                    set_unknown_to_vect(test, approx_values)
+                    continue
+                # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
+                this_test_pos = [(-1, 0, (-1, 0))] if len(test_pos) == 0 else [(dim_id, point_id, (len(dimensions[dim_id]) - point_id, len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos]
+                this_test_pos.sort(key=lambda x: x[2])
+                test_poss.append((test_id, test, this_test_pos))  
+            test_to_insert = []  
+            if len(test_poss) > 0:
+                min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (x[2][0][2], len(x[2])))
+                dim_id, point_id, pos_score = min_test_pos[0]
+                test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
+                if dim_id == -1: #new dimension
+                    set_unknown_to_const(min_test, 0)
+                    dimensions.append([(set([min_test_id]), min_test)])
+                else:
+                    approx_pos = point_id - 1
+                    if approx_pos < 0:
+                        approx_pos = 0
+                    prev_point = dimensions[dim_id][approx_pos]
+                    set_unknown_to_vect(min_test, prev_point[1])
+                    dim = dimensions[dim_id]
+                    dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
+                    # dimensions[dim_id].append((set([min_test_id]), min_test))
+                    # for point in dim[point_id:]:
+                    #     for group_test_id in point[0]:
+                    #         if group_test_id not in already_in_to_reinsert:
+                    #             already_in_to_reinsert.add(group_test_id)
+                    #             test_to_insert.append((group_test_id, point[1]))
+            pass
+        pass        
 
     return dimensions # here all unknown values are approximated
 
