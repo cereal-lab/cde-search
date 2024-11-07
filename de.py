@@ -19,7 +19,6 @@
 
 from typing import Any, Optional
 
-
 def extract_dims(tests: list[list[int]]):
     ''' Ideas from article (with modifications)
 
@@ -36,7 +35,7 @@ def extract_dims(tests: list[list[int]]):
     # duplicates = [] # same behavior (CFS) tests
 
     # iteration through tests from those that fail least students to those that fail most
-    for test_id, test in sorted(enumerate(tests), key=lambda x: sum(x[1])):        
+    for test_id, test in sorted(enumerate(tests), key=lambda x: sum(x[1])):
         if all(t == 0 for t in test): #trivial tests 
             origin.append(test_id)
             continue
@@ -78,81 +77,23 @@ def extract_dims(tests: list[list[int]]):
                 dimensions.append([([test_id], test)])
 
     dims = [[test_ids for test_ids, _ in dim] for dim in dimensions] #pick only test sets
-    duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
-    return dims, origin, spanned, duplicates
-
-''' Inserts a new test into multidimensional space. Assumes all values of test are defined
-'''
-def add_one_to_dims(test_id: int, test: list[int], origin_or_spanned: set[int], dimensions: list[list[tuple[list[int], list[int]]]], *, add_to_one = False):
-    if all(t == 0 for t in test): #trivial tests 
-        origin_or_spanned.add(test_id)
-        return []
-    test_dims = [] # set of dimensions to which current test could belong
-    for dim_id, dim in enumerate(dimensions):                
-        for point_id, point in reversed(list(enumerate(dim))):
-            if all(t == d for t, d in zip(test, point[1])):
-                point[0].add(test_id) #point[0] is set of tests that belongs to this space point
-                return []
-            # check that current test dominates the point on at least one candidate
-            if all(t >= d for t, d in zip(test, point[1])) and any(t > d for t, d in zip(test, point[1])):
-                test_dims.append((dim, dim_id, point_id))  #the test dominates the point, so it can be a part of this axis
-                break 
-
-    all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
-
-    if len(all_ands) == 0: #test is not a union of any axes, new dimension        
-        dimensions.append([(set([test_id]), test)])
-    elif all(o1 == o2 for o1, o2 in zip(all_ands, test) if o1 is not None and o2 is not None): #spanned
-        origin_or_spanned.add(test_id)      
-    else: # test can extends one of the existing dimensions       
-        at_ends_dims = [dim for dim, dim_id, pos in test_dims if pos == len(dim) - 1]
-        if len(at_ends_dims) > 0: #is there dimensions which could be extended at the end?
-            if add_to_one:
-                dim = min(at_ends_dims, key=lambda d: len(d))
-                dim.append((set([test_id]), test))
-            else:
-                for dim in at_ends_dims:
-                    dim.append((set([test_id]), test)) #at new end of axis
-        else: #test leads to fork, we create new dimension
-            dimensions.append([(set([test_id]), test)])
-    return []
-
-
-def is_origin(test: list[Optional[int]]) -> bool:
-    return all(t is None or t == 0 for t in test)
-
-def get_duplicates(test: list[Optional[int]], dimensions: list[list[tuple[list[int], list[int]]]]) -> Optional[tuple[list[int], list[int]]]:
-    return next((point for dim in dimensions 
-                        for point in dim 
-                        if all(t == d for t, d in zip(test, point[1]) if t is not None)), None)
-
-# def get_dims(test: list[Optional[int]], dimensions: list[list[tuple[list[int], list[int]]]]) -> list[tuple[int, int]]:
-#     test_dims = [] # set of dimensions to which current test could belong
-#     # check for position on axes from ends to origin
-#     for dim_id, dim in enumerate(dimensions):  
-#         for point_id, point in reversed(list(enumerate(dim))):
-#             # check that current test dominates the point on at least one candidate
-#             if all(t >= d for t, d in zip(test, point[1]) if t is not None) and any(t > d for t, d in zip(test, point[1]) if t is not None):
-#                 test_dims.append((dim, dim_id, point_id))  #the test dominates the point, so it can be a part of this axis
-#                 break
-#     return test_dims
-
-def get_starts(test: list[Optional[int]], dimensions: list[list[tuple[list[int], list[int]]]]) -> list[int]:
-    return [dim_id for dim_id, dim in enumerate(dimensions) if all(t <= d for t, d in zip(test, dim[0][1]) if t is not None)]
+    # duplicates = [tid for dim in dimensions for test_ids, _ in dim for tid in test_ids[1:]]
+    return dims, origin, spanned
 
 def get_test_pos(test: list[Optional[int]], dimensions: list[list[tuple[list[int], list[int]]]]):
-    test_pos = [] # triplet (is_not_dupl, dim_id, point_where_test_belongs) //in case when is_not_dupl = 1, the new point should be inserted
+    test_pos = []
+    dupl_point = None
     # check for position on axes from ends to origin
     for dim_id, dim in enumerate(dimensions):  
         found_dim_pos = False
         is_incompatable = False
         for point_id, point in reversed(list(enumerate(dim))):
             if all(t == d for t, d in zip(test, point[1]) if t is not None):
-                test_pos.append((0, dim_id, point_id)) # 0 at start means duplicate
+                dupl_point = (dim_id, point_id)
                 found_dim_pos = True
                 break
             if all(t >= d for t, d in zip(test, point[1]) if t is not None) and any(t > d for t, d in zip(test, point[1]) if t is not None):
-                test_pos.append((1, dim_id, point_id + 1))  #the test dominates the point, so it can be a part of this axis
+                test_pos.append((dim_id, point_id + 1))  #the test dominates the point, so it can be a part of this axis
                 found_dim_pos = True 
                 break
             if any(t > d for t, d in zip(test, point[1]) if t is not None) and any(t < d for t, d in zip(test, point[1]) if t is not None):
@@ -161,13 +102,56 @@ def get_test_pos(test: list[Optional[int]], dimensions: list[list[tuple[list[int
         if is_incompatable:
             continue
         if not found_dim_pos and all(t <= d for t, d in zip(test, dim[0][1]) if t is not None) and any(t < d for t, d in zip(test, dim[0][1]) if t is not None):
-            test_pos.append((1, dim_id, 0))
-    return test_pos    
+            test_pos.append((dim_id, 0))
+    return test_pos, dupl_point
+
+def get_test_pos_def(test: list[int], dimensions: list[list[tuple[list[int], list[int]]]]):
+    test_pos = []
+    dupl_point = None
+    for dim_id, dim in enumerate(dimensions):  
+        found_dim_pos = False
+        is_incompatable = False
+        for point_id, point in reversed(list(enumerate(dim))):
+            if all(t == d for t, d in zip(test, point[1])):
+                dupl_point = (dim_id, point_id)
+                found_dim_pos = True
+                break
+            if all(t >= d for t, d in zip(test, point[1])) and any(t > d for t, d in zip(test, point[1])):
+                test_pos.append((dim_id, point_id + 1))  #the test dominates the point, so it can be a part of this axis
+                found_dim_pos = True 
+                break
+            if any(t > d for t, d in zip(test, point[1])) and any(t < d for t, d in zip(test, point[1])):
+                is_incompatable = True
+                break
+        if is_incompatable:
+            continue
+        if not found_dim_pos and all(t <= d for t, d in zip(test, dim[0][1])) and any(t < d for t, d in zip(test, dim[0][1])):
+            test_pos.append((dim_id, 0))
+    return test_pos, dupl_point
+
+def get_test_prev_pos(test: list[int], dimensions: list[list[tuple[list[int], list[int]]]]):
+    test_pos = []
+    for dim_id, dim in enumerate(dimensions):  
+        for point_id, point in reversed(list(enumerate(dim))):
+            if all(t >= d for t, d in zip(test, point[1])) and any(t > d for t, d in zip(test, point[1])):
+                test_pos.append((dim_id, point_id))  #the test dominates the point, so it can be a part of this axis
+                break
+    return test_pos
 
 def is_spanned_pos(test_pos: list[tuple[int, int, int]], test: list[Optional[int]], dimensions: list[list[tuple[list[int], list[int]]]]) -> bool:
-    all_ands = [max(el) for el in zip(*[dimensions[dim_id][point_id - 1][1] for (_, dim_id, point_id) in test_pos if point_id > 0])]
+    all_ands = [max(el) for el in zip(*[dimensions[dim_id][point_id - 1][1] for (dim_id, point_id) in test_pos if point_id > 0])]
     is_spanned = len(all_ands) > 0 and all(d == t for d, t in zip(all_ands, test) if t is not None)
     return is_spanned, all_ands
+
+def is_spanned_pos_def(test_pos: list[tuple[int, int]], test: list[int], dimensions: list[list[tuple[list[int], list[int]]]]) -> bool:
+    all_ands = [max(el) for el in zip(*[dimensions[dim_id][point_id - 1][1] for (dim_id, point_id) in test_pos if point_id > 0])]
+    is_spanned = len(all_ands) > 0 and all(d == t for d, t in zip(all_ands, test))
+    return is_spanned
+
+def is_spanned_prev_pos(test_prev_pos: list[tuple[int, int]], test: list[int], dimensions: list[list[tuple[list[int], list[int]]]]) -> bool:
+    all_ands = [max(el) for el in zip(*[dimensions[dim_id][point_id][1] for (dim_id, point_id) in test_prev_pos])]
+    is_spanned = len(all_ands) > 0 and all(d == t for d, t in zip(all_ands, test))
+    return is_spanned
 
 def set_unknown_to_const(test: list[Optional[int]], v: int):
     for i in range(len(test)):
@@ -179,164 +163,106 @@ def set_unknown_to_vect(test: list[Optional[int]], vect: list[int]):
         if test[i] is None:
             test[i] = vect[i]
 
-# Origin
-# Spanned 
-# Duplicate
-# Create Axis
+def filter_spanned(dimensions, spanned):
+    # still need collect spanned point that appear after point insertions - another pass through dimensions
+    dim_filters = []
+    for dim in dimensions:
+        dim_spanned_points = []
+        for point_id, point in enumerate(dim):
+            if point_id == 0:
+                continue
+            point_prev_pos = get_test_prev_pos(point[1], dimensions)
+            is_spanned = is_spanned_prev_pos(point_prev_pos, point[1], dimensions)
+            if is_spanned:
+                spanned_dims = {dim_id: point_id for dim_id, point_id in point_prev_pos}
+                spanned.update({test_id:spanned_dims for test_id in point[0]})
+                dim_spanned_points.append(point_id)
+        dim_spanned_points.sort(reverse=True)
+        dim_filters.append(dim_spanned_points)
+    for dim, dim_filtrer in zip(dimensions, dim_filters):
+        for point_id in dim_filtrer:
+            del dim[point_id]
 
-''' Inserts a new test into multidimensional space 
-    if given test contains at least one None (unknown outcome), the insertion will approximate this value according to current dimensions
-    Note, however, that one test could belong to several axes in this procedure
-'''
-def approx_one_to_dims(test_id: int, test: list[Optional[int]], origin_or_spanned: set[int], dimensions: list[list[tuple[list[int], list[int]]]]):
-    if is_origin(test):
-        origin_or_spanned.add(test_id)
-        set_unknown_to_const(test, 0)
-        return []
-    dupl_point = get_duplicate(test, dimensions)
-    test_dims = get_dims(test, dimensions)
-    to_reinsert = [] 
-    already_in_to_reinsert = set()
-    dims_of_test = []
-    if len(test_dims) == 0: #test is not a union of any axes, new dimension or start of axis?     
-        # test could be just the first point on some ax
-        if dupl_point is not None:            
-            dupl_point[0].add(test_id)
-            set_unknown_to_vect(test, dupl_point[1])
-            return []
-        
-        dim_starts = get_starts(test, dimensions)
-        
-        if len(dim_starts) == 0:
-            # we approximate with 0 because there is no data that could help us - it is new dimension
-            set_unknown_to_const(test, 0)
-            dimensions.append([(set([test_id]), test)]) 
-            return []
-        else:
-            all_ors = [min(el) for el in zip(*[dimensions[dim_id][0][1] for dim_id in dim_starts])]
-            set_unknown_to_vect(test, all_ors)
-            for dim_id in dim_starts:
-                point0 = dimensions[dim_id][0]
-                for group_test_id in point0[0]:
-                    if group_test_id not in already_in_to_reinsert:
-                        to_reinsert.append((group_test_id, point0[1]))
-                        already_in_to_reinsert.add(group_test_id)  
-                dims_of_test.append(dim_id)
-    elif len(test_dims) == 1:
-        if dupl_point is not None:
-            dupl_point[0].add(test_id)
-            set_unknown_to_vect(test, dupl_point[1])
-            return []        
-        # our assumptions about unknown values should not lead to new transisions 0-1 on axes
-        dim, dim_id, dim_pos = test_dims[0]
-        approx_pos = dim_pos + 1
-        if approx_pos >= len(dim):
-            approx_pos = len(dim) - 1
-        next_point = dim[approx_pos]
-        set_unknown_to_vect(test, next_point[1])
-
-        for group, outcomes in dim[dim_pos+1:]:
-            for group_test_id in group:
-                if group_test_id not in already_in_to_reinsert:
-                    to_reinsert.append((group_test_id, outcomes))
-                    already_in_to_reinsert.add(group_test_id)    
-        dims_of_test.append(dim_id)            
-    else:
-        all_ands = [max(el) for el in zip(*[dim[dim_pos][1] for (dim, dim_id, dim_pos) in test_dims])]
-
-        if all(t == d for t, d in zip(test, all_ands)): #spanned
-            set_unknown_to_vect(test, all_ands)
-            origin_or_spanned.add(test_id)
-            return []        
-        
-        if dupl_point is not None:
-            dupl_point[0].add(test_id)
-            set_unknown_to_vect(test, dupl_point[1])
-            return []
-
-        set_unknown_to_vect(test, all_ands)
-        
-        for dim, dim_id, pos in test_dims:
-            for group, outcomes in dim[pos+1:]:
-                for group_test_id in group:
-                    if group_test_id not in already_in_to_reinsert:
-                        to_reinsert.append((group_test_id, outcomes))
-                        already_in_to_reinsert.add(group_test_id)   
-            dims_of_test.append(dim_id)                 
-
-    if len(to_reinsert) > 0:
-        for dim_id, dim in enumerate(dimensions):
-            new_dim = [] 
-            for group, outcomes in dim:
-                new_group = set.difference(group, [tid for tid, _ in to_reinsert])
-                if len(new_group) > 0:
-                    new_dim.append((new_group, outcomes))
-            dimensions[dim_id] = new_dim
-    for dim_id in dims_of_test:
-        dimensions[dim_id].append((set([test_id]), test))
-    dims_to_del = set()
-    for dim_id in range(len(dimensions)):
-        if dim_id in dims_to_del:
-            continue
-        dim = dimensions[dim_id]
-        if len(dim) == 0:
-            dims_to_del.add(dim_id)
-            continue
-        for dim_id2 in range(dim_id + 1, len(dimensions)):
-            dim2 = dimensions[dim_id2]
-            if dim == dim2:
-                dims_to_del.add(dim_id2)
-    for dim_id in sorted(dims_to_del, reverse=True):
-        del dimensions[dim_id]
-    return to_reinsert
-
-def extract_dims_approx(tests: list[list[Optional[int]]]):
-    ''' Modification of the DE for case of sparse matrix '''
-
-    # we split tests by number of unknown elements in them, algorithm will try to restore unknown values
-    undefined_tests = {}
-    for test_id, test in enumerate(tests):
-        has_missing_els = any(o is None for o in test)
-        undefined_tests.setdefault(has_missing_els, {}).update([(test_id, test)])
+def extract_dims_fix(tests: list[list[int]]):
+    ''' Fix case - see matrix-case.txt '''
+    origin = [] # tests that are placed at the origin of coordinate system
+    spanned = {} # tests that are combinations of tests on axes (union of CFS)
+    dimensions = [] # tests on axes     
     
-    fully_defined = undefined_tests.get(False, {})
-    fully_defined_list = [fully_defined[tid] for tid in fully_defined.keys()]
-    fully_defined_ids = list(fully_defined.keys())
-
-    dims, origin, spanned, _ = extract_dims(fully_defined_list)
-
-    dimensions = [[(set(mapped), fully_defined[mapped[0]]) for point in dim for mapped in [[fully_defined_ids[i] for i in point]]] for dim in dims] # tests on axes - first point is origin and spanned
-    origin_or_spanned = set((*(fully_defined_ids[i] for i in spanned.keys()), *(fully_defined_ids[i] for i in origin))) # test that either too easy or to difficult
-
-    with_undefined = undefined_tests.get(True, {})
-
     test_to_insert = []
 
-    for test_id, test in with_undefined.items():
-        if all(t is None or t == 0 for t in test):
-            set_unknown_to_const(test, 0)
-            origin_or_spanned.add(test_id)
+    for test_id, test in enumerate(tests):
+        if all(t == 0 for t in test):
+            origin.append(test_id)
         else:
             test_to_insert.append((test_id, test))
 
     while len(test_to_insert) > 0:
         test_poss = []
         for test_id, test in test_to_insert:
-            test_pos = get_test_pos(test, dimensions)
+            test_pos, dupl_pos = get_test_pos_def(test, dimensions)
+            is_spanned = is_spanned_pos_def(test_pos, test, dimensions)
+            if is_spanned:
+                spanned[test_id] = {dim_id: point_id - 1 for dim_id, point_id in test_pos if point_id > 0}
+                continue
+            if dupl_pos is not None:                 
+                dim_id, point_id = dupl_pos
+                dimensions[dim_id][point_id][0].add(test_id)
+                continue
+            # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
+            this_test_pos = [(-1, 0, (-2, 0))] if len(test_pos) == 0 else [(dim_id, point_id, ((-1 if point_id == 0 else (len(dimensions[dim_id]) - point_id)), len(dimensions[dim_id]))) for dim_id, point_id in test_pos]
+            this_test_pos.sort(key=lambda x: x[2])
+            test_poss.append((test_id, test, this_test_pos))  
+        test_to_insert = []  
+        if len(test_poss) > 0:
+            test_poss.sort(key=lambda x: (len(x[2]), sum(x[1]), x[2][0][2]))
+            # min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (len(x[2]), x[2][0][2]))
+            min_test_id, min_test, min_test_pos = test_poss[0]
+            dim_id, point_id, pos_score = min_test_pos[0]
+            test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
+            if dim_id == -1: #new dimension
+                dimensions.append([(set([min_test_id]), min_test)])
+            else:
+                dim = dimensions[dim_id]
+                dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
+                
+    filter_spanned(dimensions, spanned)
+    dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
+    return dims, origin, spanned
+
+
+def extract_dims_approx(tests: list[list[Optional[int]]]):
+    ''' Modification of the DE for case of sparse matrix '''
+    origin = []
+    spanned = {}
+    dimensions = [] # tests on axes       
+
+    test_to_insert = []
+
+    for test_id, test in enumerate(tests):
+        if all(t is None or t == 0 for t in test):
+            set_unknown_to_const(test, 0)
+            origin.append(test_id)
+        else:
+            test_to_insert.append((test_id, test))
+
+    while len(test_to_insert) > 0:
+        test_poss = []
+        for test_id, test in test_to_insert:
+            test_pos, dupl_pos = get_test_pos(test, dimensions)
             is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
             if is_spanned:
                 set_unknown_to_vect(test, spanned_approx)
-                origin_or_spanned.add(test_id)
+                spanned[test_id] = {dim_id: point_id - 1 for dim_id, point_id in test_pos if point_id > 0}
                 continue
-            dupl_pos = [(dim_id, point_id) for is_not_dupl, dim_id, point_id in test_pos if is_not_dupl == 0]
-            if len(dupl_pos) > 0: #is_duplicate                 
-                for dim_id, point_id in dupl_pos:
-                    dimensions[dim_id][point_id][0].add(test_id)
-                    approx_values = dimensions[dim_id][point_id][1]
+            if dupl_pos is not None: #is_duplicate                 
+                dim_id, point_id = dupl_pos
+                dimensions[dim_id][point_id][0].add(test_id)
+                approx_values = dimensions[dim_id][point_id][1]
                 set_unknown_to_vect(test, approx_values)
                 continue
             # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
-            this_test_pos = [(-1, 0, (-1, 0))] if len(test_pos) == 0 else [(dim_id, point_id, (point_id, len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos]
+            this_test_pos = [(-1, 0, (-2, 0))] if len(test_pos) == 0 else [(dim_id, point_id, ((-1 if point_id == 0 else (len(dimensions[dim_id]) - point_id)), len(dimensions[dim_id]))) for dim_id, point_id in test_pos]
             this_test_pos.sort(key=lambda x: x[2])
             test_poss.append((test_id, test, this_test_pos))  
         test_to_insert = []  
@@ -353,42 +279,18 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
                 approx_pos = point_id - 1
                 if approx_pos < 0:
                     approx_pos = 0
+                    # set_unknown_to_const(min_test, 0)
+                # else:
                 prev_point = dimensions[dim_id][approx_pos]
                 set_unknown_to_vect(min_test, prev_point[1])
                 dim = dimensions[dim_id]
                 dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
-                # dimensions[dim_id].append((set([min_test_id]), min_test))
-                # for point in dim[point_id:]:
-                #     for group_test_id in point[0]:
-                #         if group_test_id not in already_in_to_reinsert:
-                #             already_in_to_reinsert.add(group_test_id)
-                #             test_to_insert.append((group_test_id, point[1]))
         pass
     pass
 
-    return dimensions # here all unknown values are approximated
-
-def extract_dims_approx2(tests: list[list[Optional[int]]]):
-    ''' Modification of the DE for case of sparse matrix '''
-    origin_or_spanned = set() # test that either too easy or to difficult
-    dimensions = [] # tests on axes 
-
-    # we split tests by number of unknown elements in them, algorithm will try to restore unknown values
-    grouped_tests = {}
-    for test_id, test in enumerate(tests):
-        missing_els = sum(1 for o in test if o is None)
-        grouped_tests.setdefault(missing_els, []).append((test_id, test))
-
-    grouped_tests_list = sorted(grouped_tests.items(), key = lambda x: x[0])
-
-    for missing_count, test_group in grouped_tests_list:
-        add_to_dims = add_one_to_dims if missing_count == 0 else approx_one_to_dims
-        for test_id, test in sorted(test_group, key=lambda x: sum(o for o in x[1] if o is not None)): 
-            to_reinsert = add_to_dims(test_id, test, origin_or_spanned, dimensions)
-            for test_id, test in to_reinsert:
-                add_one_to_dims(test_id, test, origin_or_spanned, dimensions)
-
-    return # here all unknown values are approximated
+    filter_spanned(dimensions, spanned)
+    dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
+    return dims, origin, spanned # here all unknown values are approximated
 
 # TODO: organize archive variables as state accessible to populations - probably encapsulate into Archive instance 
 # TODO: DECA as archive. By itself it is ocmputationally heavy operation to compute dimensions on all previous interactions 
@@ -696,6 +598,32 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1):
 
 if __name__ == "__main__":
     #testing of de module functions 
+    tests = [[1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+[1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+[1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1],
+[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+[1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1],
+[1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+[1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],
+[1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1],
+[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+[1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1],
+[1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0],
+[1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1],
+[0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0],
+[1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1],
+[1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1],
+[1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1],
+[0, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1],
+[1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1],
+[0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1],
+[1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1]]    
+    dims1, _, _ = extract_dims(tests)
+    dims2, _, _ = extract_dims_fix(tests)
+    dims3, _, _ = extract_dims_approx(tests)
+    print(dims1)
+    print(dims2)
+    pass
     tests = [
         [1, 1, 1, 1, 1, 1, 1, 1, 1], 
         [0, 0, 0, 0, 0, 0, 0, 0, 0], 
@@ -825,7 +753,7 @@ if __name__ == "__main__":
             j += 1
         test = [[test_linear[i * k + j] for j in range(k)] for i in range(n)]
         # print("matrix --", test)
-        a, _, _, _ = extract_dims(test)
+        a, _, _ = extract_dims(test)
         b, _ = extract_dims_approx(test)
         if a != b:
             print("---------------")

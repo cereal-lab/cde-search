@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from itertools import product
 import os
 from typing import Any
-from de import extract_dims
+from de import extract_dims_fix
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
         PARAM_MAX_INTS, param_num_intransitive_regions, \
         param_min_num, param_max_num, param_draw_dynamics, param_steps
@@ -77,7 +77,7 @@ class NumberGame(InteractionGame):
         return list(self.all_numbers)
     
     def save_space(self, dir = "."):
-        dims, o, sp, _ = extract_dims(self.get_interaction_matrix())
+        dims, o, sp = extract_dims_fix(self.get_interaction_matrix())
         spanned = [[tid, list(coords)] for tid, coords in sp.items()]
         json_space = json.dumps(dict(axes = dims, origin = o, spanned = spanned))
         with open(os.path.join(dir, self.__class__.__name__ + "-space.json"), "w") as f:
@@ -254,11 +254,11 @@ if __name__ == '__main__':
     game.save_space()
     # game = FocusingGame(0, 5)
     ints = game.get_interaction_matrix()
-    dims, origin, spanned, duplicates = extract_dims(ints)
+    dims, origin, spanned = extract_dims_fix(ints)
     dim_nums = [[[game.all_numbers[i] for i in test_ids] for test_ids in dim] for dim in dims]
     origin_nums = [game.all_numbers[i] for i in origin]
     spanned_nums = [game.all_numbers[i] for i in spanned.keys()]
-    duplicates_nums = [game.all_numbers[i] for i in duplicates]
+    # duplicates_nums = [game.all_numbers[i] for i in duplicates]
     # for num, line in zip(game.all_numbers, ints):
     #     print(f"{num}: {line}")
 

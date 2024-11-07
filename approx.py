@@ -7,8 +7,6 @@
 
 from typing import Optional
 
-from de import extract_dims_approx
-
 ''' None in the interactions is treated as const_value, test fail 
     Returns number of approximations per each test in the outcomes
 '''
@@ -29,26 +27,46 @@ def zero_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
 def one_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
     return const_approx(interactions, const_value = 1)
 
-''' None in interactions is treated as 01, test fail '''
-def majority_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
-    counts = [{} for _ in range(len(interactions[0]))]
-    for test in interactions:
-        for i, o in enumerate(test):
-            pos_counts = counts[i]
-            if o is not None:
-                pos_counts[o] = pos_counts.get(o, 0) + 1
-    maxes = [0 if len(pos_counts) == 0 else max(pos_counts.items(), key = lambda x: x[1])[0] for pos_counts in counts ]
+''' Approximation with column, row or both majority vote '''
+def maj_approx_strategy(interactions: list[list[Optional[int]]], kind = "column", default_value = 0) -> None:
+    row_counts = [{} for _ in range(len(interactions))]
+    column_counts = [{} for _ in range(len(interactions[0]))]
+    for test_id in range(len(interactions)):
+        for candidate_id in range(len(interactions[0])):
+            outcome = interactions[test_id][candidate_id]
+            if outcome is not None:
+                column_counts[candidate_id][outcome] = column_counts[candidate_id].get(outcome, 0) + 1
+    for candidate_id in range(len(interactions[0])):
+        for test_id in range(len(interactions)):
+            outcome = interactions[test_id][candidate_id]
+            if outcome is not None:
+                row_counts[test_id][outcome] = row_counts[test_id].get(outcome, 0) + 1                
     approx_vector = []
     for test_id, test in enumerate(interactions):
+        rc = row_counts[test_id] if kind != "column" else {}
         for candidate_id, outcome in enumerate(test):
             if outcome is None:
-                value = maxes[candidate_id]
-                interactions[test_id][candidate_id] = value 
-                approx_vector.append(value)
+                cc = column_counts[candidate_id] if kind != "row" else {}
+                all_outcomes = set(rc.keys()).union(cc.keys())
+                counts = {} 
+                for outcome in all_outcomes:
+                    counts[outcome] = rc.get(outcome, 0) + cc.get(outcome, 0)            
+                max_outcome = default_value if len(counts) == 0 else max(all_outcomes, key = lambda x: (counts[x], -x))
+                interactions[test_id][candidate_id] = max_outcome 
+                approx_vector.append(max_outcome)
     return approx_vector
 
+def maj_c_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
+    return maj_approx_strategy(interactions, kind = "column", default_value = 0)
+
+def maj_r_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
+    return maj_approx_strategy(interactions, kind = "row", default_value = 0)
+
+def maj_cr_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
+    return maj_approx_strategy(interactions, kind = "both", default_value = 0)
+
 # a = [[1,0,1,0],[1,1,1,0],[0,1,0,1],[None,0,1,None],[None,1,0,None]]
-# majority_approx_strategy(None, a)
+# maj_c_approx_strategy(a)
 # [[1, 0, 1, 0], [1, 1, 1, 0], [0, 1, 0, 1], [1, 0, 1, 0], [1, 1, 0, 0]]
 
 ''' Each candidate has a group of similarly performign students, Pareto-comparable students
@@ -122,14 +140,10 @@ def candidate_subgroup_approx_strategy(interactions: list[list[Optional[int]]]) 
     approx_vector = [interactions[i][j] for i, j in idxs]
     return approx_vector
 
-def extract_dims_approx_strategy(interactions: list[list[Optional[int]]]) -> None:
-    idxs = [(i, j) for i in range(len(interactions)) for j in range(len(interactions[0])) if interactions[i][j] is None]
-    approx_dims = extract_dims_approx(interactions)
-    approx_vector = [interactions[i][j] for i, j in idxs]
-    approx_dims2 = [[sorted(p[0]) for p in dim] for dim in approx_dims]
-    return approx_dims2, approx_vector
-
 if __name__ == "__main__":
+
+    a = [[1,0,1,0],[1,1,1,0],[0,1,0,1],[None,0,1,None],[None,1,0,None]]
+    maj_cr_approx_strategy(a)    
 
     from params import rnd
 
@@ -155,7 +169,7 @@ if __name__ == "__main__":
     v2_cnt = sum(1 for o1, o2 in zip(v2, orig_vect) if o1 != o2)
     for i,j in idxs:
         interactions[i][j] = None 
-    v3 = majority_approx_strategy(interactions) 
+    v3 = maj_c_approx_strategy(interactions) 
     v3_cnt = sum(1 for o1, o2 in zip(v3, orig_vect) if o1 != o2)   
     for i,j in idxs:
         interactions[i][j] = None 
@@ -167,13 +181,10 @@ if __name__ == "__main__":
     v5_cnt = sum(1 for o1, o2 in zip(v5, orig_vect) if o1 != o2)
     for i,j in idxs:
         interactions[i][j] = None 
-    v6 = extract_dims_approx_strategy(interactions)
-    v6_cnt = sum(1 for o1, o2 in zip(v6, orig_vect) if o1 != o2)    
     print(orig_vect)
     print(v1, v1_cnt)
     print(v2, v2_cnt)
     print(v3, v3_cnt)
     print(v4, v4_cnt)
     print(v5, v5_cnt)
-    print(v6, v6_cnt)
     pass

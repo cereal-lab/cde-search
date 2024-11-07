@@ -6,7 +6,7 @@ from abc import abstractmethod
 import json
 from math import sqrt
 from typing import Any, Iterable, Optional
-from de import extract_dims, get_batch_pareto_layers2
+from de import extract_dims_approx, extract_dims_fix, get_batch_pareto_layers2
 from metrics import avg_rank_of_repr, dimension_coverage, duplication, redundancy, trivial
 from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, \
     param_steps, param_selection_size, param_batch_size, rnd
@@ -413,20 +413,29 @@ class InteractionFeatureOrder(ExploitExploreSelection):
 class DECASelection(ExploitExploreSelection):
     ''' Implementation that is based on DECA idea 
         Param approx_strategy defines how to compute missing values None from global interactions
-        approx_strategy: zero_approx_strategy, one_approx_strategy, majority_approx_strategy, candidate_group_approx_strategy
+        approx_strategy: zero_approx_strategy, one_approx_strategy, maj_[c|r|cr]_approx_strategy, candidate_group_approx_strategy, deca_approx_strategy
         cand_sel_strategy defines what candidates to select for new dimension extraction: 
             local - only last batch, global - any candidate with 2 or more tests in the last batch 
             discriminative - those candidates that distinguished axes last time (fallback to local)
+        spanned_memory - defines how many times we can forgive the point to be spanned before resampling
+                         Originally the o bjective on batch_(n-k), the point being spanned for k times will be discarded
+                         Same goes with point which is treated as origin (trivial)
     '''
     def __init__(self, pool: list[Any], *, cand_sel_strategy = "local_cand_sel_strategy", 
                                            test_sel_strategy = "local_test_sel_strategy", 
-                                           approx_strategy = "majority_approx_strategy", **kwargs) -> None:
+                                           approx_strategy = "maj_c_approx_strategy", 
+                                           spanned_memory = 100,
+                                           **kwargs) -> None:
         super().__init__(pool, **kwargs)
-        self.sel_params.update(cand_sel_strategy = cand_sel_strategy, test_sel_strategy = test_sel_strategy, approx_strategy = approx_strategy)
-        self.approx_strategy = getattr(approx, approx_strategy)
+        self.sel_params.update(cand_sel_strategy = cand_sel_strategy, 
+                                test_sel_strategy = test_sel_strategy, approx_strategy = approx_strategy,
+                                spanned_memory = spanned_memory)
+        self.approx_strategy_name = approx_strategy
+        self.approx_strategy = None if approx_strategy == "deca_approx_strategy" else getattr(approx, approx_strategy)
         self.cand_sel_strategy = getattr(self, cand_sel_strategy)
         self.test_sel_strategy = getattr(self, test_sel_strategy)
-        self.origin = []
+        # self.origin = []
+        self.spanned_memory = spanned_memory
         # self.discarded_exploited_tests = [] #ordered from least to most recently discarded
         # self.prev_exploited = set()
 
@@ -467,10 +476,8 @@ class DECASelection(ExploitExploreSelection):
     def init_selection(self):
         super().init_selection()
         self.axes = []
-        self.origin = []
-        self.prev_axes = [] #for debugging
-        # self.discarded_exploited_tests = []
-        # self.prev_exploited = set()
+        self.prev_selection = [] 
+        self.spanned_resampled = {}
 
     def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
         ''' Applies DE to a given local or global ints and extract axes '''    
@@ -478,36 +485,55 @@ class DECASelection(ExploitExploreSelection):
         candidate_ids = self.cand_sel_strategy(test_ids, int_keys)
         tests = [[self.interactions[test_id].get(candidate_id, None) for candidate_id in candidate_ids] for test_id in  test_ids]
         approx_counts = {test_id: c for test_id, c in zip(test_ids, self.get_approx_counts(tests))}
-        approx_dims, _ = self.approx_strategy(tests) #fillin Nones
+        if self.approx_strategy_name == "deca_approx_strategy":
+            dims, origin, spanned = extract_dims_approx(tests) 
+        else:
+            self.approx_strategy(tests) #fillin Nones
+            dims, origin, spanned = extract_dims_fix(tests)
+        # approx_dims, _ = self.approx_strategy(tests) #fillin Nones
         
-        dims, origin, spanned, _ = extract_dims(tests)  
+        origin_tests = {test_ids[i] for i in origin}
+        spanned_tests = {test_ids[i] for i in spanned.keys()}
+        self.prev_selection = [test_id for test_id in self.prev_selection if (test_id in spanned_tests or test_id in origin_tests) and self.spanned_resampled.get(test_id, 0) < self.spanned_memory] 
+        for test_id in self.prev_selection:
+            self.spanned_resampled[test_id] = self.spanned_resampled.get(test_id, 0) + 1
 
-        self.origin = [test_ids[i] for i in origin]       
-        self.origin.sort(key = lambda x: len(self.interactions[x]), reverse=True)
+        # self.origin = [test_ids[i] for i in origin]       
+        # self.origin.sort(key = lambda x: len(self.interactions[x]), reverse=True)
 
-        self.prev_axes = self.axes
         self.axes = []
         for dim in dims:
             axes_tests = [(test_ids[i], (len(dim) - point_id - 1, -len(self.interactions[test_ids[i]]), approx_counts.get(test_ids[i], 0))) for point_id, group in enumerate(dim) for i in group]
             axes_tests.sort(key = lambda x: x[1], reverse=True)
+            for ind, _ in axes_tests:
+                if ind in self.spanned_resampled:
+                    del self.spanned_resampled[ind]
             self.axes.append(axes_tests)
-        pass
 
         # # fail sets of objectives (ends of axes)
         # cf_sets = [{candidate_ids[i] for i, o in enumerate(tests[dim[-1][0]]) if o == 1} for dim in dims]
         # self.discriminating_candidates = set.union(*cf_sets) - set.intersection(*cf_sets)
 
     def exploit(self, sample_size) -> set[Any]:
-
-        selected = set()
+        
 
         axe_id = 0 
         axes = [[point for point in dim] for dim in self.axes]
+        cnt = len(axes)
+        selected = set()
+        new_selection = []
         while len(selected) < sample_size and len(axes) > 0:
-            axe = axes[axe_id]
-            ind, _ = axe.pop()
+            axis = axes[axe_id]
+            ind, _ = axis.pop()
             selected.add(ind)
-            if len(axe) == 0:
+            new_selection.append(ind)
+            if cnt == 0: #all axes sampled at least once 
+                for test_id in self.prev_selection[:sample_size // 2]:
+                    if test_id not in selected:
+                        selected.add(test_id)
+                        new_selection.append(test_id)
+            cnt -= 1 
+            if len(axis) == 0:
                 axes.pop(axe_id)
                 if len(axes) == 0:
                     break
@@ -515,16 +541,17 @@ class DECASelection(ExploitExploreSelection):
                 axe_id += 1
             axe_id %= len(axes)
 
-        for ind in self.origin:
-            if len(selected) >= sample_size:
-                break
-            selected.add(ind)
+        # for ind in self.origin:
+        #     if len(selected) >= sample_size:
+        #         break
+        #     selected.add(ind)
             
         # self.discriminating_candidates = self.get_discriminating_set(selected)
         self.ind_groups.setdefault(f"exploit", []).extend(selected)
         # removed = self.prev_exploited - selected
         # self.discarded_exploited_tests.extend(removed)
         # self.prev_exploited = set(selected)
+        self.prev_selection = new_selection
         return selected
 
 class ParetoLayersSelection(ExploitExploreSelection):

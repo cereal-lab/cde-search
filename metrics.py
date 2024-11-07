@@ -49,16 +49,17 @@ def duplication(axes: list[list[set[Any]]], spanned: dict[Any, dict[int, int]], 
     space_tests = { **{t:((axis_id, point_id),)
                         for axis_id, axis in enumerate(axes) for point_id, point in enumerate(axis)
                         for t in point},
-                    **{t:tuple(sorted(spanned.items())) for t, spanned in spanned.items()},
+                    # **{t:tuple(sorted(spanned.items())) for t, spanned in spanned.items()},
                     **{t:() for t in origin}}
     Dup = 0 
     present = set()
     for t in sample:
-        pos = space_tests[t]
-        if pos in present:
-            Dup += 1 
-        else:
-            present.add(pos)
+        if t in space_tests:
+            pos = space_tests[t]
+            if pos in present:
+                Dup += 1 
+            else:
+                present.add(pos)
     Dup = Dup / len(sample)
     return Dup
 
