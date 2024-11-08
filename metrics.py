@@ -40,7 +40,7 @@ def redundancy(spanned: dict[Any, dict[int, int]], sample:list[Any]):
     R = len(spanned_sample) / len(sample) 
     return R
 
-def duplication(axes: list[list[set[Any]]], spanned: dict[Any, dict[int, int]], origin: set[Any], sample:list[Any]):
+def duplication(axes: list[list[set[Any]]], origin: set[Any], spanned: dict[Any, dict[int, int]], sample:list[Any]):
     ''' Computes percent of dumplications in tests sample according to CDE space
         :param tests_sample - set of tests from the space
     '''
@@ -49,17 +49,16 @@ def duplication(axes: list[list[set[Any]]], spanned: dict[Any, dict[int, int]], 
     space_tests = { **{t:((axis_id, point_id),)
                         for axis_id, axis in enumerate(axes) for point_id, point in enumerate(axis)
                         for t in point},
-                    # **{t:tuple(sorted(spanned.items())) for t, spanned in spanned.items()},
+                    **{t:tuple(sorted(spanned.items())) for t, spanned in spanned.items()},
                     **{t:() for t in origin}}
     Dup = 0 
     present = set()
     for t in sample:
-        if t in space_tests:
-            pos = space_tests[t]
-            if pos in present:
-                Dup += 1 
-            else:
-                present.add(pos)
+        pos = space_tests[t]
+        if pos in present:
+            Dup += 1 
+        else:
+            present.add(pos)
     Dup = Dup / len(sample)
     return Dup
 

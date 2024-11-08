@@ -66,7 +66,7 @@ class Selection:
             return
         DC = dimension_coverage(axes, sample)
         ARR, ARRA = avg_rank_of_repr(axes, sample)
-        Dup = duplication(axes, spanned, origin, sample)
+        Dup = duplication(axes, origin, spanned, sample)
         R = redundancy(spanned, sample)
         tr = trivial(axes, sample)
         self.sel_metrics.setdefault("DC", []).append(DC)

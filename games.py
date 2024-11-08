@@ -9,7 +9,8 @@ from abc import ABC, abstractmethod
 from itertools import product
 import os
 from typing import Any
-from de import extract_dims_fix
+from de import extract_dims, extract_dims_fix
+from metrics import duplication
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
         PARAM_MAX_INTS, param_num_intransitive_regions, \
         param_min_num, param_max_num, param_draw_dynamics, param_steps
@@ -78,7 +79,7 @@ class NumberGame(InteractionGame):
     
     def save_space(self, dir = "."):
         dims, o, sp = extract_dims_fix(self.get_interaction_matrix())
-        spanned = [[tid, list(coords)] for tid, coords in sp.items()]
+        spanned = [[tid, list(coords.items())] for tid, coords in sp.items()]
         json_space = json.dumps(dict(axes = dims, origin = o, spanned = spanned))
         with open(os.path.join(dir, self.__class__.__name__ + "-space.json"), "w") as f:
             f.write(json_space)
@@ -90,7 +91,7 @@ class NumberGame(InteractionGame):
             json_space = json.loads(f.read())
         axes = [ [set([self.all_numbers[i] for i in point]) for point in dim ] for dim in json_space["axes"] ]
         origin = set([self.all_numbers[i] for i in json_space["origin"]])
-        spanned = {self.all_numbers[i]: tuple(sp_dims) for i, sp_dims in json_space["spanned"]}
+        spanned = {self.all_numbers[i]: {dim_id: point_id for [dim_id, point_id] in sp_dims} for i, sp_dims in json_space["spanned"]}
         self.space = (axes, origin, spanned)
         return self.space
     
@@ -250,10 +251,13 @@ if __name__ == '__main__':
     # game = IntransitiveRegionGame(1, 4, 0, 5)
     # game = OrigIntransitiveGame(0, 3)
     # game = IntransitiveRegionGame(num_intransitive_regions=2, min_num=0, max_num = 4)
-    game = CompareOnOneGame()
-    game.save_space()
+    game = IntransitiveRegionGame(num_intransitive_regions=3, min_num=0, max_num = 10)
+    # game.save_space()
+    # game.load_space()
+    # duplication(*game.get_extracted_dimensions(), [(0, 0), (0, 1), (1, 0)])
     # game = FocusingGame(0, 5)
     ints = game.get_interaction_matrix()
+    # dims0, origin0, spanned0 = extract_dims(ints)
     dims, origin, spanned = extract_dims_fix(ints)
     dim_nums = [[[game.all_numbers[i] for i in test_ids] for test_ids in dim] for dim in dims]
     origin_nums = [game.all_numbers[i] for i in origin]
@@ -286,10 +290,10 @@ if __name__ == '__main__':
         for num, i in zip(spanned_nums, list(spanned.keys())):
             rows.append(["SPAN", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])        
         rows.append(SEPARATING_LINE)
-    if len(duplicates) > 0:        
-        for num, i in zip(duplicates_nums, duplicates):
-            rows.append(["DUPL", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])        
-        rows.append(SEPARATING_LINE)
+    # if len(duplicates) > 0:        
+    #     for num, i in zip(duplicates_nums, duplicates):
+    #         rows.append(["DUPL", f"{num[0]},{num[1]}", *["" if o == 0 else 1 for o in ints[i]]])        
+    #     rows.append(SEPARATING_LINE)
     int_rows = [[sum(ind_ints), f"{n[0]},{n[1]}", *["" if o == 0 else 1 for o in ind_ints]] for i, ind_ints in enumerate(ints) for n in [game.all_numbers[i]]]
     int_headers = ["win", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]]
     with open('ints_' + game.__class__.__name__ + ".txt", "w") as f:    
