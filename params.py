@@ -8,6 +8,7 @@ param_max_num = 100
 # param_reg_min_num = 30
 # param_reg_max_num = 49
 param_num_intransitive_regions = 3
+param_num_game_selection_size = 5
 param_selection_size = 10
 param_batch_size = 10 #for OneTimeSequence population
 param_draw_dynamics = 0

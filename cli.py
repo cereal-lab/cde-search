@@ -157,7 +157,7 @@ def run_game(ctx, sim, times = 1, metrics = ""):
         metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
                             "duration_ms": end_ms - start_ms,
                             "seed1": param_seed1, "seed2": param_seed2, **results}
-        click.echo(f"{metric_data}")
+        # click.echo(f"{metric_data}")
         with open(metrics, "a") as f:                
             fcntl.flock(f, fcntl.LOCK_EX)
             f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")

@@ -1,7 +1,7 @@
 #!/bin/bash 
-#SBATCH --job-name=cde-search
+#SBATCH --job-name=sim-nums
 #SBATCH --time=72:00:00
-#SBATCH --output=out/cde-s-%a.out
+#SBATCH --output=out/sim-nums.out
 #SBATCH --mem=8G
 #SBATCH --array=0-151
 
@@ -160,9 +160,13 @@ games=('rand:GreaterThanGame'
 
 game=${games[$SLURM_ARRAY_TASK_ID]}
 
+echo "Starting job $SLURM_ARRAY_TASK_ID with game $game"
+
 module rm apps/python/3.8.5
 module load apps/anaconda/5.3.1
 
 source activate cde-search-env
 
 python ~/cde-search/cli.py game -sim "$game" --times 30 --metrics "$WORK/cde-search/metrics.jsonlist"
+
+echo "Done job $SLURM_ARRAY_TASK_ID with game $game"

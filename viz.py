@@ -84,22 +84,26 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             groups.setdefault(key, {}).setdefault(sim_name, []).append(run["metric_" + m])
     for (game_name, metric_name), sim_values in groups.items():
         for sim_name, values in sim_values.items():
+            new_values = []
             if aggregation == "last": #collect final metric value - bar or violinplot chart
                 for i in range(len(values)):
-                    values[i] = values[i][-1]
+                    new_values.append(values[i][-1])
             else: #for line plot and area between with each batch
-                zipped = zip(len(values))
-                for i in range(len(values)):
-                    new_values = zipped[i]
-                    mean = np.mean(new_values)
+                zipped = list(zip(*values))
+                for i in range(len(zipped)):
+                    i_values = zipped[i]
+                    mean = np.mean(i_values)
                     if aggregation == "all":
                         confidence_level = 0.95
-                        degrees_freedom = len(new_values) - 1
-                        sample_standard_error = stats.sem(new_values)
+                        degrees_freedom = len(i_values) - 1
+                        sample_standard_error = stats.sem(i_values)
                         confidence_interval = stats.t.interval(confidence_level, degrees_freedom, mean, sample_standard_error)
-                        values[i] = (confidence_interval[0], mean, confidence_interval[1])
+                        min_v = mean if np.isnan(confidence_interval[0]) else confidence_interval[0]
+                        max_v = mean if np.isnan(confidence_interval[1]) else confidence_interval[1]
+                        new_values.append((min_v, mean, max_v))
                     else:
-                        values[i] = mean
+                        new_values.append(mean)
+            sim_values[sim_name] = new_values
 
     for (game_name, metric_name), sim_values in groups.items():
         plt.ioff()
@@ -145,14 +149,19 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"))
                     
         else: #line and area chart for confidence interval 
-            sorted_sim_values = sorted(sim_values.items(), key=lambda x:x[1][-1][1])
+            if aggregation == "all":
+                sorted_sim_values = sorted(sim_values.items(), key=lambda x:x[1][-1][1])
+            else:
+                sorted_sim_values = sorted(sim_values.items(), key=lambda x:x[1][-1])
             for sim_name, values in sorted_sim_values:
-                data = [v[1] for v in values]
                 if aggregation == "all":
-                    lower = [v[0] for v in values]
-                    upper = [v[2] for v in values]
-                    ax.fill_between(range(len(data)), lower, upper, alpha=.1, linewidth=0)
-                ax.plot(range(len(data)), data, label=sim_name, linewidth=1, markersize=5, marker='o')
+                    data = [v[1] * 100 for v in values]
+                    lower = [v[0] * 100 for v in values]
+                    upper = [v[2] * 100 for v in values]
+                    ax.fill_between(range(1, len(data) + 1), lower, upper, alpha=.1, linewidth=0)
+                else:
+                    data = [v * 100 for v in values]
+                ax.plot(range(1, len(data) + 1), data, label=sim_name, linewidth=1, markersize=5, marker='o')
             ax.set_xlim(0, 100)
             ax.set_ylim(0, 100)
             plt.legend(loc=3)
@@ -166,7 +175,7 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
 if __name__ == "__main__":
     ''' Test drawings '''
     # draw_populations([(1,2)], [(2,3)], [(6,7)], [(5,7)], xrange=(0, 100), yrange=(0, 100))
-    draw_metrics("data/metrics.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last")
+    draw_metrics("data/metrics/metrics.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all")
     pass
 
 

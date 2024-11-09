@@ -8,7 +8,7 @@
 from itertools import product
 from typing import Any
 from cde import CDESpace
-from games import CDESpaceGame, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, run_game
+from games import CDESpaceGame, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, NumberGame, run_game
 
 from population import DEScores, HillClimbing, OneTimeSequential, ParetoLayersSelection, DESelection, RandSelection
 from params import *
@@ -23,7 +23,8 @@ def simulate(algo, *, cand_algo = OneTimeSequential, **kwargs):
     def start(game: InteractionGame, **kwargs2) -> dict:
         kwargsAll = {**kwargs, **kwargs2}
         candidates = cand_algo(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
-        tests = algo(game.get_all_tests(), **get_args(kwargsAll, "test_"))
+        size = param_num_game_selection_size if isinstance(game, NumberGame) else param_selection_size
+        tests = algo(game.get_all_tests(), size = size, **get_args(kwargsAll, "test_"))
         return run_game(game, candidates, tests, **get_args(kwargsAll, "sim_"))
     return start  
 
