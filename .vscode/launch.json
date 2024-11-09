@@ -20,8 +20,8 @@
             "console": "integratedTerminal",
             "args": [
                 "game",
-                "-gid", "GreaterThanGame",
-                "-sid", "deca-d-d",
+                "-gid", "CompareOnOneGame",
+                "-sid", "de-d-d",
                 "--times", "1"
             ],
             "justMyCode": true
@@ -34,7 +34,7 @@
             "console": "integratedTerminal",
             "args": [
                 "game-space",
-                "-gid", "GreaterThanGame",
+                "-gid", "CompareOnOneGame",
                 "-out", "num-game-spaces"
             ],
             "justMyCode": true
