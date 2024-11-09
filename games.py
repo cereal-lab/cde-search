@@ -209,7 +209,7 @@ def step_game(step: int, num_steps: int, sel1: Selection, sel2: Selection, game:
  
 def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_steps: int = param_steps, draw_dynamics = param_draw_dynamics, sim_name = None, **kwargs) -> None:
     num_steps = int(num_steps)
-    draw_dynamics = int(param_draw_dynamics) == 1
+    draw_dynamics = int(draw_dynamics) == 1
     sel1.init_selection()
     sel2.init_selection()
     sel1.sel_metrics[PARAM_MAX_INTS] = sel2.sel_metrics[PARAM_MAX_INTS] = len(sel1.get_pool()) * len(sel2.get_pool())

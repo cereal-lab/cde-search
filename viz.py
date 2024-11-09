@@ -102,6 +102,7 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
                         values[i] = mean
 
     for (game_name, metric_name), sim_values in groups.items():
+        plt.ioff()
         fig, ax = plt.subplots() 
         if aggregation == "last": #violin plot
             sorted_sim_values = sorted(sim_values.items(), key=lambda x:np.mean(x[1]))
@@ -125,7 +126,7 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             ax.tick_params(axis='both', which='major', labelsize=14)
             ax.set_xticklabels([sim_name for sim_name, _ in sorted_sim_values])       
             fig.set_tight_layout(True)      
-            fig.savefig(f"{game_name}-{metric_name}-{aggregation}.pdf", format='pdf')    
+            fig.savefig(f"data/plots/{game_name}-{metric_name}-{aggregation}.pdf", format='pdf')    
             stats_data = np.array([samples for sim_name, samples in sorted_sim_values])
             friedman_res = stats.friedmanchisquare(*stats_data)
             nemenyi_res = sp.posthoc_nemenyi_friedman(stats_data.T) 
@@ -159,13 +160,13 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             plt.ylabel(f'{metric_name}, \%', size=14)
             ax.tick_params(axis='both', which='major', labelsize=14)            
             fig.set_tight_layout(True)
-            fig.savefig(f"{game_name}-{metric_name}-{aggregation}.pdf", format='pdf')
+            fig.savefig(f"data/plots/{game_name}-{metric_name}-{aggregation}.pdf", format='pdf')
         plt.clf()
 
 if __name__ == "__main__":
     ''' Test drawings '''
     # draw_populations([(1,2)], [(2,3)], [(6,7)], [(5,7)], xrange=(0, 100), yrange=(0, 100))
-    draw_metrics("metrics.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last")
+    draw_metrics("data/metrics.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last")
     pass
 
 

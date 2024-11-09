@@ -6,6 +6,8 @@ from abc import abstractmethod
 import json
 from math import sqrt
 from typing import Any, Iterable, Optional
+
+import numpy as np
 from de import extract_dims_approx, extract_dims_fix, get_batch_pareto_layers2
 from metrics import avg_rank_of_repr, dimension_coverage, duplication, redundancy, trivial
 from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, \
@@ -546,13 +548,13 @@ class DESelection(ExploitExploreSelection):
 
 class DEScores(ExploitExploreSelection):
     ''' Instead of approximating unknown values, we score each axis '''
-    def __init__(self, pool: list[Any], *, spanned_memory = 100,
-                                           score_strategy = "avg_score_strategy",
+    def __init__(self, pool: list[Any], *, score_strategy = "mean_score_strategy",
+                                            spanned_memory = -1,
                                            **kwargs) -> None:
         super().__init__(pool, **kwargs)
-        self.spanned_memory = float(spanned_memory)
         score_strategy_name = score_strategy
         self.score_strategy = getattr(self, score_strategy)
+        self.spanned_memory = float(spanned_memory)
         self.sel_params.update(score_strategy = score_strategy_name, spanned_memory = self.spanned_memory)
         
     def init_selection(self):
@@ -560,11 +562,17 @@ class DEScores(ExploitExploreSelection):
         self.axis_scores = {}
         self.spanned_counts = {}
 
-    def avg_score_strategy(self, test_id: Any) -> float:
+    def mean_score_strategy(self, test_id: Any) -> float:
         if test_id in self.spanned_counts and self.spanned_counts[test_id] >= self.spanned_memory:
             return 0
-        axis_score = sum(self.axis_scores[test_id]) / len(self.axis_scores[test_id])
+        axis_score = np.mean(self.axis_scores[test_id])
         return axis_score
+    
+    def median_score_strategy(self, test_id: Any) -> float:
+        if test_id in self.spanned_counts and self.spanned_counts[test_id] >= self.spanned_memory:
+            return 0        
+        axis_score = np.median(self.axis_scores[test_id])
+        return axis_score    
 
     def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
         test_ids = list(interactions.keys())
@@ -576,38 +584,45 @@ class DEScores(ExploitExploreSelection):
                 for i in group:
                     test_id = test_ids[i]
                     self.axis_scores.setdefault(test_id, []).append((point_id + 1) / len(dim))
-                    if test_id in self.spanned_counts:
-                        del self.spanned_counts[test_id]
+                    if self.spanned_memory >= 0 and test_id in self.spanned_counts:
+                        del self.spanned_counts[test_id]                    
         for i in origin:
             test_id = test_ids[i]
-            self.spanned_counts[test_id] = self.spanned_counts.get(test_id, 0) + 1
-        for i in spanned.keys():
+            if self.spanned_memory >= 0:
+                self.spanned_counts[test_id] = self.spanned_counts.get(test_id, 0) + 1
+            else:
+                self.axis_scores.setdefault(test_id, []).append(0)
+        for i, spanned_dims in spanned.items():
             test_id = test_ids[i]
-            self.spanned_counts[test_id] = self.spanned_counts.get(test_id, 0) + 1
+            if self.spanned_memory >= 0:
+                self.spanned_counts[test_id] = self.spanned_counts.get(test_id, 0) + 1
+            else:
+                span_score = np.mean([(point_id + 0.5) / len(dims[dim_id]) for dim_id, point_id in spanned_dims.items()])
+                self.axis_scores.setdefault(test_id, []).append(span_score)
 
     def exploit(self, sample_size) -> set[Any]:
         scores = {}
         for test_id in self.axis_scores.keys():
             score = self.score_strategy(test_id)
             scores[test_id] = score
-        selected = set(sorted(scores.keys(), key = lambda x: scores[x], reverse=True)[:sample_size])
+        sorted_scores = sorted(scores.keys(), key = lambda x: (scores[x], len(self.interactions[x])), reverse=True)
+        selected = set(sorted_scores[:sample_size])
         self.ind_groups.setdefault(f"exploit", []).extend(selected)
         return selected
 
 class ParetoLayersSelection(ExploitExploreSelection):
     ''' Sampling is based on pareto ranks (see LAPCA) and corresponding archive '''
-    def __init__(self, pool: list[Any], *, cand_sel_strategy = "local_cand_sel_strategy", max_layers = 10, **kwargs) -> None:
+    def __init__(self, pool: list[Any], *, cand_sel_strategy = "local_cand_sel_strategy", max_layers = 10, spanned_memory = -1, **kwargs) -> None:
         super().__init__(pool, **kwargs)
         self.max_layers = int(max_layers)
-        self.sel_params.update(max_layers = self.max_layers, cand_sel_strategy = cand_sel_strategy)
+        self.spanned_memory = int(spanned_memory)
+        self.sel_params.update(max_layers = self.max_layers, cand_sel_strategy = cand_sel_strategy, spanned_memory = self.spanned_memory)
         self.cand_sel_strategy = getattr(self, cand_sel_strategy)
-        self.discarded = []
 
     def init_selection(self) -> None:
         super().init_selection() 
         self.ind_order = []
-        # self.discriminating_candidates = set()
-        self.discarded = []
+        self.spanned_resampled = {}
 
     def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
         ''' Split into pareto layers '''        
@@ -616,36 +631,30 @@ class ParetoLayersSelection(ExploitExploreSelection):
         candidate_ids = self.cand_sel_strategy(test_ids, int_keys)
         tests = [[self.interactions[test_id].get(candidate_id, None) for candidate_id in candidate_ids] for test_id in test_ids ]
 
-        layers, discarded = get_batch_pareto_layers2(tests, max_layers=self.max_layers)
+        def discard_spanned(tid):
+            if self.spanned_memory < 0:
+                return False
+            test_id = test_ids[tid]
+            res = self.spanned_resampled.get(test_id, 0) >= self.spanned_memory
+            if not res: 
+                self.spanned_resampled[test_id] = self.spanned_resampled.get(test_id, 0) + 1
+            return res 
+        layers, _ = get_batch_pareto_layers2(tests, max_layers=self.max_layers, discard_spanned = discard_spanned)
 
-        self.discarded = [test_ids[tid] for tid in discarded]
-        self.discarded.sort(key = lambda x: len(self.interactions[x]), reverse=True)
-        
         self.ind_order = []
         for layer in layers:
             tests = [test_ids[i] for i in layer]
+            for test_id in tests:
+                if test_id in self.spanned_resampled:
+                    del self.spanned_resampled[test_id]
             tests.sort(key = lambda x: len(self.interactions[x]), reverse=True)
             self.ind_order.extend(tests)
 
-
     def exploit(self, sample_size) -> set[Any]:    
 
-        selected_tests = self.ind_order[:sample_size]
-        selected = set(selected_tests)
-
-        if len(selected) < sample_size:
-            selected.update(self.discarded[:sample_size - len(selected)])
+        selected = set(self.ind_order[:sample_size])
 
         self.ind_groups.setdefault(f"exploit", []).extend(selected)
-
-        # self.discriminating_candidates = self.get_discriminating_set(selected)
-        # for i in range(len(selected_tests)):
-        #     test_id1 = selected_tests[i]
-        #     test1 = [self.interactions[test_id1].get(cid, None) for cid in self.candidate_ids]
-        #     for j in range(i + 1, len(selected_tests)):
-        #         test_id2 = selected_tests[j]
-        #         test2 = [self.interactions[test_id2].get(cid, None) for cid in self.candidate_ids]
-        #         self.discriminating_candidates.update(self.candidate_ids[i] for i, (o1, o2) in enumerate(zip(test1, test2)) if o1 is not None and o2 is not None and o1 != o2)
         
         return selected
 

@@ -19,7 +19,7 @@ import click
 from cde import CDESpace
 from simulation import GAMES, SIM, print_config
 from games import InteractionGame 
-from params import param_seed, param_draw_dynamics
+from params import param_seed1, param_seed2, param_draw_dynamics
 import fcntl
 import time
 import numpy as np
@@ -159,13 +159,13 @@ def run_game(ctx, gid, sid, times = 1, metrics = ""):
                 end_ms = int(time.time() * 1000)
                 metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
                                     "duration_ms": end_ms - start_ms,
-                                    "seed": param_seed, **results}
+                                    "seed1": param_seed1, "seed2": param_seed2, **results}
                 click.echo(f"{metric_data}")
                 with open(metrics, "a") as f:                
                     fcntl.flock(f, fcntl.LOCK_EX)
                     f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
                     fcntl.flock(f, fcntl.LOCK_UN)
-                if param_draw_dynamics and i == 0:
+                if param_draw_dynamics > 0 and i == 0:
                     os.system(f"./togif.sh '{game_name}_{sim_name}'")
 
 @cli.command("game-space", context_settings=dict(

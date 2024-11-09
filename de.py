@@ -564,7 +564,7 @@ def get_batch_pareto_layers(tests: list[list[int]], max_layers = 1):
 
     return layers 
 
-def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1):
+def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, discard_spanned = lambda x: False):
     ''' Works with sparsed matrices '''
     layers = []
     layer_num = 0 
@@ -584,11 +584,12 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1):
         if dupl_of_test is not None:
             duplicates.setdefault(dupl_of_test, set()).add(test_id)
             continue
-        dominated_tests = [t2 for t2 in tests if all(o1 >= o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None) and any(o1 > o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None)]
-        and_all = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*dominated_tests)]
-        if len(and_all) > 0 and all(o1 == o2 for o1, o2 in zip(test, and_all) if o1 is not None and o2 is not None):
-            discarded.add(test_id)
-            continue 
+        if discard_spanned(test_id):
+            dominated_tests = [t2 for t2 in tests if all(o1 >= o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None) and any(o1 > o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None)]
+            and_all = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*dominated_tests)]
+            if len(and_all) > 0 and all(o1 == o2 for o1, o2 in zip(test, and_all) if o1 is not None and o2 is not None):
+                discarded.add(test_id)
+                continue 
         test_map[test_id] = test
     while layer_num < max_layers and len(test_map) > 0: 
         tests_archive = {} #map of test_id to set of semantically same tests 
