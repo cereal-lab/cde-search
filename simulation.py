@@ -10,7 +10,7 @@ from typing import Any
 from cde import CDESpace
 from games import CDESpaceGame, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, run_game
 
-from population import HillClimbing, OneTimeSequential, InteractionFeatureOrder, ParetoLayersSelection, DECASelection, RandSelection
+from population import DEScores, HillClimbing, OneTimeSequential, InteractionFeatureOrder, ParetoLayersSelection, DESelection, RandSelection
 from params import *
 
 def get_args(kwargs: dict[str, Any], prefix):
@@ -109,20 +109,25 @@ GAMES = {
 }
 
 SIM = {
-    "rand": simulate(RandSelection),
+    "rand":     simulate(RandSelection),
     "hc-pmo-i": simulate(HillClimbing, test_mutation_strategy = "plus_minus_one", test_selection_strategy="informativeness_select"),
     "hc-pmo-p": simulate(HillClimbing, test_mutation_strategy = "plus_minus_one", test_selection_strategy="pareto_select"),
-    "hc-r-i": simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="informativeness_select"),
-    "hc-r-p": simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="pareto_select"),
-    "deca-l": simulate(DECASelection, test_cand_sel_strategy = "local_cand_sel_strategy"), 
-    "deca-d-0": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="zero_approx_strategy"), 
-    "deca-d-1": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="one_approx_strategy"), 
-    "deca-d-m": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="maj_c_approx_strategy"), 
-    "deca-d-g": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_group_approx_strategy"), 
-    "deca-d-s": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_subgroup_approx_strategy"), 
-    "deca-d-d": simulate(DECASelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy"),         
-    "pareto-layers-l": simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy"),
-    "pareto-layers-d": simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy")
+    "hc-r-i":   simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="informativeness_select"),
+    "hc-r-p":   simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="pareto_select"),
+    "de-l":     simulate(DESelection, test_cand_sel_strategy = "local_cand_sel_strategy"), 
+    "de-d-0":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="zero_approx_strategy"), 
+    "de-d-1":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="one_approx_strategy"), 
+    "de-d-m":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="maj_c_approx_strategy"), 
+    "de-d-g":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_group_approx_strategy"), 
+    "de-d-s":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_subgroup_approx_strategy"), 
+    "de-d-d":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy"), 
+    "de-d-d-0": simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 0), 
+    "de-d-d-5": simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 0), 
+    "des":      simulate(DEScores),
+    "des-0":    simulate(DEScores, test_spanned_memory = 0),
+    "des-5":    simulate(DEScores, test_spanned_memory = 5),
+    "pl-l":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy"),
+    "pl-d":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy")
 }
 
 from tabulate import tabulate

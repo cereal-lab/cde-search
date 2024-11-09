@@ -8,9 +8,13 @@ param_num_intransitive_regions = 3
 param_selection_size = 10
 param_batch_size = 10 #for OneTimeSequence population
 param_draw_dynamics = 1
+param_space_dir = "data/num-game-spaces"
 
 import numpy as np
 rnd = np.random.RandomState(param_seed)
+# we use second instance for OneSequencePopulation to preserve same candidate order between all configs
+# otherwise, some Algos could use rnd more or less than others, changing results for OneSequencePopulation
+seq_rnd = np.random.RandomState(param_seed)
 
 PARAM_INTS = "made_ints"
 PARAM_UNIQ_INTS = "uniq_ints"

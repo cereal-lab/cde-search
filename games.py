@@ -13,7 +13,7 @@ from de import extract_dims, extract_dims_fix
 from metrics import duplication
 from params import PARAM_GAME_GOAL, PARAM_GAME_GOAL_MOMENT, PARAM_GAME_GOAL_STORY,\
         PARAM_MAX_INTS, param_num_intransitive_regions, \
-        param_min_num, param_max_num, param_draw_dynamics, param_steps
+        param_min_num, param_max_num, param_draw_dynamics, param_steps, param_space_dir
 from tabulate import tabulate, SEPARATING_LINE
 
 import numpy as np
@@ -96,7 +96,7 @@ class NumberGame(InteractionGame):
         return self.space
     
     def get_extracted_dimensions(self):        
-        return self.load_space()
+        return self.load_space(param_space_dir)
 
 class GreaterThanGame(NumberGame):
     def interact(self, candidate, test, **args) -> int:
@@ -207,7 +207,7 @@ def step_game(step: int, num_steps: int, sel1: Selection, sel2: Selection, game:
 
     return True
  
-def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_steps: int = param_steps, draw_dynamics = param_draw_dynamics, **kwargs) -> None:
+def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_steps: int = param_steps, draw_dynamics = param_draw_dynamics, sim_name = None, **kwargs) -> None:
     num_steps = int(num_steps)
     draw_dynamics = int(param_draw_dynamics) == 1
     sel1.init_selection()
@@ -216,33 +216,40 @@ def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_ste
     step = 0
     should_continue = True 
     matrix = None
+    cmaps = ["Reds", "Blues", "Greens", "Oranges", "Purples"]
     while should_continue:
         should_continue = step_game(step, num_steps, sel1, sel2, game)
         if draw_dynamics and isinstance(game, NumberGame):
-            cand_points = sel1.get_for_drawing(role = "cand")
-            test_points = sel2.get_for_drawing(role = "test")
+            cand_points = sel1.get_for_drawing()
+            test_points = sel2.get_for_drawing()
             if len(test_points) > 0:
+                from matplotlib import colormaps
                 if matrix is None:
                     axes, _, _ = game.space
-                    matrix = [[0 for _ in range(game.max_num + 1)] for _ in range(game.max_num + 1)]
-                    for ax in axes:
+                    matrix = [[(1,1,1,0.8) for _ in range(game.max_num + 1)] for _ in range(game.max_num + 1)]
+                    for ax_id, ax in enumerate(axes):
+                        cmap = colormaps[cmaps[ax_id % len(cmaps)]]
+                        grad_mapping = np.logspace(0.001, 1, len(ax), endpoint=True)
                         for point_id, point in enumerate(ax):
-                            c = (point_id + 1) / len(ax)
+                            c = grad_mapping[point_id] / grad_mapping[-1]
                             for test in point:
-                                matrix[test[1]][test[0]] = c
-                # dots = [ {"xy": point, "class": dict(c=(c, c, c), s=2)} ]]
+                                r, g, b, _ = cmap(c)
+                                matrix[test[1]][test[0]] = (r, g, b, 0.8)
                 point_groups = [*cand_points, *test_points]
-                pop_name = sel2.__class__.__name__
                 name = f"{step}"
                 name = name if len(name) >= 4 else ("0" * (4 - len(name)) + name)
+                if sim_name is None:
+                    sim_name = sel2.__class__.__name__
+                title = f"Step {name}, {sim_name} on {game.__class__.__name__}"
                 draw_populations(point_groups,
                                     xrange=(game.min_num, game.max_num), yrange=(game.min_num, game.max_num),
-                                    name = f"step-{name}", title = f"Step {name}, {pop_name} on {game.__class__.__name__}",
-                                    matrix = matrix)
+                                    name = f"step-{name}", title = title, matrix = matrix)
         step += 1
-    return dict(params = dict(game = dict(num_steps = num_steps, draw_dynamics=draw_dynamics, **game.game_params), 
-                                sel = sel2.sel_params), 
-                    metrics = dict(sel = sel2.sel_metrics))
+    return {"param_game_num_steps": num_steps, 
+            **{"param_game_" + key:value for key, value in game.game_params.items()},
+            **{"param_sel_" + key:value for key, value in sel2.sel_params.items()},
+            **{"metric_" + key:value for key, value in sel2.sel_metrics.items()},
+            }
         
 if __name__ == '__main__':
     ''' This entry is used currently only to figure out the CDE space of different number games 
@@ -251,7 +258,12 @@ if __name__ == '__main__':
     # game = IntransitiveRegionGame(1, 4, 0, 5)
     # game = OrigIntransitiveGame(0, 3)
     # game = IntransitiveRegionGame(num_intransitive_regions=2, min_num=0, max_num = 4)
-    game = IntransitiveRegionGame(num_intransitive_regions=3, min_num=0, max_num = 10)
+    # game = GreaterThanGame(0, 2)
+    # game = CompareOnOneGame(0, 2)
+    # game = FocusingGame(0, 2)
+    # game = IntransitiveGame(0, 2)
+    game = IntransitiveRegionGame(num_intransitive_regions=3, min_num=0, max_num = 5)
+    # game = IntransitiveGame(num_intransitive_regions=3, min_num=0, max_num = 5)
     # game.save_space()
     # game.load_space()
     # duplication(*game.get_extracted_dimensions(), [(0, 0), (0, 1), (1, 0)])
@@ -296,11 +308,11 @@ if __name__ == '__main__':
     #     rows.append(SEPARATING_LINE)
     int_rows = [[sum(ind_ints), f"{n[0]},{n[1]}", *["" if o == 0 else 1 for o in ind_ints]] for i, ind_ints in enumerate(ints) for n in [game.all_numbers[i]]]
     int_headers = ["win", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]]
-    with open('ints_' + game.__class__.__name__ + ".txt", "w") as f:    
+    with open('data/interactions/ints_' + game.__class__.__name__ + ".txt", "w") as f:    
         print(f"Interactions of {game.__class__.__name__}", file=f)
         print(tabulate(int_rows, headers=int_headers, tablefmt = "simple", numalign="center", stralign="center"), file=f)
         print("\n", file=f)
-        print(f"Dims: {len(dim_nums)}, points={max_dim} Origin: {len(origin_nums)} Spanned: {len(spanned_nums)} Duplicates: {len(duplicates_nums)}", file=f)
+        print(f"Dims: {len(dim_nums)}, points={max_dim} Origin: {len(origin_nums)} Spanned: {len(spanned_nums)}", file=f)
         print(tabulate(rows, headers=["dim", "pos", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]], tablefmt='simple', numalign="center", stralign="center"), file=f)
     # print(f"{game.all_numbers}")
 

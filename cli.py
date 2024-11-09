@@ -134,7 +134,7 @@ def show_config():
 @click.option("-gid", type = str, required=True)
 @click.option("-sid", type = str, required=True)
 @click.option('--times', type=int, default = 1)
-@click.option("-m", "--metrics", type = str, default = "metrics.jsonlist")
+@click.option("-m", "--metrics", type = str, default = "data/metrics.jsonlist")
 @click.pass_context
 def run_game(ctx, gid, sid, times = 1, metrics = ""):
     game_dynamic_args = dict()
@@ -155,7 +155,7 @@ def run_game(ctx, gid, sid, times = 1, metrics = ""):
             game : InteractionGame = game_builder(**game_dynamic_args)
             for i in range(times): 
                 start_ms = int(time.time() * 1000)
-                results = sim_starter(game, **sim_dynamic_args)
+                results = sim_starter(game, sim_sim_name = sim_name, **sim_dynamic_args)
                 end_ms = int(time.time() * 1000)
                 metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
                                     "duration_ms": end_ms - start_ms,

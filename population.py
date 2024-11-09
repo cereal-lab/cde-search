@@ -9,7 +9,7 @@ from typing import Any, Iterable, Optional
 from de import extract_dims_approx, extract_dims_fix, get_batch_pareto_layers2
 from metrics import avg_rank_of_repr, dimension_coverage, duplication, redundancy, trivial
 from params import PARAM_IND_CHANGES_STORY, PARAM_INTS, PARAM_UNIQ_INTS, rnd, PARAM_UNIQ_INDS, PARAM_MAX_INDS, \
-    param_steps, param_selection_size, param_batch_size, rnd
+    param_steps, param_selection_size, param_batch_size, rnd, seq_rnd
 import approx
 
 class Selection:
@@ -54,10 +54,10 @@ class Selection:
     def update(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
         self.merge_interactions(interactions)
 
-    def get_for_drawing(self, role = "") -> list[dict]:
+    def get_for_drawing(self) -> list[dict]:
         ''' Called to draw population'''
         return [
-            {"xy": self.selection, "class": dict(marker='o', s=30, c='#151fd6'), "legend": [s for s in self.selection[:20]]}
+            {"xy": self.selection, "class": dict(marker='o', s=30, c='black', edgecolor='white'), "legend": [f"{s[0]},{s[1]}".ljust(8) for s in self.selection[:20]]}
         ]
     
     def collect_metrics(self, axes, origin, spanned, *, is_final = False):
@@ -190,12 +190,13 @@ class HillClimbing(Selection):
         self.seen_inds.update(self.selection, self.children)
         self.sel_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds) 
 
-    def get_for_drawing(self, role = "") -> list[dict]:
-        class_parent, class_child = (dict(marker='o', s=30, c='#151fd6'), dict(marker='o', s=10, c='#28a4c9')) if role == "cand" else (dict(marker='H', s=30, c='#159e1b'), dict(marker='H', s=10, c='#85ba6a'))
+    def get_for_drawing(self) -> list[dict]:
+        class_parent = dict(marker='o', s=30, c='black', edgecolor='white')
+        class_child = dict(marker='o', s=10, c='blue', edgecolor='white')
         return [
                 {"xy": self.seen_inds, "bg": True}, 
-                {"xy": self.selection, "class": class_parent, "legend": [f"{p}".ljust(10) + "|" + f"{c}".ljust(10) for p, c in list(zip(self.selection, self.children))[:20]]},
-                {"xy": self.children, "class": class_child}
+                {"xy": self.selection, "class": class_parent, "legend": [f"{x[0]},{x[1]}".ljust(8) for x in self.selection[:20]]},
+                {"xy": self.children, "class": class_child, "legend": [f"{x[0]},{x[1]}".ljust(8) for x in self.children[:20]]}
             ]
 
 class ExploitExploreSelection(Selection):
@@ -225,7 +226,6 @@ class ExploitExploreSelection(Selection):
         pass 
 
     def update(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
-        ''' Applies DECA to given local ints and extract axes '''
         super().update(interactions, int_keys)
         self.update_features(interactions, int_keys)
         # self.t += 1  
@@ -277,20 +277,14 @@ class ExploitExploreSelection(Selection):
     def get_best(self):
         return self.exploited
     
-    def get_for_drawing(self, role = "") -> list[dict]:
+    def get_for_drawing(self) -> list[dict]:
         pop = self.get_selection() #just to make sure that population is inited
         explore = self.ind_groups.get("explore", [])
-        exploit_groups = []
-        for k,v in self.ind_groups.items():
-            if k.startswith("exploit_"):
-                s = int(k.split("_")[-1])
-                exploit_groups.append({"xy": v, "class": dict(marker='o', s=s, c='#d662e3', alpha=0.5), "legend": [f"{t}".ljust(10) for t in v[:20]]})
         exploit = self.ind_groups.get("exploit", [])
         return [
                 {"xy": self.exploited_inds, "bg": True}, 
-                {"xy": explore, "class": dict(marker='o', s=20, c='blue', edgecolor='white'), "legend": [f"{t}".ljust(10) for t in explore[:20]]},
-                *exploit_groups,
-                {"xy": exploit, "class": dict(marker='o', s=30, c='black', edgecolor='white'), "legend": [f"{t}".ljust(10) for t in exploit[:20]]},
+                {"xy": explore, "class": dict(marker='o', s=20, c='blue', edgecolor='white'), "legend": [f"{x[0]},{x[1]}".ljust(8) for x in explore[:20]]},
+                {"xy": exploit, "class": dict(marker='o', s=30, c='black', edgecolor='white'), "legend": [f"{x[0]},{x[1]}".ljust(8) for x in exploit[:20]]},
             ]
     
     def get_discriminating_set(self, selected_inds: set[Any]) -> set[Any]:
@@ -410,8 +404,8 @@ class InteractionFeatureOrder(ExploitExploreSelection):
         self.ind_groups.setdefault(f"exploit", []).extend(selected)
         return selected
 
-class DECASelection(ExploitExploreSelection):
-    ''' Implementation that is based on DECA idea 
+class DESelection(ExploitExploreSelection):
+    ''' Implementation that is based on DECA idea (modified DE algo)
         Param approx_strategy defines how to compute missing values None from global interactions
         approx_strategy: zero_approx_strategy, one_approx_strategy, maj_[c|r|cr]_approx_strategy, candidate_group_approx_strategy, deca_approx_strategy
         cand_sel_strategy defines what candidates to select for new dimension extraction: 
@@ -427,15 +421,15 @@ class DECASelection(ExploitExploreSelection):
                                            spanned_memory = 100,
                                            **kwargs) -> None:
         super().__init__(pool, **kwargs)
+        self.spanned_memory = float(spanned_memory)
         self.sel_params.update(cand_sel_strategy = cand_sel_strategy, 
                                 test_sel_strategy = test_sel_strategy, approx_strategy = approx_strategy,
-                                spanned_memory = spanned_memory)
+                                spanned_memory = self.spanned_memory)
         self.approx_strategy_name = approx_strategy
         self.approx_strategy = None if approx_strategy == "deca_approx_strategy" else getattr(approx, approx_strategy)
         self.cand_sel_strategy = getattr(self, cand_sel_strategy)
         self.test_sel_strategy = getattr(self, test_sel_strategy)
         # self.origin = []
-        self.spanned_memory = spanned_memory
         # self.discarded_exploited_tests = [] #ordered from least to most recently discarded
         # self.prev_exploited = set()
 
@@ -476,7 +470,8 @@ class DECASelection(ExploitExploreSelection):
     def init_selection(self):
         super().init_selection()
         self.axes = []
-        self.prev_selection = [] 
+        self.prev_selection_spanned = [] 
+        self.prev_selection_origin = []
         self.spanned_resampled = {}
 
     def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
@@ -494,8 +489,11 @@ class DECASelection(ExploitExploreSelection):
         
         origin_tests = {test_ids[i] for i in origin}
         spanned_tests = {test_ids[i] for i in spanned.keys()}
-        self.prev_selection = [test_id for test_id in self.prev_selection if (test_id in spanned_tests or test_id in origin_tests) and self.spanned_resampled.get(test_id, 0) < self.spanned_memory] 
-        for test_id in self.prev_selection:
+        self.prev_selection_spanned = [test_id for test_id in self.prev_selection_spanned if test_id in spanned_tests and self.spanned_resampled.get(test_id, 0) < self.spanned_memory] 
+        self.prev_selection_origin = [test_id for test_id in self.prev_selection_origin if test_id in origin_tests and self.spanned_resampled.get(test_id, 0) < self.spanned_memory]
+        for test_id in self.prev_selection_spanned:
+            self.spanned_resampled[test_id] = self.spanned_resampled.get(test_id, 0) + 1
+        for test_id in self.prev_selection_origin:
             self.spanned_resampled[test_id] = self.spanned_resampled.get(test_id, 0) + 1
 
         # self.origin = [test_ids[i] for i in origin]       
@@ -519,20 +517,11 @@ class DECASelection(ExploitExploreSelection):
 
         axe_id = 0 
         axes = [[point for point in dim] for dim in self.axes]
-        cnt = len(axes)
-        selected = set()
-        new_selection = []
+        selected = set(self.prev_selection_spanned)
         while len(selected) < sample_size and len(axes) > 0:
             axis = axes[axe_id]
             ind, _ = axis.pop()
             selected.add(ind)
-            new_selection.append(ind)
-            if cnt == 0: #all axes sampled at least once 
-                for test_id in self.prev_selection[:sample_size // 2]:
-                    if test_id not in selected:
-                        selected.add(test_id)
-                        new_selection.append(test_id)
-            cnt -= 1 
             if len(axis) == 0:
                 axes.pop(axe_id)
                 if len(axes) == 0:
@@ -541,17 +530,68 @@ class DECASelection(ExploitExploreSelection):
                 axe_id += 1
             axe_id %= len(axes)
 
-        # for ind in self.origin:
-        #     if len(selected) >= sample_size:
-        #         break
-        #     selected.add(ind)
+        for ind in self.prev_selection_origin:
+            if len(selected) >= sample_size:
+                break
+            selected.add(ind)
             
         # self.discriminating_candidates = self.get_discriminating_set(selected)
         self.ind_groups.setdefault(f"exploit", []).extend(selected)
         # removed = self.prev_exploited - selected
         # self.discarded_exploited_tests.extend(removed)
         # self.prev_exploited = set(selected)
-        self.prev_selection = new_selection
+        self.prev_selection_spanned = list(selected)
+        self.prev_selection_origin = list(selected)
+        return selected
+
+class DEScores(ExploitExploreSelection):
+    ''' Instead of approximating unknown values, we score each axis '''
+    def __init__(self, pool: list[Any], *, spanned_memory = 100,
+                                           score_strategy = "avg_score_strategy",
+                                           **kwargs) -> None:
+        super().__init__(pool, **kwargs)
+        self.spanned_memory = float(spanned_memory)
+        score_strategy_name = score_strategy
+        self.score_strategy = getattr(self, score_strategy)
+        self.sel_params.update(score_strategy = score_strategy_name, spanned_memory = self.spanned_memory)
+        
+    def init_selection(self):
+        super().init_selection()
+        self.axis_scores = {}
+        self.spanned_counts = {}
+
+    def avg_score_strategy(self, test_id: Any) -> float:
+        if test_id in self.spanned_counts and self.spanned_counts[test_id] >= self.spanned_memory:
+            return 0
+        axis_score = sum(self.axis_scores[test_id]) / len(self.axis_scores[test_id])
+        return axis_score
+
+    def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
+        test_ids = list(interactions.keys())
+        candidate_ids = list(int_keys)
+        tests = [[self.interactions[test_id][candidate_id] for candidate_id in candidate_ids] for test_id in test_ids]
+        dims, origin, spanned = extract_dims_fix(tests)
+        for dim in dims:
+            for point_id, group in enumerate(dim):
+                for i in group:
+                    test_id = test_ids[i]
+                    self.axis_scores.setdefault(test_id, []).append((point_id + 1) / len(dim))
+                    if test_id in self.spanned_counts:
+                        del self.spanned_counts[test_id]
+        for i in origin:
+            test_id = test_ids[i]
+            self.spanned_counts[test_id] = self.spanned_counts.get(test_id, 0) + 1
+        for i in spanned.keys():
+            test_id = test_ids[i]
+            self.spanned_counts[test_id] = self.spanned_counts.get(test_id, 0) + 1
+
+    def exploit(self, sample_size) -> set[Any]:
+        scores = {}
+        for test_id in self.axis_scores.keys():
+            score = self.score_strategy(test_id)
+            scores[test_id] = score
+        selected = set(sorted(scores.keys(), key = lambda x: scores[x], reverse=True)[:sample_size])
+        self.ind_groups.setdefault(f"exploit", []).extend(selected)
         return selected
 
 class ParetoLayersSelection(ExploitExploreSelection):
@@ -645,7 +685,7 @@ class OneTimeSequential(Selection):
         super().init_selection()
         self.cur_pos = 0
         if self.shuffle:
-            rnd.shuffle(self.pool)
+            seq_rnd.shuffle(self.pool)
         self.selection = self.get_group()
 
     def update(self, interactions: dict[Any, list[tuple[Any, int]]], int_keys: set[Any]) -> None:
@@ -656,9 +696,9 @@ class OneTimeSequential(Selection):
             return []    
         return self.selection        
     
-    def get_for_drawing(self, role = "") -> list[dict]:
+    def get_for_drawing(self) -> list[dict]:
         return [
-                {"xy": self.selection, "class": dict(marker='x', s=20, c='#bf5a17')}
+                {"xy": self.selection, "class": dict(marker='x', s=20, c='#333333')}
             ]
     
     def collect_metrics(self, axes, origin, spanned, *, is_final = False):

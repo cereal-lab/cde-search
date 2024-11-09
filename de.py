@@ -191,14 +191,21 @@ def extract_dims_fix(tests: list[list[int]]):
     
     test_to_insert = []
 
+    one_counts = {}
+
     for test_id, test in enumerate(tests):
         if all(t == 0 for t in test):
             origin.append(test_id)
         else:
             test_to_insert.append((test_id, test))
+            one_counts[test_id] = sum(t for t in test if t is not None)
 
     while len(test_to_insert) > 0:
-        test_poss = []
+        new_dims = []
+        expands_at_start = {}
+        other_expands = {}
+        test_number_of_pos = {}
+        test_outcomes = {}
         for test_id, test in test_to_insert:
             test_pos, dupl_pos = get_test_pos_def(test, dimensions)
             is_spanned = is_spanned_pos_def(test_pos, test, dimensions)
@@ -209,22 +216,44 @@ def extract_dims_fix(tests: list[list[int]]):
                 dim_id, point_id = dupl_pos
                 dimensions[dim_id][point_id][0].add(test_id)
                 continue
-            # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
-            this_test_pos = [(-1, 0, (-2, 0))] if len(test_pos) == 0 else [(dim_id, point_id, ((-1 if point_id == 0 else (len(dimensions[dim_id]) - point_id)), len(dimensions[dim_id]))) for dim_id, point_id in test_pos]
-            this_test_pos.sort(key=lambda x: x[2])
-            test_poss.append((test_id, test, this_test_pos))  
-        test_to_insert = []  
-        if len(test_poss) > 0:
-            test_poss.sort(key=lambda x: (len(x[2]), sum(x[1]), x[2][0][2]))
-            # min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (len(x[2]), x[2][0][2]))
-            min_test_id, min_test, min_test_pos = test_poss[0]
-            dim_id, point_id, pos_score = min_test_pos[0]
-            test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
-            if dim_id == -1: #new dimension
-                dimensions.append([(set([min_test_id]), min_test)])
+            test_outcomes[test_id] = test
+            if len(test_pos) == 0:
+                new_dims.append(test_id)
             else:
-                dim = dimensions[dim_id]
-                dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
+                test_number_of_pos[test_id] = len(test_pos)
+                for dim_id, point_id in test_pos:
+                    if point_id == 0:
+                        expands_at_start.setdefault(test_id, []).append(dim_id)
+                    else:
+                        other_expands.setdefault(test_id, []).append((dim_id, point_id))
+        if len(test_outcomes) == 0:
+            test_to_insert = []
+            continue            
+        if len(new_dims) > 0:            
+            min_test_id = min(new_dims, key=lambda x: one_counts[x])
+            min_test = test_outcomes[min_test_id]
+            dimensions.append([(set([min_test_id]), min_test)])
+        else:
+            tests_sorted_by_number_of_moves = sorted(test_number_of_pos.items(), key=lambda x: x[1])
+            _, min_num_of_moves = tests_sorted_by_number_of_moves[0]
+            min_group = [test_id for test_id, num_of_moves in tests_sorted_by_number_of_moves if num_of_moves == min_num_of_moves]
+            can_expand_later = [test_id for test_id in min_group if test_id in other_expands]
+            if len(can_expand_later) > 0:
+                can_expand_later_with_score = [(test_id, one_counts[test_id]) for test_id in can_expand_later]
+                expansion_poss = [(test_id, dim_id, point_id, (score, len(dimensions[dim_id]) - point_id, len(dimensions[dim_id]))) for test_id, score in can_expand_later_with_score for dim_id, point_id in other_expands[test_id]]
+                min_test_id, min_dim_id, min_point_id, _ = min(expansion_poss, key=lambda x: x[-1])
+                min_test = test_outcomes[min_test_id]
+                dim = dimensions[min_dim_id]
+                dimensions[min_dim_id] = [*dim[:min_point_id], (set([min_test_id]), min_test), *dim[min_point_id:]]
+            else: #min_group expands only at start
+                min_group_with_score = [(test_id, -one_counts[test_id]) for test_id in min_group] 
+                expansion_poss = [(test_id, dim_id, (score, len(dimensions[dim_id])) ) for test_id, score in min_group_with_score for dim_id in expands_at_start[test_id]]
+                min_test_id, min_dim_id, _ = min(expansion_poss, key=lambda x: x[-1])
+                min_test = test_outcomes[min_test_id]
+                dim = dimensions[min_dim_id]
+                dimensions[min_dim_id] = [(set([min_test_id]), min_test), *dim]
+        del test_outcomes[min_test_id]
+        test_to_insert = list(test_outcomes.items())
                 
     filter_spanned(dimensions, spanned)
     dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
@@ -239,15 +268,24 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
 
     test_to_insert = []
 
+    one_counts = {}
+    unknown_counts = {}    
+
     for test_id, test in enumerate(tests):
         if all(t is None or t == 0 for t in test):
             set_unknown_to_const(test, 0)
             origin.append(test_id)
         else:
             test_to_insert.append((test_id, test))
+            one_counts[test_id] = sum(t for t in test if t is not None)
+            unknown_counts[test_id] = sum(1 for t in test if t is None)            
 
     while len(test_to_insert) > 0:
-        test_poss = []
+        new_dims = []
+        expands_at_start = {}
+        other_expands = {}
+        test_number_of_pos = {}
+        test_outcomes = {}
         for test_id, test in test_to_insert:
             test_pos, dupl_pos = get_test_pos(test, dimensions)
             is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
@@ -261,32 +299,49 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
                 approx_values = dimensions[dim_id][point_id][1]
                 set_unknown_to_vect(test, approx_values)
                 continue
-            # best_test_pos = (-1, 0, (-1, 0)) if len(test_pos) == 0 else min([(dim_id, point_id, (len(dimensions[dim_id]) - point_id, -len(dimensions[dim_id]))) for _, dim_id, point_id in test_pos], key=lambda x: x[2])
-            this_test_pos = [(-1, 0, (-2, 0))] if len(test_pos) == 0 else [(dim_id, point_id, ((-1 if point_id == 0 else (len(dimensions[dim_id]) - point_id)), len(dimensions[dim_id]))) for dim_id, point_id in test_pos]
-            this_test_pos.sort(key=lambda x: x[2])
-            test_poss.append((test_id, test, this_test_pos))  
-        test_to_insert = []  
-        if len(test_poss) > 0:
-            test_poss.sort(key=lambda x: (len(x[2]), sum(1 for o in x[1] if o is None), sum(o for o in x[1] if o is not None), x[2][0][2]))
-            # min_test_id, min_test, min_test_pos = min(test_poss, key=lambda x: (len(x[2]), x[2][0][2]))
-            min_test_id, min_test, min_test_pos = test_poss[0]
-            dim_id, point_id, pos_score = min_test_pos[0]
-            test_to_insert = [(test_id, test) for test_id, test, _ in test_poss if test_id != min_test_id]
-            if dim_id == -1: #new dimension
-                set_unknown_to_const(min_test, 0)
-                dimensions.append([(set([min_test_id]), min_test)])
+            test_outcomes[test_id] = test
+            if len(test_pos) == 0:
+                new_dims.append(test_id)
             else:
-                approx_pos = point_id - 1
-                if approx_pos < 0:
-                    approx_pos = 0
-                    # set_unknown_to_const(min_test, 0)
-                # else:
-                prev_point = dimensions[dim_id][approx_pos]
+                test_number_of_pos[test_id] = len(test_pos)
+                for dim_id, point_id in test_pos:
+                    if point_id == 0:
+                        expands_at_start.setdefault(test_id, []).append(dim_id)
+                    else:
+                        other_expands.setdefault(test_id, []).append((dim_id, point_id))
+        if len(test_outcomes) == 0:
+            test_to_insert = []
+            continue                        
+        if len(new_dims) > 0:
+            min_test_id = min(new_dims, key=lambda x: (unknown_counts[x], one_counts[x]))
+            min_test = test_outcomes[min_test_id]
+            set_unknown_to_const(min_test, 0)
+            dimensions.append([(set([min_test_id]), min_test)])
+        else:
+            tests_sorted_by_number_of_moves = sorted(test_number_of_pos.items(), key=lambda x: x[1])
+            _, min_num_of_moves = tests_sorted_by_number_of_moves[0]
+            min_group = [test_id for test_id, num_of_moves in tests_sorted_by_number_of_moves if num_of_moves == min_num_of_moves]
+            can_expand_later = [test_id for test_id in min_group if test_id in other_expands]
+            if len(can_expand_later) > 0:
+                can_expand_later_with_score = [(test_id, (unknown_counts[test_id], one_counts[test_id])) for test_id in can_expand_later]
+                expansion_poss = [(test_id, dim_id, point_id, (*score, len(dimensions[dim_id]) - point_id, len(dimensions[dim_id]))) for test_id, score in can_expand_later_with_score for dim_id, point_id in other_expands[test_id]]
+                min_test_id, min_dim_id, min_point_id, _ = min(expansion_poss, key=lambda x: x[-1])
+                min_test = test_outcomes[min_test_id]
+                prev_point = dimensions[min_dim_id][min_point_id - 1]
                 set_unknown_to_vect(min_test, prev_point[1])
-                dim = dimensions[dim_id]
-                dimensions[dim_id] = [*dim[:point_id], (set([min_test_id]), min_test), *dim[point_id:]]
-        pass
-    pass
+                dim = dimensions[min_dim_id]
+                dimensions[min_dim_id] = [*dim[:min_point_id], (set([min_test_id]), min_test), *dim[min_point_id:]]
+            else: #min_group expands only at start
+                min_group_with_score = [(test_id, (-one_counts[test_id], unknown_counts[test_id])) for test_id in min_group] 
+                expansion_poss = [(test_id, dim_id, (*score, len(dimensions[dim_id])) ) for test_id, score in min_group_with_score for dim_id in expands_at_start[test_id]]
+                min_test_id, min_dim_id, _ = min(expansion_poss, key=lambda x: x[-1])
+                min_test = test_outcomes[min_test_id]
+                next_point = dimensions[min_dim_id][0]
+                set_unknown_to_vect(min_test, next_point[1])
+                dim = dimensions[min_dim_id]
+                dimensions[min_dim_id] = [(set([min_test_id]), min_test), *dim]
+        del test_outcomes[min_test_id]
+        test_to_insert = list(test_outcomes.items())
 
     filter_spanned(dimensions, spanned)
     dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
@@ -618,9 +673,31 @@ if __name__ == "__main__":
 [1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1],
 [0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1],
 [1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1]]    
-    dims1, _, _ = extract_dims(tests)
-    dims2, _, _ = extract_dims_fix(tests)
-    dims3, _, _ = extract_dims_approx(tests)
+    # dims1, _, _ = extract_dims(tests)
+    # dims2, _, _ = extract_dims_fix(tests)
+    # dims3, _, _ = extract_dims_approx(tests)
+    test2 = [[1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1],
+        [0, 1, None, None, None, None, None, None, 0, 0, 0],
+        [1, 1, None, None, None, None, None, None, 1, 1, 1],
+        [1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1],
+        [0, 1, None, None, None, None, None, None, 1, 1, 0],
+        [1, 1, None, None, None, None, None, None, 1, 1, 1],
+        [1, 1, None, 1, None, None, None, 0, 1, 1, 1],
+        [0, 1, None, None, None, None, None, None, 1, 1, 0],
+        [1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1],
+        [0, 1, None, None, None, None, None, None, 1, 0, 0],
+        [0, 1, 1, 0, 1, 0, 0, 1, 1, 1, 0],
+        [1, 1, None, None, None, None, None, None, 1, 1, 0],
+        [0, 1, None, None, None, None, None, 1, 1, 1, 0],
+        [1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1],
+        [1, 1, None, 0, None, 0, 0, 1, 1, 1, 1],
+        [0, 1, None, None, 1, None, None, None, 0, 0, 0],
+        [0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0],
+        [0, 0, None, None, None, None, None, None, 0, 0, 0],
+        [1, 1, None, None, None, None, None, None, 1, 1, 0],
+        [1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1]
+    ]
+    dims3, _, _ = extract_dims_approx(test2)
     print(dims1)
     print(dims2)
     pass
