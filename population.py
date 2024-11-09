@@ -24,7 +24,7 @@ class Selection:
         self.pool_set = set(pool)
         self.sel_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
-        self.sel_params = {"size": self.size, "class":self.__class__.__name__}    
+        self.sel_params = {"size": self.size}
 
     def get_selection(self) -> list[Any]:
         return self.selection
@@ -36,9 +36,9 @@ class Selection:
         return self.pool
 
     def init_selection(self) -> None:
+        self.selection = []
         self.interactions = {}
-        self.sel_metrics[PARAM_UNIQ_INDS] = 0
-        self.sel_metrics[PARAM_MAX_INDS] = 0
+        self.sel_metrics = {PARAM_UNIQ_INDS: 0, PARAM_MAX_INDS: 0}
         self.seen_inds = set()
 
     def merge_interactions(self, interactions: dict[Any, dict[Any, int]]) -> None:
@@ -239,6 +239,7 @@ class ExploitExploreSelection(Selection):
         self.selection = None
         # self.for_group = None
         # self.t = 0
+        self.ind_groups = {}
         self.exploited_inds = set() 
         self.exploited = []
     
@@ -326,86 +327,6 @@ class ExploitExploreSelection(Selection):
         return list(discriminating_candidates) # 
         #return list(set.union(discriminating_candidates, last_batch_candidates))    
         
-class InteractionFeatureOrder(ExploitExploreSelection):
-    ''' Sampling of search space based on grouping by interactions features and ordering of the groups 
-        Also we called this sampling strategies
-    '''
-    def __init__(self, pool: list[Any], *, strategy = None, **kwargs) -> None:
-        super().__init__(pool, **kwargs)
-        self.features = {} #contains set of features per interacted individual 
-        default_strategy = ["kn-rel", "kn", "nond", "sd", "dom"]
-        strategy = default_strategy if strategy is None else json.loads(strategy) if type(strategy) is str else strategy
-        self.strategy = strategy
-        self.sel_params.update(strategy = self.strategy)
-
-    def init_selection(self) -> None:
-        super().init_selection()
-        self.features = {}
-
-    def build_common_interactions(self, ind: Any, ind_ints: dict[Any, int], pool_inds):
-        ''' computes common interactions with other inds of the pool '''
-        common_interactions = {ind1: interactions
-            for ind1 in pool_inds if ind1 != ind
-            for ind1_ints in [self.interactions.get(ind1, {})]
-            for interactions in [{common_test_id: (ind_ints[common_test_id], ind1_ints[common_test_id]) 
-                for common_test_id in set.intersection(set(ind_ints.keys()), set(ind1_ints.keys()))}]
-            if len(interactions) > 0} #non-empty interactions set
-        return common_interactions     
-
-    def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
-        ''' Also updates individual features from interactions '''    
-        other_inds = set(interactions.keys())
-        for ind in interactions.keys():
-            ind_features = self.features.setdefault(ind, {})
-            ind_features["one"] = 1
-            ind_features["-one"] = -1
-            ind_features["num_ints"] = ind_features.get("num_ints", 0) + len(int_keys)
-            ind_features["num_uniq_ints"] = len(self.interactions.get(ind, {}))
-            ind_features["kn"] = -ind_features["num_ints"]
-            ind_ints = self.interactions[ind]
-            common_interactions = self.build_common_interactions(ind, ind_ints, other_inds)            
-            total_group = [(ind1, ints) for ind1, ints in common_interactions.items() if len(ints) > 1]
-            cur_total_group_ids = set([ind1 for ind1, _ in total_group])
-            total_group_ids = ind_features.setdefault("total_group_ids", set())
-            total_group_ids.update(cur_total_group_ids)
-            non_dom_set = ind_features.setdefault("non_dom_set", set())
-            non_dom_set -= other_inds #probably something changed about them            
-            non_dominated = [ind1 for ind1, ints in total_group
-                                    if any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items()) and 
-                                        any(ind_outcome < ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]
-            non_dom_set.update(non_dominated)
-            dom_set = ind_features.setdefault("dom_set", set())
-            dom_set -= other_inds    
-            dominated = [ind1 for ind1, ints in total_group
-                            if ind1 not in non_dom_set
-                            if all(ind_outcome >= ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items()) and 
-                            any(ind_outcome > ind1_outcome for _, (ind_outcome, ind1_outcome) in ints.items())]        
-            dom_set.update(dominated)
-            ind_features["nond"] = 0 if len(total_group) == 0 else round(len(non_dom_set) * 100 / len(total_group_ids))
-            ind_features["dom"] = 0 if len(total_group) == 0 else round(len(dom_set) * 100 / len(total_group_ids))
-            ind_features["nd"] = sqrt(ind_features["nond"] * ind_features["dom"])
-
-            cfs = [s for s, r in ind_ints.items() if r == 1]
-            css = [s for s, r in ind_ints.items() if r == 0]
-            simplicity_score = round((0 if len(ind_ints) == 0 else (1 - len(cfs) / len(ind_ints))) * 100)
-            difficulty_score = round((0 if len(ind_ints) == 0 else (1 - len(css) / len(ind_ints))) * 100)
-            ind_features["sd"] = round(sqrt(simplicity_score * difficulty_score))
-            ind_features["d"] = difficulty_score
-            ind_features["-d"] = -difficulty_score
-            ind_features["s"] = simplicity_score
-            ind_features["-s"] = -simplicity_score  
-    
-    def exploit(self, sample_size) -> set[Any]:
-        if len(self.features) == 0:
-            return set()
-        key_selector = lambda scores: tuple(scores[k] for k in self.strategy)
-        cur_ind_scores = [ (ind, key_selector(ind_features))
-                                for ind, ind_features in self.features.items() ]        
-        cur_ind_scores.sort(key=lambda x: x[1], reverse=True)
-        selected = set([f for f, _ in cur_ind_scores[:min(sample_size, len(cur_ind_scores))]])
-        self.ind_groups.setdefault(f"exploit", []).extend(selected)
-        return selected
-
 class DESelection(ExploitExploreSelection):
     ''' Implementation that is based on DECA idea (modified DE algo)
         Param approx_strategy defines how to compute missing values None from global interactions

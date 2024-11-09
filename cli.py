@@ -131,12 +131,11 @@ def show_config():
     ignore_unknown_options=True,
     allow_extra_args=True,
 ))
-@click.option("-gid", type = str, required=True)
-@click.option("-sid", type = str, required=True)
+@click.option("-sim", type = str, required=True)
 @click.option('--times', type=int, default = 1)
 @click.option("-m", "--metrics", type = str, default = "data/metrics.jsonlist")
 @click.pass_context
-def run_game(ctx, gid, sid, times = 1, metrics = ""):
+def run_game(ctx, sim, times = 1, metrics = ""):
     game_dynamic_args = dict()
     sim_dynamic_args = dict()
     for item in ctx.args:
@@ -145,28 +144,26 @@ def run_game(ctx, gid, sid, times = 1, metrics = ""):
             game_dynamic_args.update([nameVal])
         else:
             sim_dynamic_args.update([nameVal])
-    sim_names = sid.split(",")
-    game_names = gid.split(",")
-    for sim_name in sim_names:
-        for game_name in game_names:
-            game_builder = GAMES[game_name]
-            sim_starter = SIM[sim_name]            
-            click.echo(f"Running simulation {sim_name} on game {game_name}")
-            game : InteractionGame = game_builder(**game_dynamic_args)
-            for i in range(times): 
-                start_ms = int(time.time() * 1000)
-                results = sim_starter(game, sim_sim_name = sim_name, **sim_dynamic_args)
-                end_ms = int(time.time() * 1000)
-                metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
-                                    "duration_ms": end_ms - start_ms,
-                                    "seed1": param_seed1, "seed2": param_seed2, **results}
-                click.echo(f"{metric_data}")
-                with open(metrics, "a") as f:                
-                    fcntl.flock(f, fcntl.LOCK_EX)
-                    f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
-                    fcntl.flock(f, fcntl.LOCK_UN)
-                if param_draw_dynamics > 0 and i == 0:
-                    os.system(f"./togif.sh '{game_name}_{sim_name}'")
+    
+    sim_name, game_name = sim.split(":")
+    game_builder = GAMES[game_name]
+    sim_starter = SIM[sim_name]            
+    click.echo(f"Running simulation {sim_name} on game {game_name}")
+    game : InteractionGame = game_builder(**game_dynamic_args)
+    for i in range(times): 
+        start_ms = int(time.time() * 1000)
+        results = sim_starter(game, sim_sim_name = sim_name, **sim_dynamic_args)
+        end_ms = int(time.time() * 1000)
+        metric_data = {"sim_name": sim_name, "game_name":game_name, "i": i, "timestamp": end_ms,
+                            "duration_ms": end_ms - start_ms,
+                            "seed1": param_seed1, "seed2": param_seed2, **results}
+        click.echo(f"{metric_data}")
+        with open(metrics, "a") as f:                
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
+            fcntl.flock(f, fcntl.LOCK_UN)
+        if param_draw_dynamics > 0 and i == 0:
+            os.system(f"./togif.sh '{game_name}_{sim_name}'")
 
 @cli.command("game-space", context_settings=dict(
     ignore_unknown_options=True,

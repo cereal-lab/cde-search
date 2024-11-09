@@ -12,6 +12,7 @@ games=('GreaterThanGame'
 
 game=${games[$SLURM_ARRAY_TASK_ID]}
 
+module rm apps/python/3.8.5
 module load apps/anaconda/5.3.1
 
 source activate cde-search-env

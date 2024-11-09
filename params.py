@@ -1,3 +1,5 @@
+import os
+
 param_seed1 = 19
 param_seed2 = 23
 param_steps = 100
@@ -9,7 +11,7 @@ param_num_intransitive_regions = 3
 param_selection_size = 10
 param_batch_size = 10 #for OneTimeSequence population
 param_draw_dynamics = 0
-param_space_dir = "data/num-game-spaces"
+param_space_dir = os.environ.get("NUM_GAME_SPACES", "data/num-game-spaces")
 
 import numpy as np
 rnd = np.random.RandomState(param_seed1)

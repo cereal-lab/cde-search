@@ -10,7 +10,7 @@ from typing import Any
 from cde import CDESpace
 from games import CDESpaceGame, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, run_game
 
-from population import DEScores, HillClimbing, OneTimeSequential, InteractionFeatureOrder, ParetoLayersSelection, DESelection, RandSelection
+from population import DEScores, HillClimbing, OneTimeSequential, ParetoLayersSelection, DESelection, RandSelection
 from params import *
 
 def get_args(kwargs: dict[str, Any], prefix):
@@ -158,4 +158,8 @@ def print_config():
     print(tabulate(rows, headers=["ID", "game", "simulation"], tablefmt="github"))
 
 if __name__ == '__main__':
-    print_config()        
+    # print_config()  
+    for sim_name in SIM.keys():
+        for game_name in NUMBER_GAMES.keys():            
+            print(f"'{sim_name}:{game_name}'")
+    print('Number of configs:', len(SIM) * len(NUMBER_GAMES))
