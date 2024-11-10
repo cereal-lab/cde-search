@@ -66,7 +66,7 @@ def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt
     plt.clf()
 
 def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
-                    aggregation = "last", sim_names = [], game_names = [], fixed_max = {}, fixed_mins = {}, rename = {}):
+                    aggregation = "last", sim_names = [], game_names = [], fixed_max = {}, fixed_mins = {}, rename = {}, stats_file = None):
     ''' metrix_file is in jsonlist format'''
     sim_names = set(sim_names)
     game_names = set(game_names)
@@ -143,9 +143,9 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             stats_data = np.array([sim_values[sim_name] for sim_name in present_sim_name])
             friedman_res = stats.friedmanchisquare(*stats_data)
             nemenyi_res = sp.posthoc_nemenyi_friedman(stats_data.T) 
-            print(f"\n----------------------------------")
-            print(f"Stat result for {game_name}, metric {metric_name}")
-            print(f"Friedman: {friedman_res}")
+            print(f"\n----------------------------------", file=stats_file)
+            print(f"Stat result for {game_name}, metric {metric_name}", file=stats_file)
+            print(f"Friedman: {friedman_res}", file=stats_file)
             from tabulate import tabulate
             names = present_sim_name
             rows = []
@@ -155,7 +155,7 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
                 for j in range(len(names)):
                     row.append(nemenyi_res[i][j])
                 rows.append(row)
-            print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"))
+            print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"), file=stats_file)
                     
         else: #line and area chart for confidence interval     
             min_y = fixed_mins.get(metric_name, 100)
@@ -266,14 +266,23 @@ if __name__ == "__main__":
     
 
     #Best
-    draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
-                    sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100"], \
-                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})    
+    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    #                 sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100", "pl-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"})
     
-    draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
-                    sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100"], \
-                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})     
+    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    #                 sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100", "pl-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"})     
 
+    # Spaces
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    #                 sim_names=["rand", "hc-r-p", "de-d-g", "de-d-s", "de-d-d-100", "des-mea-100", "des-med-100", "pl-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"})
+    
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    #                 sim_names=["rand", "hc-r-p", "de-d-g", "de-d-s", "de-d-d-100", "des-mea-100", "des-med-100", "pl-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"}, \
+    #                 stats_file = open("data/plots/stats.txt", "w"))     
      
     # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "hc-pmo-p", "hc-r-p", "de-l", "de-d-0", "de-d-1", "de-d-d-100", "des-mea-100", "des-med-100", "pl-l-100", "pl-d-100"], \
