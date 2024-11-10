@@ -98,11 +98,14 @@ class HillClimbing(Selection):
                                     init_strategy = init_strategy)
     
     def plus_minus_one(self, ind: tuple[int,int] | int):
-        if type(ind) is int:
-            mutated = ind + rnd.choice([-1,1])
-        else:
-            mutated = tuple(c + rnd.choice([-1,1]) for c in ind)
-        return mutated
+        for _ in range(10):
+            if type(ind) is int:
+                mutated = ind + rnd.choice([-1,1])
+            else:
+                mutated = tuple(c + rnd.choice([-1,1]) for c in ind)
+            if mutated in self.pool_set:
+                return mutated
+        return ind
 
     def resample(self, ind: Any):
         ''' Picks random other ind from pool '''

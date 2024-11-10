@@ -86,8 +86,8 @@ def candidate_group_approx_strategy(interactions: list[list[Optional[int]]]) -> 
             #pareto relatable
             candidate_groups.setdefault(i, set()).add(j)
             candidate_groups.setdefault(j, set()).add(i)
-    for i, group in candidate_groups.items():
-        candidate = candidates[i]
+    for candidate_id, candidate in enumerate(candidates):
+        group = candidate_groups.get(candidate_id, set())
         for test_id, o in enumerate(candidate):
             if o is None:
                 counts = {}
@@ -97,7 +97,7 @@ def candidate_group_approx_strategy(interactions: list[list[Optional[int]]]) -> 
                         counts[o2] = counts.get(o2, 0) + 1
                 max_outcome = 0 if len(counts) == 0 else (max(counts.items(), key = lambda x: x[1])[0])
                 value = 1 - max_outcome
-                interactions[test_id][i] = value
+                interactions[test_id][candidate_id] = value
     approx_vector = [interactions[i][j] for i, j in idxs]
     return approx_vector
 
@@ -124,19 +124,19 @@ def candidate_subgroup_approx_strategy(interactions: list[list[Optional[int]]]) 
 
             candidate_groups.setdefault(i, {}).setdefault(dist, set()).add(j)
             candidate_groups.setdefault(j, {}).setdefault(dist, set()).add(i)
-    for i, groups in candidate_groups.items():
-        candidate = candidates[i]
-        group = min(groups.items(), key = lambda x: x[0])[1]
+    for candidate_id, candidate in enumerate(candidates):
+        groups = candidate_groups.get(candidate_id, {})
+        min_group = set() if len(groups) == 0 else min(groups.items(), key = lambda x: x[0])[1]
         for test_id, o in enumerate(candidate):
             if o is None:
                 counts = {}
-                for j in group:
+                for j in min_group:
                     o2 = candidates[j][test_id]
                     if o2 is not None:
                         counts[o2] = counts.get(o2, 0) + 1
                 max_outcome = 0 if len(counts) == 0 else (max(counts.items(), key = lambda x: x[1])[0])
                 value = 1 - max_outcome
-                interactions[test_id][i] = value 
+                interactions[test_id][candidate_id] = value 
     approx_vector = [interactions[i][j] for i, j in idxs]
     return approx_vector
 
