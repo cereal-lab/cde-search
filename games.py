@@ -160,7 +160,7 @@ class CDESpaceGame(InteractionGame):
         self.candidates = sorted(space.get_candidates())
         self.tests = sorted(space.get_tests())
         self.all_fails = space.get_candidate_fails()
-        self.game_params["space"] = space.to_dict()      
+        # self.game_params["space"] = space.to_dict()      
         self.space_plain = None      
 
     def interact(self, candidate, test, **args) -> int:

@@ -160,7 +160,11 @@ def print_config():
 
 if __name__ == '__main__':
     # print_config()  
-    for sim_name in SIM.keys():
-        for game_name in NUMBER_GAMES.keys():            
-            print(f"'{sim_name}:{game_name}'")
-    print('Number of configs:', len(SIM) * len(NUMBER_GAMES))
+    cnt = 0
+    with open("lst.txt", "w") as f:
+        for sim_name in SIM.keys():
+            for game_name in GAMES.keys():            
+                if game_name not in NUMBER_GAMES:
+                    cnt += 1
+                    print(f"'{sim_name}:{game_name}'", file = f)
+    print('Number of configs:', cnt)
