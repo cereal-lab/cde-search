@@ -216,25 +216,27 @@ def run_game(game: InteractionGame, sel1: Selection, sel2: Selection, *, num_ste
     step = 0
     should_continue = True 
     matrix = None
-    cmaps = ["Reds", "Blues", "Greens", "Oranges", "Purples"]
+    # cmaps = ["Reds", "Blues", "Greens", "Oranges", "Purples"]
+    from matplotlib import colormaps
+    colors = colormaps["Accent"].colors
     while should_continue:
         should_continue = step_game(step, num_steps, sel1, sel2, game)
         if draw_dynamics and isinstance(game, NumberGame):
             cand_points = sel1.get_for_drawing()
             test_points = sel2.get_for_drawing()
             if len(test_points) > 0:
-                from matplotlib import colormaps
                 if matrix is None:
                     axes, _, _ = game.space
                     matrix = [[(1,1,1,0.8) for _ in range(game.max_num + 1)] for _ in range(game.max_num + 1)]
                     for ax_id, ax in enumerate(axes):
-                        cmap = colormaps[cmaps[ax_id % len(cmaps)]]
-                        grad_mapping = np.logspace(0.001, 1, len(ax), endpoint=True)
+                        r, g, b = colors[ax_id % len(colors)]
+                        # grad_mapping = np.logspace(0.001, 1, len(ax), endpoint=True)
                         for point_id, point in enumerate(ax):
-                            c = grad_mapping[point_id] / grad_mapping[-1]
+                            # c = grad_mapping[point_id] / grad_mapping[-1]
+                            a = ((point_id + 1) / len(ax)) * 0.9
                             for test in point:
-                                r, g, b, _ = cmap(c)
-                                matrix[test[1]][test[0]] = (r, g, b, 0.8)
+                                # r, g, b, _ = cmap(c)
+                                matrix[test[1]][test[0]] = (r, g, b, a)
                 point_groups = [*cand_points, *test_points]
                 name = f"{step}"
                 name = name if len(name) >= 4 else ("0" * (4 - len(name)) + name)

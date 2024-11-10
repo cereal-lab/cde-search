@@ -58,7 +58,7 @@ def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt
         plt.xlim(xrange[0], xrange[1])
     if yrange is not None: 
         plt.ylim(yrange[0], yrange[1])  
-    plt.legend(handles = handles, labels = labels, loc='upper left', bbox_to_anchor=(1, 1))
+    plt.legend(handles = handles, labels = labels, loc='upper left', bbox_to_anchor=(1, 1), handletextpad = 0, labelspacing=0.5, markerscale=1, fontsize="small")
     if title:
         plt.title(title)
     plt.tight_layout()
@@ -192,6 +192,38 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             fig.savefig(f"data/plots/{aggregation}-{metric_name}-{game_name}.pdf", format='pdf')
         plt.clf()
 
+def draw_latex_mean_std_tbl(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"], sim_names = []):
+    ''' metrix_file is in jsonlist format'''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    groups = {}
+    present_sim_name = set()
+    for run in runs: 
+        sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        present_sim_name.add(sim_name)
+        for m in metrics:
+            key = (game_name, m)
+            groups.setdefault(key, {}).setdefault(sim_name, []).append(run["metric_" + m])
+    present_sim_name = list(present_sim_name)
+    for (game_name, metric_name), sim_values in groups.items():
+        for sim_name, values in sim_values.items():
+            new_values = []
+            for i in range(len(values)):
+                new_values.append(values[i][-1])
+            sim_values[sim_name] = new_values
+    for (game_name, metric_name), sim_values in groups.items():
+        print(f"\\multirow{len(present_sim_name)}{{*}}{{{game_name}}}")
+        print(f"& {metric_name} & ", end="")
+        for sim_name in present_sim_name:
+            values = sim_values[sim_name]
+            mean = np.mean(values)
+            std = np.std(values)
+            print(f"${mean:.2f} \pm {std:.2f}$ & ", end="")
+        print("\\\\")
+        print("\\hline")
+
 if __name__ == "__main__":
     ''' Test drawings '''
     # draw_populations([(1,2)], [(2,3)], [(6,7)], [(5,7)], xrange=(0, 100), yrange=(0, 100))
@@ -224,13 +256,24 @@ if __name__ == "__main__":
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"des-mea-100":"des-mea-1", "des-med-100":"des-med-1"})     
     
     #PL
+    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    #                 sim_names=["rand", "pl-l-0", "pl-l-100", "pl-d-0", "pl-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})    
+    
+    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    #                 sim_names=["rand", "pl-l-0", "pl-l-100", "pl-d-0", "pl-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})     
+    
+
+    #Best
     draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
-                    sim_names=["rand", "pl-l-0", "pl-l-100", "pl-d-0", "pl-d-100"], \
+                    sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100"], \
                     fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})    
     
     draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
-                    sim_names=["rand", "pl-l-0", "pl-l-100", "pl-d-0", "pl-d-100"], \
+                    sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100"], \
                     fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})     
+
      
     # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "hc-pmo-p", "hc-r-p", "de-l", "de-d-0", "de-d-1", "de-d-d-100", "des-mea-100", "des-med-100", "pl-l-100", "pl-d-100"], \

@@ -1,4 +1,4 @@
-Best setups are de-d-d, de-d-g, de-d-s. 
+Best setups are de-d-d, de-d-g, de-d-s. Note that by stats tests below the de-d-g and de-d-s as same (we pick de-d-g)
 
 TODO: thoughts
 

@@ -1,3 +1,6 @@
 __pycache__
+cde-search-env
+.conda_envs_dir_test
 img/*
 gifs/*
+data/metrics.jsonlist

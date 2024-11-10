@@ -59,7 +59,7 @@ class Selection:
     def get_for_drawing(self) -> list[dict]:
         ''' Called to draw population'''
         return [
-            {"xy": self.selection, "class": dict(marker='o', s=30, c='black', edgecolor='white'), "legend": [f"{s[0]},{s[1]}".ljust(8) for s in self.selection[:20]]}
+            {"xy": self.selection, "class": dict(marker='o', s=40, c='black', edgecolor='white'), "legend": [f"{s[0]},{s[1]}" for s in self.selection[:20]]}
         ]
     
     def collect_metrics(self, axes, origin, spanned, *, is_final = False):
@@ -196,12 +196,12 @@ class HillClimbing(Selection):
         self.sel_metrics[PARAM_UNIQ_INDS] = len(self.seen_inds) 
 
     def get_for_drawing(self) -> list[dict]:
-        class_parent = dict(marker='o', s=30, c='black', edgecolor='white')
+        class_parent = dict(marker='o', s=40, c='black', edgecolor='white')
         class_child = dict(marker='o', s=10, c='blue', edgecolor='white')
         return [
                 {"xy": self.seen_inds, "bg": True}, 
-                {"xy": self.selection, "class": class_parent, "legend": [f"{x[0]},{x[1]}".ljust(8) for x in self.selection[:20]]},
-                {"xy": self.children, "class": class_child, "legend": [f"{x[0]},{x[1]}".ljust(8) for x in self.children[:20]]}
+                {"xy": self.selection, "class": class_parent, "legend": [f"{x[0]},{x[1]}" for x in self.selection[:20]]},
+                {"xy": self.children, "class": class_child, "legend": [f"{x[0]},{x[1]}" for x in self.children[:20]]}
             ]
 
 class ExploitExploreSelection(Selection):
@@ -289,8 +289,8 @@ class ExploitExploreSelection(Selection):
         exploit = self.ind_groups.get("exploit", [])
         return [
                 {"xy": self.exploited_inds, "bg": True}, 
-                {"xy": explore, "class": dict(marker='o', s=20, c='blue', edgecolor='white'), "legend": [f"{x[0]},{x[1]}".ljust(8) for x in explore[:20]]},
-                {"xy": exploit, "class": dict(marker='o', s=30, c='black', edgecolor='white'), "legend": [f"{x[0]},{x[1]}".ljust(8) for x in exploit[:20]]},
+                {"xy": explore, "class": dict(marker='o', s=10, c='blue', edgecolor='white'), "legend": [f"{x[0]},{x[1]}" for x in explore[:20]]},
+                {"xy": exploit, "class": dict(marker='o', s=40, c='black', edgecolor='white'), "legend": [f"{x[0]},{x[1]}" for x in exploit[:20]]},
             ]
     
     def get_discriminating_set(self, selected_inds: set[Any]) -> set[Any]:
@@ -631,7 +631,7 @@ class OneTimeSequential(Selection):
     
     def get_for_drawing(self) -> list[dict]:
         return [
-                {"xy": self.selection, "class": dict(marker='x', s=20, c='#333333')}
+                {"xy": self.selection, "class": dict(marker='x', s=10, c='#666666')}
             ]
     
     def collect_metrics(self, axes, origin, spanned, *, is_final = False):

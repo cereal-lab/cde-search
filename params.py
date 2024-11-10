@@ -11,7 +11,7 @@ param_num_intransitive_regions = 3
 param_num_game_selection_size = 5
 param_selection_size = 10
 param_batch_size = 10 #for OneTimeSequence population
-param_draw_dynamics = 0
+param_draw_dynamics = 1
 param_space_dir = os.environ.get("NUM_GAME_SPACES", "data/num-game-spaces")
 
 import numpy as np
