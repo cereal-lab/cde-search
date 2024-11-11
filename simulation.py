@@ -46,9 +46,9 @@ NEW_RQS = {
     "dupl-t-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 1)),
     "dupl-c-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 100)),
     "dupl-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 100)),
-    "dupl-t-10000": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10000).with_candidate_distribution(0, 1)),
-    "dupl-c-10000": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 10000)),
-    "dupl-10000": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10000).with_candidate_distribution(0, 10000)),    
+    "dupl-t-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10).with_candidate_distribution(0, 1)),
+    "dupl-c-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 10)),
+    "dupl-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10).with_candidate_distribution(0, 10)),    
 }
 
 GAMES = {
@@ -173,8 +173,7 @@ if __name__ == '__main__':
     cnt = 0
     with open("lst.txt", "w") as f:
         for sim_name in SIM.keys():
-            for game_name in NEW_RQS.keys():            
-                if game_name not in NUMBER_GAMES:
-                    cnt += 1
-                    print(f"'{sim_name}:{game_name}'", file = f)
+            for game_name in GAMES.keys():
+                cnt += 1
+                print(f"'{sim_name}:{game_name}'", file = f)
     print('Number of configs:', cnt)

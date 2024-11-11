@@ -68,13 +68,12 @@ def draw_populations(point_groups, xrange = None, yrange = None, name="fig", fmt
 def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
                     aggregation = "last", sim_names = [], game_names = [], fixed_max = {}, fixed_mins = {}, rename = {}, stats_file = None):
     ''' metrix_file is in jsonlist format'''
-    sim_names = set(sim_names)
-    game_names = set(game_names)
     with open(metrics_file, "r") as f:
         lines = f.readlines()
     runs = [json.loads(line) for line in lines ]
     groups = {}
     present_sim_name = set()
+    present_game_name = set()
     for run in runs: 
         sim_name = run["sim_name"]
         game_name = run["game_name"]
@@ -83,10 +82,13 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
         if len(game_names) > 0 and game_name not in game_names:
             continue
         present_sim_name.add(sim_name)
+        present_game_name.add(game_name)
         for m in metrics:
             key = (game_name, m)
             groups.setdefault(key, {}).setdefault(sim_name, []).append(run["metric_" + m])
-    present_sim_name = list(present_sim_name)
+    present_sim_name = list(present_sim_name) if len(sim_names) == 0 else sim_names
+    if len(game_names) == 0:
+        game_names = list(present_game_name)
     for (game_name, metric_name), sim_values in groups.items():
         for sim_name, values in sim_values.items():
             new_values = []
@@ -110,87 +112,89 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
                         new_values.append(mean)
             sim_values[sim_name] = new_values
 
-    for (game_name, metric_name), sim_values in groups.items():
-        plt.ioff()
-        fig, ax = plt.subplots() 
-        if aggregation == "last": #violin plot
-            # plt.axhline(y = 50, color = 'tab:gray', linewidth=0.5, linestyle = 'dashed')
-            import matplotlib.patches as mpatches
-            labels = []
-            colors = colormaps.get_cmap("Pastel1").colors
-            # for sim_id, sim_name in enumerate(present_sim_name):
-            present_sim_name.sort(key = lambda x: np.mean(sim_values[x]))
-            data = [[v * 100 for v in sim_values[sim_name]] for sim_name in present_sim_name]
-            # v = ax.violinplot(data, showextrema = False, showmedians=True)
-            v = ax.boxplot(data)
-            # for sim_id, pc in enumerate(v['bodies']):
-            #     color = colors[sim_id % len(colors)]
-            #     pc.set_facecolor(color)
-            #     pc.set_edgecolor('black')
-            #     labels.append((mpatches.Patch(color=color), present_sim_name[sim_id]))
-            # v['cmedians'].set_color('black')
-            # v['cmedians'].set_alpha(1)
-            # plt.legend(*zip(*labels), loc='upper left', bbox_to_anchor=(1, 1))
-            # plt.xlabel('Spaces', size=14)
-            ax.set_ylabel(f'{metric_name}, \%', size=14)   
-            # ax.tick_params(axis='both', which='major', labelsize=14)            
-            ax.yaxis.grid(True)
-            # ax.set_xticklabels(["", *present_sim_name])  
-            ax.set_xticks([y + 1 for y in range(len(data))],
-                  labels=[rename.get(x, x) for x in present_sim_name])#      
-            fig.set_tight_layout(True)      
-            fig.savefig(f"data/plots/{aggregation}-{metric_name}-{game_name}.pdf", format='pdf')    
-            stats_data = np.array([sim_values[sim_name] for sim_name in present_sim_name])
-            friedman_res = stats.friedmanchisquare(*stats_data)
-            nemenyi_res = sp.posthoc_nemenyi_friedman(stats_data.T) 
-            print(f"\n----------------------------------", file=stats_file)
-            print(f"Stat result for {game_name}, metric {metric_name}", file=stats_file)
-            print(f"Friedman: {friedman_res}", file=stats_file)
-            from tabulate import tabulate
-            names = present_sim_name
-            rows = []
-            for i in range(len(names)):
-                row = []
-                row.append(names[i])
-                for j in range(len(names)):
-                    row.append(nemenyi_res[i][j])
-                rows.append(row)
-            print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"), file=stats_file)
-                    
-        else: #line and area chart for confidence interval     
-            min_y = fixed_mins.get(metric_name, 100)
-            max_y = fixed_max.get(metric_name, 0)
-            for sim_name in present_sim_name:
-                values = sim_values[sim_name]
-                if aggregation == "all":
-                    data = [v[1] * 100 for v in values]
-                    lower = [v[0] * 100 for v in values]
-                    upper = [v[2] * 100 for v in values]
-                    cur_min = min(lower)
-                    if cur_min < min_y:
-                        min_y = cur_min
-                    cur_max = max(upper)
-                    if cur_max > max_y:
-                        max_y = cur_max
-                    ax.fill_between(range(1, len(data) + 1), lower, upper, alpha=.1, linewidth=0)
-                else:                    
-                    data = [v * 100 for v in values]
-                    cur_min = np,min(data)
-                    if cur_min < min_y:
-                        min_y = cur_min    
-                    cur_max = max(data)
-                    if cur_max > max_y:
-                        max_y = cur_max           
-                ax.plot(range(1, len(data) + 1), data, label=rename.get(sim_name, sim_name), linewidth=1, markersize=1, marker='o')
-            ax.set_xlim(0, 100)
-            ax.set_ylim(min_y, max_y)
-            plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
-            plt.xlabel('Simulated time', size=14)
-            plt.ylabel(f'{metric_name}, \%', size=14)
-            ax.tick_params(axis='both', which='major', labelsize=14)            
-            fig.set_tight_layout(True)
-            fig.savefig(f"data/plots/{aggregation}-{metric_name}-{game_name}.pdf", format='pdf')
-        plt.clf()
+    for metric_name in metrics:
+        for game_name in game_names:
+            sim_values = groups[(game_name, metric_name)]
+            plt.ioff()
+            fig, ax = plt.subplots() 
+            if aggregation == "last": #violin plot
+                # plt.axhline(y = 50, color = 'tab:gray', linewidth=0.5, linestyle = 'dashed')
+                import matplotlib.patches as mpatches
+                labels = []
+                colors = colormaps.get_cmap("Pastel1").colors
+                # for sim_id, sim_name in enumerate(present_sim_name):
+                present_sim_name.sort(key = lambda x: np.mean(sim_values[x]))
+                data = [[v * 100 for v in sim_values[sim_name]] for sim_name in present_sim_name]
+                # v = ax.violinplot(data, showextrema = False, showmedians=True)
+                v = ax.boxplot(data)
+                # for sim_id, pc in enumerate(v['bodies']):
+                #     color = colors[sim_id % len(colors)]
+                #     pc.set_facecolor(color)
+                #     pc.set_edgecolor('black')
+                #     labels.append((mpatches.Patch(color=color), present_sim_name[sim_id]))
+                # v['cmedians'].set_color('black')
+                # v['cmedians'].set_alpha(1)
+                # plt.legend(*zip(*labels), loc='upper left', bbox_to_anchor=(1, 1))
+                # plt.xlabel('Spaces', size=14)
+                ax.set_ylabel(f'{metric_name}, \%', size=14)   
+                # ax.tick_params(axis='both', which='major', labelsize=14)            
+                ax.yaxis.grid(True)
+                # ax.set_xticklabels(["", *present_sim_name])  
+                ax.set_xticks([y + 1 for y in range(len(data))],
+                    labels=[rename.get(x, x) for x in present_sim_name])#      
+                fig.set_tight_layout(True)      
+                fig.savefig(f"data/plots/{aggregation}-{metric_name}-{game_name}.pdf", format='pdf')    
+                stats_data = np.array([sim_values[sim_name] for sim_name in present_sim_name])
+                friedman_res = stats.friedmanchisquare(*stats_data)
+                nemenyi_res = sp.posthoc_nemenyi_friedman(stats_data.T) 
+                print(f"\n----------------------------------", file=stats_file)
+                print(f"Stat result for {game_name}, metric {metric_name}", file=stats_file)
+                print(f"Friedman: {friedman_res}", file=stats_file)
+                from tabulate import tabulate
+                names = present_sim_name
+                rows = []
+                for i in range(len(names)):
+                    row = []
+                    row.append(names[i])
+                    for j in range(len(names)):
+                        row.append(nemenyi_res[i][j])
+                    rows.append(row)
+                print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"), file=stats_file)
+                        
+            else: #line and area chart for confidence interval     
+                min_y = fixed_mins.get(metric_name, 100)
+                max_y = fixed_max.get(metric_name, 0)
+                for sim_name in present_sim_name:
+                    values = sim_values[sim_name]
+                    if aggregation == "all":
+                        data = [v[1] * 100 for v in values]
+                        lower = [v[0] * 100 for v in values]
+                        upper = [v[2] * 100 for v in values]
+                        cur_min = min(lower)
+                        if cur_min < min_y:
+                            min_y = cur_min
+                        cur_max = max(upper)
+                        if cur_max > max_y:
+                            max_y = cur_max
+                        ax.fill_between(range(1, len(data) + 1), lower, upper, alpha=.1, linewidth=0)
+                    else:                    
+                        data = [v * 100 for v in values]
+                        cur_min = np,min(data)
+                        if cur_min < min_y:
+                            min_y = cur_min    
+                        cur_max = max(data)
+                        if cur_max > max_y:
+                            max_y = cur_max           
+                    ax.plot(range(1, len(data) + 1), data, label=rename.get(sim_name, sim_name), linewidth=1, markersize=1, marker='o')
+                ax.set_xlim(0, 100)
+                ax.set_ylim(min_y, max_y)
+                plt.legend(loc='lower right', handletextpad = 0.2)
+                plt.xlabel('Simulated time', size=14)
+                plt.ylabel(f'{metric_name}, \%', size=14)
+                ax.tick_params(axis='both', which='major', labelsize=14)            
+                fig.set_tight_layout(True)
+                fig.savefig(f"data/plots/{aggregation}-{metric_name}-{game_name}.pdf", format='pdf')
+            plt.clf()
 
 def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
                                 table_file=None, p_value = 0.05, name_remap = {}):
@@ -507,8 +511,20 @@ if __name__ == "__main__":
     # 
 
     # DE-D-D-X spanned preservation 
-    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
-                    sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-2", "de-d-d-5", "de-d-d-100"], \
-                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})        
+    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #                 game_names=["CompareOnOneGame", "FocusingGame", "IntransitiveRegionGame"], \
+    #                 sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-2", "de-d-d-5", "de-d-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})        
+
+    # draw_metrics("data/metrics/spaces2.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #                 game_names=[], \
+    #                 sim_names=["de-d-g", "de-d-s"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})       
     
+    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
+                    game_names=[ "dupl-100"], \
+                    sim_names=["de-l", "de-d-0", "de-d-1", "de-d-m", "de-d-g", "de-d-d-100"], \
+                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0},
+                    rename={"de-d-d-100":"de-d-d"})      
+        
     pass
