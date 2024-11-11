@@ -42,6 +42,12 @@ def build_space_game(space_builder):
         return CDESpaceGame(space, **kwargs)
     return b
 
+NEW_RQS = {
+    "dupl-t-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 1)),
+    "dupl-c-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 100)),
+    "dupl-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 100)),
+}
+
 GAMES = {
     **NUMBER_GAMES,
     # RQ0: No skew of points on axes, no spanned, no non-informative, no duplicates, strong independance
@@ -90,7 +96,7 @@ GAMES = {
     "dupl-t-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 2).with_candidate_distribution(0, 1)),
     "dupl-t-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 3).with_candidate_distribution(0, 1)),
     "dupl-t-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 4).with_candidate_distribution(0, 1)),
-    "dupl-t-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 5).with_candidate_distribution(0, 1)),
+    "dupl-t-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 5).with_candidate_distribution(0, 1)),    
     "dupl-c-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 2)),
     "dupl-c-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 3)),
     "dupl-c-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 4)),
@@ -163,7 +169,7 @@ if __name__ == '__main__':
     cnt = 0
     with open("lst.txt", "w") as f:
         for sim_name in SIM.keys():
-            for game_name in GAMES.keys():            
+            for game_name in NEW_RQS.keys():            
                 if game_name not in NUMBER_GAMES:
                     cnt += 1
                     print(f"'{sim_name}:{game_name}'", file = f)
