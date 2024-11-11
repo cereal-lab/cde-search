@@ -507,7 +507,7 @@ if __name__ == "__main__":
     # 
 
     # DE-D-D-X spanned preservation 
-    draw_metrics("data/metrics/num-games.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
                     sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-2", "de-d-d-5", "de-d-d-100"], \
                     fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})        
     

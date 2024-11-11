@@ -46,6 +46,9 @@ NEW_RQS = {
     "dupl-t-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 1)),
     "dupl-c-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 100)),
     "dupl-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 100)),
+    "dupl-t-10000": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10000).with_candidate_distribution(0, 1)),
+    "dupl-c-10000": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 10000)),
+    "dupl-10000": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10000).with_candidate_distribution(0, 10000)),    
 }
 
 GAMES = {

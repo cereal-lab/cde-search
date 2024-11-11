@@ -99,10 +99,10 @@ class HillClimbing(Selection):
     
     def plus_minus_one(self, ind: tuple[int,int] | int):
         for _ in range(10):
-            if type(ind) is int:
-                mutated = ind + rnd.choice([-1,1])
-            else:
+            if type(ind) is tuple:
                 mutated = tuple(c + rnd.choice([-1,1]) for c in ind)
+            else:
+                mutated = int(ind + rnd.choice([-1,1]))
             if mutated in self.pool_set:
                 return mutated
         return ind
@@ -157,7 +157,7 @@ class HillClimbing(Selection):
         self.selection = [tuple(0 for _ in self.pool[0]) if type(self.pool[0]) is tuple else 0 for _ in range(self.size)]
 
     def range_init(self):
-        self.selection = [tuple(rnd.choice(self.init_range) for _ in self.pool[0]) if type(self.pool[0]) is tuple else rnd.choice(self.init_range) for _ in range(self.size)]
+        self.selection = [tuple(rnd.choice(self.init_range) for _ in self.pool[0]) if type(self.pool[0]) is tuple else int(rnd.choice(self.init_range)) for _ in range(self.size)]
 
     def init_selection(self) -> None:
         super().init_selection()
