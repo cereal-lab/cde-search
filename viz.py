@@ -196,6 +196,64 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
                 fig.savefig(f"data/plots/{aggregation}-{metric_name}-{game_name}.pdf", format='pdf')
             plt.clf()
 
+
+def draw_setups(metrics_file: str, sim_name = "rand", metric_name = "ARRA", prefix = "",
+                    game_names = [], fixed_max = None, fixed_min = None, rename = {}):
+    ''' metrics_file is in jsonlist format'''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    values = [[] for _ in game_names]
+    game_names_map = {game_name: i for i, game_name in enumerate(game_names)}
+    for run in runs: 
+        cur_sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        if cur_sim_name != sim_name or game_name not in game_names:
+            continue
+        cur_values = run["metric_" + metric_name]
+        values[game_names_map[game_name]].append(cur_values)
+    
+    for i in range(len(values)):
+        setup_values = values[i]
+        new_values = []
+        for i_values in zip(*setup_values):
+            confidence_level = 0.95
+            mean = np.mean(i_values)
+            degrees_freedom = len(i_values) - 1
+            sample_standard_error = stats.sem(i_values)
+            confidence_interval = stats.t.interval(confidence_level, degrees_freedom, mean, sample_standard_error)
+            min_v = mean if np.isnan(confidence_interval[0]) else confidence_interval[0]
+            max_v = mean if np.isnan(confidence_interval[1]) else confidence_interval[1]
+            new_values.append((min_v, mean, max_v))
+        values[i] = new_values
+
+    plt.ioff()
+    fig, ax = plt.subplots() 
+    min_y = fixed_min or 100
+    max_y = fixed_max or 0
+    for game_name, game_values in zip(game_names, values):
+        data = [v[1] * 100 for v in game_values]
+        lower = [v[0] * 100 for v in game_values]
+        upper = [v[2] * 100 for v in game_values]
+        cur_min = min(lower)
+        if cur_min < min_y:
+            min_y = cur_min
+        cur_max = max(upper)
+        if cur_max > max_y:
+            max_y = cur_max
+        ax.fill_between(range(1, len(data) + 1), lower, upper, alpha=.1, linewidth=0)
+        ax.plot(range(1, len(data) + 1), data, label=rename.get(game_name, game_name), linewidth=1, markersize=1, marker='o')
+    ax.set_xlim(0, 100)
+    ax.set_ylim(min_y, max_y)
+    plt.legend(loc='lower right', handletextpad = 0.2)
+    plt.xlabel('Simulated time', size=14)
+    plt.ylabel(f'{sim_name}, {metric_name}, \%', size=14)
+    ax.tick_params(axis='both', which='major', labelsize=14)            
+    fig.set_tight_layout(True)
+    fig.savefig(f"data/plots/{prefix}-{metric_name}-{sim_name}.pdf", format='pdf')
+    plt.clf()
+
+
 def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
                                 table_file=None, p_value = 0.05, name_remap = {}):
     ''' metrix_file is in jsonlist format'''
@@ -429,48 +487,48 @@ if __name__ == "__main__":
     # draw_populations([(1,2)], [(2,3)], [(6,7)], [(5,7)], xrange=(0, 100), yrange=(0, 100))
     
     # HC experiments
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "hc-pmo-i", "hc-pmo-p", "hc-r-i", "hc-r-p"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})    
     
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
     #                 sim_names=["rand", "hc-pmo-i", "hc-pmo-p", "hc-r-i", "hc-r-p"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   
 
     # DE experiments
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "de-l", "de-d-0", "de-d-1", "de-d-m", "de-d-g", "de-d-s", "de-d-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d"})    
     
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
     #                 sim_names=["rand", "de-l", "de-d-0", "de-d-1", "de-d-m", "de-d-g", "de-d-s", "de-d-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d"}) 
     
     # DES
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "des-mea", "des-med", "des-mea-0", "des-med-0", "des-mea-100", "des-med-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"des-mea-100":"des-mea-1", "des-med-100":"des-med-1"})    
     
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
     #                 sim_names=["rand", "des-mea", "des-med", "des-mea-0", "des-med-0", "des-mea-100", "des-med-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"des-mea-100":"des-mea-1", "des-med-100":"des-med-1"})     
     
     #PL
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "pl-l-0", "pl-l-100", "pl-d-0", "pl-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})    
     
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
     #                 sim_names=["rand", "pl-l-0", "pl-l-100", "pl-d-0", "pl-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"pl-l-100":"pl-l-1", "pl-d-100":"pl-d-1"})     
     
 
     #Best
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100", "pl-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"})
     
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "last", \
     #                 sim_names=["rand", "hc-r-p", "de-d-g", "de-d-d-100", "des-mea-100", "des-med-100", "pl-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"})     
 
@@ -484,16 +542,16 @@ if __name__ == "__main__":
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0}, rename={"de-d-d-100":"de-d-d-1", "des-mea-100":"des-mea-1", "des-med-100":"des-med-1", "pl-d-100":"pl-d-1"}, \
     #                 stats_file = open("data/plots/stats.txt", "w"))     
      
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["rand", "hc-pmo-p", "hc-r-p", "de-l", "de-d-0", "de-d-1", "de-d-d-100", "des-mea-100", "des-med-100", "pl-l-100", "pl-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})
 
-    # with open("data/plots/tables.tex", "w") as f:
-    #     draw_latex_mean_std_tbl("data/metrics/num-games.jsonlist", metric_name = "ARRA", 
-    #                                 sim_names = [], 
-    #                                 game_names = ["GreaterThanGame", "CompareOnOneGame", "FocusingGame", "IntransitiveRegionGame"], 
-    #                                 table_file = f,
-    #                                 name_remap={"CompareOnOneGame": "Cmp1", "FocusingGame": "Focus", "IntransitiveRegionGame": "Intr", "GreaterThanGame":"GrTh"})
+    with open("data/plots/tables.tex", "w") as f:
+        draw_latex_mean_std_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+                                    sim_names = [], 
+                                    game_names = ["GreaterThanGame", "CompareOnOneGame", "FocusingGame", "IntransitiveRegionGame"], 
+                                    table_file = f,
+                                    name_remap={"CompareOnOneGame": "Cmp1", "FocusingGame": "Focus", "IntransitiveRegionGame": "Intr", "GreaterThanGame":"GrTh"})
     
     # with open("data/plots/tables.tex", "w") as f:
     #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
@@ -504,15 +562,33 @@ if __name__ == "__main__":
     #                                                 "dependant-all-1", "dependant-all-2"], 
     #                                 table_file = f)
 
+    # space_games = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
+    #                                                 "trivial-1","trivial-5", "trivial-10", "trivial-15", "trivial-20",
+    #                                                 "trivial-25", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4",
+    #                                                 "skew-t-5", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
+    #                                                 "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
+    #                                                 "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100", 
+    #                                                 "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100",
+    #                                                 "dependant-all-1", "dependant-all-2"]
+    # with open("data/plots/tables.tex", "w") as f:
+    #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+    #                                 sim_names = [], 
+    #                                 game_names = space_games, 
+    #                                 table_file = f)    
+
     # Best of Best
     # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-2", "de-d-d-5", "de-d-d-100", "de-d-g", "de-d-s", "de-d-0", "de-d-m"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})
     # 
 
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #                 game_names=['span-all-ends-5', 'dupl-c-10', 'dupl-c-100'],
+    #                 sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})      
+
     # DE-D-D-X spanned preservation 
-    # draw_metrics("data/metrics/num-games.jsonlist", metrics = ["ARRA"], aggregation = "all", \
-    #                 game_names=["CompareOnOneGame", "FocusingGame", "IntransitiveRegionGame"], \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
     #                 sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-2", "de-d-d-5", "de-d-d-100"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})        
 
@@ -521,10 +597,50 @@ if __name__ == "__main__":
     #                 sim_names=["de-d-g", "de-d-s"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})       
     
-    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
-                    game_names=[ "dupl-100"], \
-                    sim_names=["de-l", "de-d-0", "de-d-1", "de-d-m", "de-d-g", "de-d-d-100"], \
-                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0},
-                    rename={"de-d-d-100":"de-d-d"})      
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
+    #                 game_names=[ "dupl-100"], \
+    #                 sim_names=["de-l", "de-d-0", "de-d-1", "de-d-m", "de-d-g", "de-d-d-100"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0},
+    #                 rename={"de-d-d-100":"de-d-d"})      
         
+    # for sim_name in ["de-d-g", "de-d-m"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='skew', 
+    #                     game_names=["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4"],
+    #                     rename = {"ideal": (5,5), "skew-p-1": (6,4), "skew-p-2": (7,3), "skew-p-3": (8,2), "skew-p-4": (9,1)})
+        
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='trivial', 
+    #                     game_names=["ideal", "trivial-1", "trivial-5", "trivial-10", "trivial-15", "trivial-20", "trivial-25"],
+    #                     rename = {"ideal": (5,5), "skew-p-1": (6,4), "skew-p-2": (7,3), "skew-p-3": (8,2), "skew-p-4": (9,1)})        
+
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='skew-t', 
+    #                     game_names=["ideal", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4", "skew-t-5"],
+    #                     rename = {"ideal": (1,1,1,1,1), "skew-t-1": (6,1,1,1,1), "skew-t-2": (1,6,1,1,1), "skew-t-3": (1,1,6,1,1), "skew-t-4": (1,1,1,6,1), "skew-t-5": (1,1,1,1,6)})        
+
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='skew-c', 
+    #                     game_names=["ideal", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5"],
+    #                     rename = {"ideal": (1,1,1,1,1), "skew-c-1": (6,1,1,1,1), "skew-c-2": (1,6,1,1,1), "skew-c-3": (1,1,6,1,1), "skew-c-4": (1,1,1,6,1), "skew-c-5": (1,1,1,1,6)})        
+
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='span', 
+    #                     game_names=["ideal", "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", "span-all-pairs-1"],
+    #                     rename = {"ideal": "no spanned", "span-all-ends-1": "all axis, 1", "span-all-ends-5": "all axis, 5", "span-one-pair-1": "axis pair, 1", "span-all-pairs-1": "axis pairs, 10"})        
+
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='dupl-t', 
+    #                     game_names=["ideal", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100"],
+    #                     rename = {"ideal": "no dupl", "dupl-t-2": "2 dupl. tests", "dupl-t-3": "3 dupl. tests", "dupl-t-4": "4 dupl. tests", "dupl-t-5": "5 dupl. tests", "dupl-t-10": "10 dupl. tests", "dupl-t-100": "100 dupl. tests"})        
+
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='dupl-c', 
+    #                     game_names=["ideal", "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100"],
+    #                     rename = {"ideal": "no dupl", "dupl-c-2": "2 dupl. tests", "dupl-c-3": "3 dupl. tests", "dupl-c-4": "4 dupl. tests", "dupl-c-5": "5 dupl. tests", "dupl-c-10": "10 dupl. tests", "dupl-c-100": "100 dupl. tests"})        
+
+    # for sim_name in ["de-d-d-1"]:
+    #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='dep', 
+    #                     game_names=["ideal", "dependant-all-1", "dependant-all-2"],
+    #                     rename = {"ideal": "no dep", "dependant-all-1": "1 dep", "dependant-all-2": "2 deps"})        
+
     pass

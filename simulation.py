@@ -24,6 +24,8 @@ def simulate(algo, *, cand_algo = OneTimeSequential, **kwargs):
         kwargsAll = {**kwargs, **kwargs2}
         candidates = cand_algo(game.get_all_candidates(), **get_args(kwargsAll, "cand_"))
         size = param_num_game_selection_size if isinstance(game, NumberGame) else param_selection_size
+        if isinstance(game, IntransitiveRegionGame):
+            size = (param_num_intransitive_regions * param_num_intransitive_regions) - 2
         tests = algo(game.get_all_tests(), size = size, **get_args(kwargsAll, "test_"))
         return run_game(game, candidates, tests, **get_args(kwargsAll, "sim_"))
     return start  
@@ -173,7 +175,8 @@ if __name__ == '__main__':
     cnt = 0
     with open("lst.txt", "w") as f:
         for sim_name in SIM.keys():
-            for game_name in GAMES.keys():
-                cnt += 1
-                print(f"'{sim_name}:{game_name}'", file = f)
+            # for game_name in GAMES.keys():
+            game_name = "IntransitiveRegionGame"
+            cnt += 1
+            print(f"'{sim_name}:{game_name}'", file = f)
     print('Number of configs:', cnt)
