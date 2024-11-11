@@ -50,6 +50,7 @@ NEW_RQS = {
 
 GAMES = {
     **NUMBER_GAMES,
+    **NEW_RQS,
     # RQ0: No skew of points on axes, no spanned, no non-informative, no duplicates, strong independance
     #     Space with 10 axes and 5 points per axis. Num cands = 50, num_tests = 50. 
     #     Max ints = 2500, expected ints = 50 (cands) * 10 (axes) = 500
