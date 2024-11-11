@@ -570,14 +570,14 @@ if __name__ == "__main__":
     #                                                 "dependant-all-1", "dependant-all-2"], 
     #                                 table_file = f)
 
-    space_games = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
-                                                    "trivial-1","trivial-5", "trivial-10", "trivial-15", "trivial-20",
-                                                    "trivial-25", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4",
-                                                    "skew-t-5", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
-                                                    "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
-                                                    "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100", 
-                                                    "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100",
-                                                    "dependant-all-1", "dependant-all-2"]
+    # space_games = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
+    #                                                 "trivial-1","trivial-5", "trivial-10", "trivial-15", "trivial-20",
+    #                                                 "trivial-25", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4",
+    #                                                 "skew-t-5", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
+    #                                                 "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
+    #                                                 "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100", 
+    #                                                 "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100",
+    #                                                 "dependant-all-1", "dependant-all-2"]
     # with open("data/plots/tables.tex", "w") as f:
     #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
     #                                 sim_names = [], 
@@ -657,9 +657,15 @@ if __name__ == "__main__":
     #             sim_names=["rand", "de-d-d-0", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0"], \
     #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #  
 
-    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
-                game_names=['dupl-t-100'], \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
+    #             game_names=['dupl-t-100'], \
+    #             sim_names=["rand", "de-d-d-0", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0"], \
+    #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #
+    # 
+
+    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+                game_names=[], \
                 sim_names=["rand", "de-d-d-0", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0"], \
-                fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #      
+                fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #            
 
     pass

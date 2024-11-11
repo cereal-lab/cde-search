@@ -359,11 +359,14 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
                     min_group_with_score = [(test_id, (unknown_counts[test_id], one_counts[test_id])) for test_id in min_group] 
                     expansion_poss = [(test_id, dim_id, (*score, sum(-1 if d == o == 1 else 0 for d, o in zip(dimensions[dim_id][-1][1], test_outcomes[test_id])), len(dimensions[dim_id])) ) for test_id, score in min_group_with_score for dim_id in expands_at_end[test_id]]
                     min_test_id, min_dim_id, (unknown_values_count, ones_count, axis_match_score, dim_len) = min(expansion_poss, key=lambda x: x[-1])
+                    min_test = test_outcomes[min_test_id]
                     if axis_match_score == 0: #no matching 1s, so better to ignore individual
-                        # we know too little about this individual
-                        origin.append(min_test_id)
-                    else:
+                        # we know too little about this individual - but it is non-trivial. Create new axis?
+                        # origin.append(min_test_id)
                         min_test = test_outcomes[min_test_id]
+                        set_unknown_to_const(min_test, 0)
+                        dimensions.append([(set([min_test_id]), min_test)])                        
+                    else:                        
                         prev_point = dimensions[min_dim_id][-1]
                         set_unknown_to_vect(min_test, prev_point[1])
                         dimensions[min_dim_id].append((set([min_test_id]), min_test))

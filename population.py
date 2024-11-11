@@ -440,10 +440,10 @@ class DESelection(ExploitExploreSelection):
 
     def exploit(self, sample_size) -> set[Any]:
         
-
+        selected = set(self.prev_selection_spanned)
         axe_id = 0 
         axes = [[point for point in dim] for dim in self.axes]
-        selected = set(self.prev_selection_spanned)
+        axes.sort(key = lambda x: x[-1][1])
         while len(selected) < sample_size and len(axes) > 0:
             axis = axes[axe_id]
             ind, _ = axis.pop()
@@ -454,7 +454,9 @@ class DESelection(ExploitExploreSelection):
                     break
             else:
                 axe_id += 1
-            axe_id %= len(axes)
+            if axe_id == len(axes):
+                axe_id = 0
+                axes.sort(key = lambda x: x[-1][1])
 
         for ind in self.prev_selection_origin:
             if len(selected) >= sample_size:
