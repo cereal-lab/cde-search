@@ -96,10 +96,10 @@ GAMES = {
                               .with_spanned_point([(i, -1) for i in range(10)], 20)),
     # "span-one-pair-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
     #                           .with_spanned_point([(0, -1), (1, -1)], 1)),
-    "span-pairs-1": build_space_game(get_2ax_spanned_space(1)),
-    "span-pairs-5": build_space_game(get_2ax_spanned_space(5)),
-    "span-pairs-10": build_space_game(get_2ax_spanned_space(10)),
-    "span-pairs-20": build_space_game(get_2ax_spanned_space(20)),
+    "span-pairs-1": build_space_game(lambda: get_2ax_spanned_space(1)),
+    "span-pairs-5": build_space_game(lambda: get_2ax_spanned_space(5)),
+    "span-pairs-10": build_space_game(lambda: get_2ax_spanned_space(10)),
+    "span-pairs-20": build_space_game(lambda: get_2ax_spanned_space(20)),
 
     #RQ4: Under presense of duplicated tests how Dup, D, ARR (ARR*) changes? Noise of test similarity
     # "dupl-t-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 2).with_candidate_distribution(0, 1)),
