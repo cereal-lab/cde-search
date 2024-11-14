@@ -199,7 +199,7 @@ def draw_metrics(metrics_file: str, metrics = ["DC", "ARR", "ARRA", "Dup", "R"],
             plt.clf()
 
 
-def draw_setups(metrics_file: str, sim_name = "rand", metric_name = "ARRA", prefix = "",
+def draw_setups(metrics_file: str, sim_name = "rand", metric_name = "ARRA", prefix = "", threshold = 0.9,
                     game_names = [], fixed_max = None, fixed_min = None, rename = {}):
     ''' metrics_file is in jsonlist format'''
     with open(metrics_file, "r") as f:
@@ -235,6 +235,8 @@ def draw_setups(metrics_file: str, sim_name = "rand", metric_name = "ARRA", pref
     fig, ax = plt.subplots() 
     min_y = fixed_min or 100
     max_y = fixed_max or 0
+    # draw horizontal dash line on level of threshold
+    plt.axhline(y = threshold * 100, color = 'tab:gray', linewidth=0.5, linestyle = 'dashed')
     for game_name, game_values in zip(game_names, values):
         data = [v[1] * 100 for v in game_values]
         lower = [v[0] * 100 for v in game_values]
@@ -259,7 +261,8 @@ def draw_setups(metrics_file: str, sim_name = "rand", metric_name = "ARRA", pref
 
 
 def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
-                                table_file=None, p_value = 0.05, name_remap = {}):
+                                table_file=None, p_value = 0.05, name_remap = {},
+                                exclude_sim_names = ["pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"]):
     ''' metrix_file is in jsonlist format'''
     with open(metrics_file, "r") as f:
         lines = f.readlines()
@@ -267,11 +270,14 @@ def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names =
     groups = {}
     sim_names = set(sim_names)
     present_sim_names = set()
+    exclude_sim_names = set(exclude_sim_names)
     for run in runs: 
         sim_name = run["sim_name"]
         game_name = run["game_name"]
         if game_name == "IntransitiveRegionGame" and run["param_sel_size"] == 5:
-            continue        
+            continue      
+        if sim_name in exclude_sim_names:
+            continue  
         if len(sim_names) > 0 and sim_name not in sim_names:
             continue
         if game_name not in game_names:
@@ -288,57 +294,51 @@ def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names =
         group_by_sims.setdefault(sim_name, {})[game_name] = (mean, std, new_values)
         # groups[(sim_name, game_name, metric_name)] = (mean, std)
     for game_name in game_names:
-        data = np.array([group_by_sims[sim_name][game_name][2] for sim_name in present_sim_names])
-        friedman_res = stats.friedmanchisquare(*data)
+        data = [group_by_sims[sim_name][game_name][2] for sim_name in present_sim_names]
+        diffs = [[1 for _ in present_sim_names] for _ in present_sim_names]
+        for i in range(len(diffs)):
+            for j in range(i + 1, len(diffs)):
+                _, pvalue = stats.mannwhitneyu(data[i], data[j])
+                if pvalue < p_value:
+                    diffs[i][j] = pvalue
+                    diffs[j][i] = pvalue
         sim_ranks = {}
-        if friedman_res.pvalue < p_value:
-            nemenyi_res = sp.posthoc_nemenyi_friedman(data.T)
+        # building domination relation by nemenyi test p-value and means 
+        # to rank we need to build all domination chains and average ranks in them 
+        dominations = {sim_name: set() for sim_name in present_sim_names}
+        dominated_by = {sim_name: set() for sim_name in present_sim_names}
+        # NOTE: sign depends on metric - ARRA >, Dup <, R <, DC >, ARR >
+        f = (lambda x: x[0] > x[1]) if metric_name in [ "ARRA", "DC", "ARR"] else (lambda x: x[0] < x[1])
+        for i in range(len(present_sim_names)):
+            sim_name = present_sim_names[i]
+            for j in range(i + 1, len(present_sim_names)):
+                sim_name2 = present_sim_names[j]
+                if diffs[i][j] < p_value:
+                    if f((group_by_sims[sim_name][game_name][0], group_by_sims[sim_name2][game_name][0])):
+                        dominations[sim_name].add(sim_name2)
+                        dominated_by[sim_name2].add(sim_name)
+                    else:
+                        dominations[sim_name2].add(sim_name)
+                        dominated_by[sim_name].add(sim_name2)  
 
-            # from tabulate import tabulate
-            # names = present_sim_names
-            # rows = []
-            # for i in range(len(names)):
-            #     row = []
-            #     row.append(names[i])
-            #     for j in range(len(names)):
-            #         row.append(nemenyi_res[i][j])
-            #     rows.append(row)
-            # print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"))
+        rank = 0
+        while len(dominations) > 0:
+            sources = [sim_name for sim_name, v in dominated_by.items() if len(v) == 0]  
+            for sim_name in sources:
+                sim_ranks[sim_name] = rank
+                for sim_name2 in dominations.get(sim_name, []):
+                    dominated_by[sim_name2].remove(sim_name)
+                if sim_name in dominations:
+                    del dominations[sim_name]
+                del dominated_by[sim_name]
+            rank += 1
 
-            # building domination relation by nemenyi test p-value and means 
-            # to rank we need to build all domination chains and average ranks in them 
-            dominations = {sim_name: set() for sim_name in present_sim_names}
-            dominated_by = {sim_name: set() for sim_name in present_sim_names}
-            # NOTE: sign depends on metric - ARRA >, Dup <, R <, DC >, ARR >
-            f = (lambda x: x[0] > x[1]) if metric_name in [ "ARRA", "DC", "ARR"] else (lambda x: x[0] < x[1])
-            for i in range(len(present_sim_names)):
-                sim_name = present_sim_names[i]
-                for j in range(i + 1, len(present_sim_names)):
-                    sim_name2 = present_sim_names[j]
-                    if nemenyi_res[i][j] < p_value:
-                        if f((group_by_sims[sim_name][game_name][0], group_by_sims[sim_name2][game_name][0])):
-                            dominations[sim_name].add(sim_name2)
-                            dominated_by[sim_name2].add(sim_name)
-                        else:
-                            dominations[sim_name2].add(sim_name)
-                            dominated_by[sim_name].add(sim_name2)  
-
-            rank = 1
-            while len(dominations) > 0:
-                sources = [sim_name for sim_name, v in dominated_by.items() if len(v) == 0]  
-                for sim_name in sources:
-                    sim_ranks[sim_name] = rank
-                    for sim_name2 in dominations.get(sim_name, []):
-                        dominated_by[sim_name2].remove(sim_name)
-                    if sim_name in dominations:
-                        del dominations[sim_name]
-                    del dominated_by[sim_name]
-                rank += 1
+        max_rank = rank
 
         for sim_name in present_sim_names:
             sim_rank = sim_ranks.get(sim_name, 1)
             mean, std, _ = group_by_sims[sim_name][game_name]
-            group_by_sims[sim_name][game_name] = (mean, std, sim_rank)
+            group_by_sims[sim_name][game_name] = (mean, std, sim_rank, max_rank)
             
     avg_sim_ranks = {}
     avg_sim_mean = {}
@@ -347,9 +347,19 @@ def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names =
         avg_sim_mean[sim_name] = np.mean([group_by_sims[sim_name][game_name][0] for game_name in game_names])
         if metric_name in ["ARRA", "DC", "ARR"]:
             avg_sim_mean[sim_name] = -avg_sim_mean[sim_name]
+    avg_rank = 0 
+    avg_rank_value = None 
+    for sim_name, sim_rank_value in sorted(avg_sim_ranks.items(), key=lambda x: x[1]):
+        if avg_rank_value is None or abs(sim_rank_value - avg_rank_value) < 0.001:
+            avg_rank_value = sim_rank_value
+            avg_sim_ranks[sim_name] = avg_rank
+        else:
+            avg_rank += 1
+            avg_rank_value = sim_rank_value
+            avg_sim_ranks[sim_name] = avg_rank
     # NOTE: should be sorted by general rank
     rows = sorted(group_by_sims.items(), key=lambda x: (avg_sim_ranks[x[0]], avg_sim_mean[x[0]])) # from best to worst
-    print(f"\\begin{{tabular}}{{ r | { '|'.join(['c c'] * len(game_names)) } | c }}", file = table_file)
+    print(f"\\begin{{tabular}}{{ l | { '|'.join(['c c'] * len(game_names)) } | c }}", file = table_file)
     # print(f"\\\\\\hline", file = table_file)
     # header for games
     print(f"\\multirow{{2}}{{*}}{{Algo}}", end = "", file = table_file)
@@ -368,9 +378,9 @@ def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names =
     for row_id, (sim_name, game_groups) in enumerate(rows):
         print(f"{sim_name} ", end = "", file = table_file)
         for game_name in game_names:
-            mean, std, rank = game_groups[game_name]
-            print(" & {0:.1f} $\\pm$ {1:.1f} & {2}".format(mean * 100, std * 100, rank), end = "", file = table_file)
-        print(f"& {avg_sim_ranks[sim_name]:.1f}", end = "", file = table_file)
+            mean, std, rank, _ = game_groups[game_name]
+            print(" & {0:.1f} $\\pm$ {1:.1f} & {2}".format(mean * 100, std * 100, rank + 1), end = "", file = table_file)
+        print(f"& {avg_sim_ranks[sim_name] + 1}", end = "", file = table_file)
         if row_id != len(rows) - 1:
             print(f"\\\\\\hline", file = table_file)
         else:
@@ -378,8 +388,178 @@ def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names =
     print(f"\\end{{tabular}}", file = table_file)
 
 def draw_latex_ranks_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
-                                table_file=None, p_value = 0.05, name_remap = {}):
+                                table_file=None, p_value = 0.05, name_remap = {},
+                                exclude_sim_names = ["pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"]):
     ''' metrix_file is in jsonlist format'''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    groups = {}
+    sim_names = set(sim_names)
+    present_sim_names = set()
+    exclude_sim_names = set(exclude_sim_names)
+    for run in runs: 
+        sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        if game_name == "IntransitiveRegionGame" and run["param_sel_size"] == 5:
+            continue        
+        if sim_name in exclude_sim_names:
+            continue
+        if len(sim_names) > 0 and sim_name not in sim_names:
+            continue
+        if game_name not in game_names:
+            continue
+        key = (sim_name, game_name)
+        present_sim_names.add(sim_name)
+        groups.setdefault(key, []).append(run["metric_" + metric_name])    
+    present_sim_names = list(present_sim_names)
+    group_by_sims = {}
+    for (sim_name, game_name), all_values in groups.items():
+        new_values = [run_values[-1] for run_values in all_values]
+        mean = np.mean(new_values)
+        std = np.std(new_values)
+        group_by_sims.setdefault(sim_name, {})[game_name] = (mean, std, new_values)
+        # groups[(sim_name, game_name, metric_name)] = (mean, std)
+    for game_name in game_names:
+        data = [group_by_sims[sim_name][game_name][2] for sim_name in present_sim_names]
+        # friedman_res = stats.friedmanchisquare(*data)
+        diffs = [[1 for _ in present_sim_names] for _ in present_sim_names]
+        for i in range(len(diffs)):
+            for j in range(i + 1, len(diffs)):
+                _, pvalue = stats.mannwhitneyu(data[i], data[j])
+                if pvalue < p_value:
+                    diffs[i][j] = pvalue
+                    diffs[j][i] = pvalue
+        sim_ranks = {}
+
+        # from tabulate import tabulate
+        # names = present_sim_names
+        # rows = []
+        # for i in range(len(names)):
+        #     row = []
+        #     row.append(names[i])
+        #     for j in range(len(names)):
+        #         row.append(diffs[i][j])
+        #     rows.append(row)
+        # print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"))
+
+        # building domination relation by nemenyi test p-value and means 
+        # to rank we need to build all domination chains and average ranks in them 
+        dominations = {sim_name: set() for sim_name in present_sim_names}
+        dominated_by = {sim_name: set() for sim_name in present_sim_names}
+        # NOTE: sign depends on metric - ARRA >, Dup <, R <, DC >, ARR >
+        f = (lambda x: x[0] > x[1]) if metric_name in [ "ARRA", "DC", "ARR"] else (lambda x: x[0] < x[1])
+        for i in range(len(present_sim_names)):
+            sim_name = present_sim_names[i]
+            for j in range(i + 1, len(present_sim_names)):
+                sim_name2 = present_sim_names[j]
+                if diffs[i][j] < p_value:
+                    if f((group_by_sims[sim_name][game_name][0], group_by_sims[sim_name2][game_name][0])):
+                        dominations[sim_name].add(sim_name2)
+                        dominated_by[sim_name2].add(sim_name)
+                    else:
+                        dominations[sim_name2].add(sim_name)
+                        dominated_by[sim_name].add(sim_name2)  
+
+        rank = 0
+        while len(dominations) > 0:
+            sources = [sim_name for sim_name, v in dominated_by.items() if len(v) == 0]  
+            for sim_name in sources:
+                sim_ranks[sim_name] = rank
+                for sim_name2 in dominations.get(sim_name, []):
+                    dominated_by[sim_name2].remove(sim_name)
+                if sim_name in dominations:
+                    del dominations[sim_name]
+                del dominated_by[sim_name]
+            rank += 1
+
+        max_rank = rank
+        for sim_name in present_sim_names:
+            sim_rank = sim_ranks.get(sim_name, 1)
+            mean, std, _ = group_by_sims[sim_name][game_name]
+            group_by_sims[sim_name][game_name] = (mean, std, sim_rank, max_rank)
+
+    # test_scores = [(sim_name, game_name, game_r) for sim_name, sim_g in group_by_sims.items() for game_name, game_r in sim_g.items()]
+    # test_scores = {}
+    # for sim_name in present_sim_names:
+    #     rank_map = {}
+    #     for game_name, game_r in group_by_sims[sim_name].items():
+    #         if game_r[2] in [1,2,3]:
+    #             rank_map.setdefault(game_r[2], []).append(game_name)
+    #     for game_name in game_names:                    
+    #         r = group_by_sims[sim_name][game_name][2]
+    #         if r in [1,2,3]:
+    #             test_scores[(sim_name, game_name)] = len(rank_map[r])
+
+    # test_score_groups = {}
+    # for (sim_name, game_name), cnt in test_scores.items():
+    #     test_score_groups.setdefault((game_name, cnt), []).append(sim_name)
+    # ts = sorted(test_score_groups.items(), key=lambda x: (x[0][1], -len(x[1])))
+    # print(ts)
+            
+    avg_sim_ranks = {}
+    avg_sim_mean = {}
+    for sim_name in present_sim_names:
+        avg_sim_ranks[sim_name] = np.mean([group_by_sims[sim_name][game_name][2] for game_name in game_names])
+        avg_sim_mean[sim_name] = np.mean([group_by_sims[sim_name][game_name][0] for game_name in game_names])
+        if metric_name in ["ARRA", "DC", "ARR"]:
+            avg_sim_mean[sim_name] = -avg_sim_mean[sim_name]
+
+    avg_rank = 0 
+    avg_rank_value = None 
+    for sim_name, sim_rank_value in sorted(avg_sim_ranks.items(), key=lambda x: x[1]):
+        if avg_rank_value is None or abs(sim_rank_value - avg_rank_value) < 0.001:
+            avg_rank_value = sim_rank_value
+            avg_sim_ranks[sim_name] = avg_rank
+        else:
+            avg_rank += 1
+            avg_rank_value = sim_rank_value
+            avg_sim_ranks[sim_name] = avg_rank            
+    # NOTE: should be sorted by general rank
+    rows = sorted(group_by_sims.items(), key=lambda x: (avg_sim_ranks[x[0]], avg_sim_mean[x[0]])) # from best to worst
+    print(f"\\begin{{tabular}}{{ l | { '|'.join(['c'] * len(game_names)) } | c }}", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # header for games
+    print(f"Algo", end = "", file = table_file)
+    for gid, game_name in enumerate(game_names):    
+        print(f"& {str(gid + 1).rjust(2, '0')} ", end = "", file = table_file)
+    print(f"& r", end = "", file = table_file)
+    print(f"\\\\\\hline", file = table_file)
+    # body of the table 
+    for row_id, (sim_name, game_groups) in enumerate(rows):
+        print(f"{sim_name} ", end = "", file = table_file)
+        for game_name in game_names:
+            mean, std, rank, _ = game_groups[game_name]
+            print(" & {0}".format(rank + 1), end = "", file = table_file)
+        print(f"& {avg_sim_ranks[sim_name] + 1}", end = "", file = table_file)
+        if row_id != len(rows) - 1:
+            print(f"\\\\\\hline", file = table_file)
+        else:
+            print("", file = table_file)
+    print(f"\\end{{tabular}}", file = table_file)
+
+def monotonicity_index(series):
+    n = len(series)
+    increasing_pairs = 0
+    decreasing_pairs = 0
+    for i in range(n - 1):
+        for j in range(i + 1, n):
+            if series[i] < series[j]:
+                increasing_pairs += 1
+            elif series[i] > series[j]:
+                decreasing_pairs += 1
+
+    total_pairs = n * (n - 1) / 2
+
+    if increasing_pairs > decreasing_pairs:
+        return increasing_pairs / total_pairs
+    else:
+        return decreasing_pairs / total_pairs
+
+
+def draw_monotonicity_evaluation(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
+                                table_file=None, p_value = 0.05, name_remap = {}):
+    ''' Computes Spearman's Rank Correlation Coefficient and Monotonicity Index for each run and avg the evaluation metrics '''
     with open(metrics_file, "r") as f:
         lines = f.readlines()
     runs = [json.loads(line) for line in lines ]
@@ -399,95 +579,156 @@ def draw_latex_ranks_tbl(metrics_file: str, metric_name = "ARRA", sim_names = []
         present_sim_names.add(sim_name)
         groups.setdefault(key, []).append(run["metric_" + metric_name])    
     present_sim_names = list(present_sim_names)
-    group_by_sims = {}
-    for (sim_name, game_name), all_values in groups.items():
-        new_values = [run_values[-1] for run_values in all_values]
-        mean = np.mean(new_values)
-        std = np.std(new_values)
-        group_by_sims.setdefault(sim_name, {})[game_name] = (mean, std, new_values)
-        # groups[(sim_name, game_name, metric_name)] = (mean, std)
+    scores = {}
     for game_name in game_names:
-        data = np.array([group_by_sims[sim_name][game_name][2] for sim_name in present_sim_names])
-        friedman_res = stats.friedmanchisquare(*data)
-        sim_ranks = {}
-        if friedman_res.pvalue < p_value:
-            nemenyi_res = sp.posthoc_nemenyi_friedman(data.T)
-
-            # from tabulate import tabulate
-            # names = present_sim_names
-            # rows = []
-            # for i in range(len(names)):
-            #     row = []
-            #     row.append(names[i])
-            #     for j in range(len(names)):
-            #         row.append(nemenyi_res[i][j])
-            #     rows.append(row)
-            # print(tabulate(rows, headers=["", *names], tablefmt="grid", numalign="center", stralign="center"))
-
-            # building domination relation by nemenyi test p-value and means 
-            # to rank we need to build all domination chains and average ranks in them 
-            dominations = {sim_name: set() for sim_name in present_sim_names}
-            dominated_by = {sim_name: set() for sim_name in present_sim_names}
-            # NOTE: sign depends on metric - ARRA >, Dup <, R <, DC >, ARR >
-            f = (lambda x: x[0] > x[1]) if metric_name in [ "ARRA", "DC", "ARR"] else (lambda x: x[0] < x[1])
-            for i in range(len(present_sim_names)):
-                sim_name = present_sim_names[i]
-                for j in range(i + 1, len(present_sim_names)):
-                    sim_name2 = present_sim_names[j]
-                    if nemenyi_res[i][j] < p_value:
-                        if f((group_by_sims[sim_name][game_name][0], group_by_sims[sim_name2][game_name][0])):
-                            dominations[sim_name].add(sim_name2)
-                            dominated_by[sim_name2].add(sim_name)
-                        else:
-                            dominations[sim_name2].add(sim_name)
-                            dominated_by[sim_name].add(sim_name2)  
-
-            rank = 1
-            while len(dominations) > 0:
-                sources = [sim_name for sim_name, v in dominated_by.items() if len(v) == 0]  
-                for sim_name in sources:
-                    sim_ranks[sim_name] = rank
-                    for sim_name2 in dominations.get(sim_name, []):
-                        dominated_by[sim_name2].remove(sim_name)
-                    if sim_name in dominations:
-                        del dominations[sim_name]
-                    del dominated_by[sim_name]
-                rank += 1
-
         for sim_name in present_sim_names:
-            sim_rank = sim_ranks.get(sim_name, 1)
-            mean, std, _ = group_by_sims[sim_name][game_name]
-            group_by_sims[sim_name][game_name] = (mean, std, sim_rank)
-            
-    avg_sim_ranks = {}
-    avg_sim_mean = {}
+            all_values = groups[(sim_name, game_name)]
+            spearmans = []
+            mixes = []
+            for run_values in all_values:
+                score, _ = stats.spearmanr(run_values, range(len(run_values)))
+                if not np.isnan(score):
+                    spearmans.append(score)
+                mix = 0 # monotonicity_index(run_values)
+                mixes.append(mix)
+            scores.setdefault(sim_name, {})[game_name] = ((0 if len(spearmans) == 0 else np.mean(spearmans)), np.mean(mixes))
+
+    avg_spearman = {}
+    avg_mix = {}
     for sim_name in present_sim_names:
-        avg_sim_ranks[sim_name] = np.mean([group_by_sims[sim_name][game_name][2] for game_name in game_names])
-        avg_sim_mean[sim_name] = np.mean([group_by_sims[sim_name][game_name][0] for game_name in game_names])
-        if metric_name in ["ARRA", "DC", "ARR"]:
-            avg_sim_mean[sim_name] = -avg_sim_mean[sim_name]
+        spearmans = []
+        mixes = []
+        for game_name in game_names:
+            spearman, mix = scores[sim_name][game_name]
+            spearmans.append(spearman)
+            mixes.append(mix)        
+        avg_spearman[sim_name] = np.mean(spearmans)
+        avg_mix[sim_name] = np.mean(mixes)
+
     # NOTE: should be sorted by general rank
-    rows = sorted(group_by_sims.items(), key=lambda x: (avg_sim_ranks[x[0]], avg_sim_mean[x[0]])) # from best to worst
-    print(f"\\begin{{tabular}}{{ r | { '|'.join(['c'] * len(game_names)) } | c }}", file = table_file)
+    rows = sorted(scores.items(), key=lambda x: (avg_spearman[x[0]], avg_mix[x[0]]), reverse=True) # from best to worst
+    print(f"\\begin{{tabular}}{{ l | { '|'.join(['c'] * len(game_names)) } | c }}", file = table_file)
     # print(f"\\\\\\hline", file = table_file)
     # header for games
     print(f"Algo", end = "", file = table_file)
-    for gid, game_name in enumerate(game_names):    
-        print(f"& {gid + 1} ", end = "", file = table_file)
-    print(f"& r", end = "", file = table_file)
+    for game_name in game_names:    
+        gn = name_remap.get(game_name, game_name)
+        print(f"& {gn} ", end = "", file = table_file)
+    print(f"& S", end = "", file = table_file)
     print(f"\\\\\\hline", file = table_file)
     # body of the table 
     for row_id, (sim_name, game_groups) in enumerate(rows):
         print(f"{sim_name} ", end = "", file = table_file)
         for game_name in game_names:
-            mean, std, rank = game_groups[game_name]
-            print(" & {0}".format(rank), end = "", file = table_file)
-        print(f"& {avg_sim_ranks[sim_name]:.1f}", end = "", file = table_file)
+            spearman, mix = game_groups[game_name]
+            print(" & {0:.2f}".format(spearman), end = "", file = table_file)
+        print(f"& {avg_spearman[sim_name]:.2f}", end = "", file = table_file)
         if row_id != len(rows) - 1:
             print(f"\\\\\\hline", file = table_file)
         else:
             print("", file = table_file)
     print(f"\\end{{tabular}}", file = table_file)
+
+
+def draw_ttrt(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
+                                table_file=None, threshold = 0.9, name_remap = {},
+                                exclude_sim_names = ["pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"]):
+    ''' Computes Time to Reach Threashold. Note: threshold should be adjustedbe game and sim. The latest time is taken '''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    groups = {}
+    sim_names = set(sim_names)
+    present_sim_names = set()
+    exclude_sim_names = set(exclude_sim_names)
+    for run in runs: 
+        sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        if game_name == "IntransitiveRegionGame" and run["param_sel_size"] == 5:
+            continue      
+        if sim_name in exclude_sim_names:
+            continue  
+        if len(sim_names) > 0 and sim_name not in sim_names:
+            continue
+        if game_name not in game_names:
+            continue
+        key = (sim_name, game_name)
+        present_sim_names.add(sim_name)
+        groups.setdefault(key, []).append(run["metric_" + metric_name])    
+    present_sim_names = list(present_sim_names)
+    scores = {}
+    for game_name in game_names:
+        for sim_name in present_sim_names:
+            all_values = groups[(sim_name, game_name)]
+            ttrts = []
+            num_thr = 0
+            num_thr_reached = 0
+            for run_values in all_values:
+                ttrt = None # never reached                
+                is_below = True
+                for i, v in enumerate(run_values):
+                    if v >= threshold:
+                        if is_below:
+                            num_thr += 1
+                            if ttrt is None:
+                                num_thr_reached += 1
+                            ttrt = i 
+                        is_below = False
+                    else:
+                        is_below = True
+                if ttrt is not None:
+                    ttrts.append(ttrt)
+            v = 101 if len(ttrts) == 0 else np.median(ttrts)
+            # if num_thr_reached >= len(all_values) / 2:
+            if num_thr_reached == len(all_values):
+                num_thr_avg = num_thr / num_thr_reached
+                scores.setdefault(sim_name, {})[game_name] = (v, num_thr_avg, len(all_values) - num_thr_reached)
+
+    # NOTE: should be sorted by general rank
+    rows = sorted(scores.items(), key=lambda x: (sum(x[1].get(g, (101, 0, 30))[2] for g in reversed(game_names)), sum(x[1].get(g, (101, 0, 30))[0] for g in reversed(game_names)))) # from best to worst
+    print(f"\\begin{{tabularx}}{{\\textwidth}}{{ l | { 'Y ' * len(game_names) } | { 'Y ' * len(game_names) } }}", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # header for games
+    print(f"\\multirow{{2}}{{*}}{{Algo}}", end = "", file = table_file)
+    print(f"& \\multicolumn{{{len(game_names)}}}{{c|}}{{TTRT}}", end = "", file = table_file)
+    print(f"& \\multicolumn{{{len(game_names)}}}{{c}}{{Osc}}", end = "", file = table_file)
+    # print(f"& \\multicolumn{{{len(game_names)}}}{{c}}{{Miss}}", end = "", file = table_file)
+    print("\\\\", file = table_file)
+    # print(f"\\\\\\cline{{2-{3 * len(game_names) + 1}}}", file = table_file)
+    # print(f" & ", end="", file = table_file)
+    for game_name in game_names:    
+        gn = name_remap.get(game_name, game_name)
+        print(f"& {gn}", end = "", file = table_file)
+    for game_name in game_names:    
+        gn = name_remap.get(game_name, game_name)
+        print(f"& {gn}", end = "", file = table_file)
+    # for game_name in game_names:    
+    #     gn = name_remap.get(game_name, game_name)
+    #     print(f"& {gn}", end = "", file = table_file)        
+    print(f"\\\\\\hline", file = table_file)
+    # body of the table 
+    for row_id, (sim_name, game_groups) in enumerate(rows):
+        print(f"{sim_name} ", end = "", file = table_file)
+        for game_name in game_names:
+            ttrt, _, _ = game_groups.get(game_name, (101, 0, 30))
+            if ttrt == 101:
+                print(" & $\\infty$ ", end = "", file = table_file)
+            else:
+                print(" & {0} ".format(round(ttrt)), end = "", file = table_file)
+        for game_name in game_names:
+            _, osc, _ = game_groups.get(game_name, (101, 0, 30))
+            if osc < 0.1:
+                print(" & 0 ", end = "", file = table_file)
+            else:
+                print(f" & {osc:.1f} ", end = "", file = table_file)       
+        # for game_name in game_names:
+        #     _, _, miss = game_groups[game_name]
+        #     print(f" & {miss} ", end = "", file = table_file)                           
+        if row_id != len(rows) - 1:
+            print(f"\\\\\\hline", file = table_file)
+        else:
+            print("", file = table_file)
+    print(f"\\end{{tabularx}}", file = table_file)
 
 
 if __name__ == "__main__":
@@ -561,31 +802,32 @@ if __name__ == "__main__":
     #                                 table_file = f,
     #                                 name_remap={"CompareOnOneGame": "Cmp1", "FocusingGame": "Focus", "IntransitiveRegionGame": "Intr", "GreaterThanGame":"GrTh"})
     
-    # with open("data/plots/tables.tex", "w") as f:
-    #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
-    #                                 sim_names = [], 
-    #                                 game_names = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", "trivial-25", "skew-t-1", 
-    #                                                 "skew-t-5", "skew-c-1", "skew-c-5", "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
-    #                                                 "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5",
-    #                                                 "dependant-all-1", "dependant-all-2"], 
-    #                                 table_file = f)
 
-    # space_games = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
-    #                                                 "trivial-1","trivial-5", "trivial-10", "trivial-15", "trivial-20",
-    #                                                 "trivial-25", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4",
-    #                                                 "skew-t-5", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
-    #                                                 "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
-    #                                                 "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100", 
-    #                                                 "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100",
-    #                                                 "dependant-all-1", "dependant-all-2"]
+    space_games = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
+                                                    "trivial-1","trivial-5", "trivial-10", "trivial-15", "trivial-20",
+                                                    "trivial-25", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4",
+                                                    "skew-t-5", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
+                                                    "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
+                                                    "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100", 
+                                                    "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100",
+                                                    "dependant-all-1", "dependant-all-2"]
     # with open("data/plots/tables.tex", "w") as f:
     #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
     #                                 sim_names = [], 
     #                                 game_names = space_games, 
-    #                                 table_file = f)    
+    #                                 table_file = f)   
+    
+
+    # space_games = ["span-all-pairs-1"]
+    # with open("data/plots/tables.tex", "w") as f:
+    #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+    #                                 sim_names = [], 
+    #                                 game_names = space_games, 
+    #                                 table_file = f)        
+     
 
     # Best of Best
-    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "AmultiRRA", "Dup", "R"], aggregation = "all", \
     #                 sim_names=["de-d-d-0", "de-d-d-1", "de-d-d-2", "de-d-d-5", "de-d-d-100", "de-d-g", "de-d-s", "de-d-0", "de-d-m"], \
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})
     # 
@@ -611,7 +853,7 @@ if __name__ == "__main__":
     #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0},
     #                 rename={"de-d-d-100":"de-d-d"})      
         
-    # for sim_name in ["de-d-g", "de-d-m"]:
+    # for sim_name in ["de-d-d-1", "pl-d-100", "de-d-g", "des-mea-5", "des-mea-100"]:
     #     draw_setups("data/metrics/spaces.jsonlist", sim_name=sim_name, prefix='skew', 
     #                     game_names=["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4"],
     #                     rename = {"ideal": (5,5), "skew-p-1": (6,4), "skew-p-2": (7,3), "skew-p-3": (8,2), "skew-p-4": (9,1)})
@@ -663,9 +905,97 @@ if __name__ == "__main__":
     #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #
     # 
 
-    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
-                game_names=[], \
-                sim_names=["rand", "de-d-d-0", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0"], \
-                fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #            
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #             game_names=[], \
+    #             sim_names=["rand", "de-d-d-0", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0"], \
+    #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #            
 
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #             game_names=["dupl-c-100"], \
+    #             sim_names=["rand", "de-d-d-1", "de-d-d-100", "de-d-g", "de-d-m", "de-d-0", "pl-d-100"], \
+    #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #   
+    # 
+
+    # space_games2 = ["ideal", "skew-p-4", "trivial-25", "skew-t-5", 
+    #                 "skew-c-5", "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
+    #                 "span-all-pairs-1", "dupl-t-100", "dupl-c-100"]
+    
+    # map_names = {name:i for i, name in enumerate(space_games) if name in space_games2 }
+
+    # with open("data/plots/tables.tex", "w") as f:
+    #     draw_monotonicity_evaluation("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+    #                                 sim_names = [], 
+    #                                 game_names = ["GreaterThanGame", "CompareOnOneGame", "FocusingGame", "IntransitiveRegionGame", *space_games2], 
+    #                                 table_file = f,
+    #                                 name_remap={**map_names, "CompareOnOneGame": "Cmp1", "FocusingGame": "Focus", "IntransitiveRegionGame": "Intr", "GreaterThanGame":"GrTh"})
+        
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #             game_names=["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4"], \
+    #             sim_names=["des-mea", "des-mea-2", "des-mea-5", "des-mea-100"], \
+    #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #           
+
+    # draw_ttrt("data/metrics/spaces.jsonlist", metric_name = "ARRA", sim_names = [], 
+    #             game_names = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4" ],
+    #             table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #             name_remap = {"ideal": "5,5", "skew-p-1": "6,4", "skew-p-2": "7,3", "skew-p-3": "8,2", "skew-p-4": "9,1"})
+
+    # draw_ttrt("data/metrics/spaces.jsonlist", metric_name = "ARRA", sim_names = [], 
+    #             game_names=["ideal", "trivial-1", "trivial-5", "trivial-10", "trivial-15", "trivial-20", "trivial-25"],
+    #             table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #             name_remap = {"ideal": "0", "trivial-1": "1", "trivial-5": "5", "trivial-10": "10", "trivial-15": "15", "trivial-20": "20", "trivial-25": "25"})    
+    
+
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4", "skew-t-5"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"skew-t-1": "x=1", "skew-t-2": "x=2", "skew-t-3": "x=3", "skew-t-4": "x=4", "skew-t-5": "x=5"})
+
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"skew-c-1": "x=1", "skew-c-2": "x=2", "skew-c-3": "x=3", "skew-c-4": "x=4", "skew-c-5": "x=5"}) 
+
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["ideal", "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", "span-all-pairs-1"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"ideal": "0", "span-all-ends-1": "all", "span-all-ends-5": "all 5", "span-one-pair-1": "pair", "span-all-pairs-1": "pairs"})        
+
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["dupl-t-2", "dupl-t-5", "dupl-t-10", "dupl-t-100"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"dupl-t-2": "d=2", "dupl-t-3": "3 dupl. tests", "dupl-t-4": "4 dupl. tests", "dupl-t-5": "d=5", "dupl-t-10": "d=10", "dupl-t-100": "d=100"})        
+
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["dupl-c-2", "dupl-c-5", "dupl-c-10", "dupl-c-100"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"ideal": "no dupl", "dupl-c-2": "d=2", "dupl-c-3": "3 dupl. tests", "dupl-c-4": "4 dupl. tests", "dupl-c-5": "d=5", "dupl-c-10": "d=10", "dupl-c-100": "d-100"})        
+
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["ideal", "dependant-all-1", "dependant-all-2"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"ideal": "no dep", "dependant-all-1": "1 dep", "dependant-all-2": "2 deps"})       
+
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA"], aggregation = "all", \
+    #             game_names=["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4"], \
+    #             sim_names=["des-mea", "des-mea-2", "des-mea-5", "des-mea-100"], \
+    #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #         
+
+    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+                    game_names=[], \
+                    sim_names=["rand", "des-med", "des-mea"], \
+                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})       
     pass
+
+
+# import numpy as np
+# from scipy.stats import spearmanr
+
+# # Example data
+# x = np.array([10, 20, 19, 40, 18])
+# y = np.array([5, 15, 25, 35, 45])
+
+# # Calculate Spearman rank-order correlation coefficient
+# correlation, p_value = spearmanr(x, y)
+
+# print(f"Spearman correlation coefficient: {correlation}")
+# print(f"P-value: {p_value}")

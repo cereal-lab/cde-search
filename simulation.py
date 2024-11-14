@@ -32,10 +32,15 @@ def simulate(algo, *, cand_algo = OneTimeSequential, **kwargs):
 
 NUMBER_GAMES = {game.__name__: game for game in [ GreaterThanGame, FocusingGame, IntransitiveRegionGame, CompareOnOneGame ] }
 
-def get_spanned_space():
+def get_2ax_spanned_space(num_spanned):
     space = CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)
-    for i in range(10):
-        space = space.with_spanned_point([(i - 1, -1), (i, -1)], 1)
+    from itertools import combinations
+    cnt = 0 
+    for ax_1, ax_2 in combinations(range(10), 2):
+        space = space.with_spanned_point([(ax_1, -1), (ax_2, -1)], 1)
+        cnt += 1
+        if cnt == num_spanned:
+            break
     return space
 
 def build_space_game(space_builder):
@@ -44,18 +49,8 @@ def build_space_game(space_builder):
         return CDESpaceGame(space, **kwargs)
     return b
 
-NEW_RQS = {
-    "dupl-t-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 1)),
-    "dupl-c-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 100)),
-    "dupl-100": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 100).with_candidate_distribution(0, 100)),
-    "dupl-t-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10).with_candidate_distribution(0, 1)),
-    "dupl-c-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 10)),
-    "dupl-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10).with_candidate_distribution(0, 10)),    
-}
-
 GAMES = {
     **NUMBER_GAMES,
-    **NEW_RQS,
     # RQ0: No skew of points on axes, no spanned, no non-informative, no duplicates, strong independance
     #     Space with 10 axes and 5 points per axis. Num cands = 50, num_tests = 50. 
     #     Max ints = 2500, expected ints = 50 (cands) * 10 (axes) = 500
@@ -70,43 +65,55 @@ GAMES = {
     "skew-p-4": build_space_game(lambda: CDESpace([9, 9, 9, 9, 9, 1, 1, 1, 1, 1]).with_test_distribution(0, 1).with_candidate_distribution(0, 1)),
     
     # RQ2: Under skew of tests on points, how does ARR change for different algos (extreme to nonInfo)? Noise of test triviality and similarity
-    "trivial-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(1, 1).with_candidate_distribution(0, 1)), #with 1 non-info
-    "trivial-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(5, 1).with_candidate_distribution(0, 1)), #with 2 non-info
-    "trivial-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(10, 1).with_candidate_distribution(0, 1)), #with 3 non-info
-    "trivial-15": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(15, 1).with_candidate_distribution(0, 1)), #with 4 non-info
-    "trivial-20": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(20, 1).with_candidate_distribution(0, 1)), #with 5 non-info
-    "trivial-25": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(25, 1).with_candidate_distribution(0, 1)), #with 10 non-info
+    # "trivial-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(1, 1).with_candidate_distribution(0, 1)), #with 1 non-info
+    # "trivial-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(5, 1).with_candidate_distribution(0, 1)), #with 2 non-info
+    "trivial-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(5, 1).with_candidate_distribution(0, 1)), #with 3 non-info
+    # "trivial-15": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(15, 1).with_candidate_distribution(0, 1)), #with 4 non-info
+    "trivial-25": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(25, 1).with_candidate_distribution(0, 1)), #with 5 non-info
+    # "trivial-25": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(25, 1).with_candidate_distribution(0, 1)), #with 10 non-info
+    "trivial-50": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(50, 1).with_candidate_distribution(0, 1)),
+    
+    "skew-t-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [10,1,1,1,1]).with_candidate_distribution(0, 1)), #duplicates
+    "skew-t-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,10,1,1,1]).with_candidate_distribution(0, 1)),
+    "skew-t-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,1,10,1,1]).with_candidate_distribution(0, 1)),
+    "skew-t-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,1,1,10,1]).with_candidate_distribution(0, 1)),
+    "skew-t-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,1,1,1,10]).with_candidate_distribution(0, 1)),
 
-    "skew-t-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [6,1,1,1,1]).with_candidate_distribution(0, 1)), #duplicates
-    "skew-t-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,6,1,1,1]).with_candidate_distribution(0, 1)),
-    "skew-t-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,1,6,1,1]).with_candidate_distribution(0, 1)),
-    "skew-t-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,1,1,6,1]).with_candidate_distribution(0, 1)),
-    "skew-t-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, [1,1,1,1,6]).with_candidate_distribution(0, 1)),
-
-    "skew-c-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [6,1,1,1,1])), #duplicates
-    "skew-c-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,6,1,1,1])),
-    "skew-c-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,1,6,1,1])),
-    "skew-c-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,1,1,6,1])),
-    "skew-c-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,1,1,1,6])),
+    "skew-c-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [10,1,1,1,1])), #duplicates
+    "skew-c-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,10,1,1,1])),
+    "skew-c-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,1,10,1,1])),
+    "skew-c-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,1,1,10,1])),
+    "skew-c-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, [1,1,1,1,10])),
     
     # RQ3: Under presense of spanned points how R, D, ARR (ARR*) changes? Noise of test complexity
     "span-all-ends-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
                               .with_spanned_point([(i, -1) for i in range(10)], 1)),
     "span-all-ends-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
                               .with_spanned_point([(i, -1) for i in range(10)], 5)),
-    "span-one-pair-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
-                              .with_spanned_point([(0, -1), (1, -1)], 1)),
-    "span-all-pairs-1": build_space_game(get_spanned_space),
+    "span-all-ends-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
+                              .with_spanned_point([(i, -1) for i in range(10)], 10)),
+    "span-all-ends-20": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
+                              .with_spanned_point([(i, -1) for i in range(10)], 20)),
+    # "span-one-pair-1": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)\
+    #                           .with_spanned_point([(0, -1), (1, -1)], 1)),
+    "span-pairs-1": build_space_game(get_2ax_spanned_space(1)),
+    "span-pairs-5": build_space_game(get_2ax_spanned_space(5)),
+    "span-pairs-10": build_space_game(get_2ax_spanned_space(10)),
+    "span-pairs-20": build_space_game(get_2ax_spanned_space(20)),
 
     #RQ4: Under presense of duplicated tests how Dup, D, ARR (ARR*) changes? Noise of test similarity
-    "dupl-t-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 2).with_candidate_distribution(0, 1)),
-    "dupl-t-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 3).with_candidate_distribution(0, 1)),
-    "dupl-t-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 4).with_candidate_distribution(0, 1)),
+    # "dupl-t-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 2).with_candidate_distribution(0, 1)),
+    # "dupl-t-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 3).with_candidate_distribution(0, 1)),
+    # "dupl-t-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 4).with_candidate_distribution(0, 1)),
     "dupl-t-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 5).with_candidate_distribution(0, 1)),    
-    "dupl-c-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 2)),
-    "dupl-c-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 3)),
-    "dupl-c-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 4)),
+    "dupl-t-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 10).with_candidate_distribution(0, 1)),
+    "dupl-t-50": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 50).with_candidate_distribution(0, 1)),
+    # "dupl-c-2": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 2)),
+    # "dupl-c-3": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 3)),
+    # "dupl-c-4": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 4)),
     "dupl-c-5": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 5)),
+    "dupl-c-10": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 10)),
+    "dupl-c-50": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 50)),
 
     #RQ5: Under increase number of objectives per candidate, how algo behavior change? Noise of weak independance of axes
     # space = CDESpace([5] * 10).with_axes_dependency(0, -1, 1, -1)
@@ -123,8 +130,6 @@ GAMES = {
 
 SIM = {
     "rand":     simulate(RandSelection),
-    "hc-pmo-i": simulate(HillClimbing, test_mutation_strategy = "plus_minus_one", test_selection_strategy="informativeness_select"),
-    "hc-pmo-p": simulate(HillClimbing, test_mutation_strategy = "plus_minus_one", test_selection_strategy="pareto_select"),
     "hc-r-i":   simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="informativeness_select"),
     "hc-r-p":   simulate(HillClimbing, test_mutation_strategy = "resample", test_selection_strategy="pareto_select"),
     "de-l":     simulate(DESelection, test_cand_sel_strategy = "local_cand_sel_strategy"), 
@@ -132,34 +137,17 @@ SIM = {
     "de-d-1":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="one_approx_strategy"), 
     "de-d-m":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="maj_c_approx_strategy"), 
     "de-d-g":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_group_approx_strategy"), 
-    "de-d-s":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="candidate_subgroup_approx_strategy"), 
+    "de-d-d":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 100), 
     "de-d-d-0": simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 0), 
     "de-d-d-1": simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 1), 
-    "de-d-d-2": simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 2), 
     "de-d-d-5": simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 5), 
-    "de-d-d-100":   simulate(DESelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_approx_strategy="deca_approx_strategy", test_spanned_memory = 100), 
     "des-mea":  simulate(DEScores, test_score_strategy="mean_score_strategy"),
-    "des-mea-0":  simulate(DEScores, test_score_strategy="mean_score_strategy", test_spanned_memory = 0),
-    "des-mea-1":  simulate(DEScores, test_score_strategy="mean_score_strategy", test_spanned_memory = 1),
-    "des-mea-2":  simulate(DEScores, test_score_strategy="mean_score_strategy", test_spanned_memory = 2),
-    "des-mea-5":  simulate(DEScores, test_score_strategy="mean_score_strategy", test_spanned_memory = 5),
-    "des-mea-100":  simulate(DEScores, test_score_strategy="mean_score_strategy", test_spanned_memory = 100),
     "des-med":  simulate(DEScores, test_score_strategy="median_score_strategy"),
-    "des-med-0":  simulate(DEScores, test_score_strategy="median_score_strategy", test_spanned_memory = 0),
-    "des-med-1":  simulate(DEScores, test_score_strategy="median_score_strategy", test_spanned_memory = 1),
-    "des-med-2":  simulate(DEScores, test_score_strategy="median_score_strategy", test_spanned_memory = 2),
-    "des-med-5":  simulate(DEScores, test_score_strategy="median_score_strategy", test_spanned_memory = 5),
-    "des-med-100":  simulate(DEScores, test_score_strategy="median_score_strategy", test_spanned_memory = 100),
-    "pl-l-0":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_spanned_memory = 0),
-    "pl-l-1":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_spanned_memory = 1),
-    "pl-l-2":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_spanned_memory = 2),
-    "pl-l-5":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_spanned_memory = 5),
-    "pl-l-100":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_spanned_memory = 100),
-    "pl-d-0":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_spanned_memory = 0),
-    "pl-d-1":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_spanned_memory = 1),
-    "pl-d-2":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_spanned_memory = 2),
-    "pl-d-5":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_spanned_memory = 5),
-    "pl-d-100":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_spanned_memory = 100),
+    "des-mod":  simulate(DEScores, test_score_strategy="mode_score_strategy"),
+    "pl-l-0":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_discard_spanned = 0),
+    "pl-l-1":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_discard_spanned = 1),
+    "pl-d-0":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_discard_spanned = 0),
+    "pl-d-1":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_discard_spanned = 1),
 }
 
 from tabulate import tabulate
@@ -175,8 +163,8 @@ if __name__ == '__main__':
     cnt = 0
     with open("lst.txt", "w") as f:
         for sim_name in SIM.keys():
-            # for game_name in GAMES.keys():
-            game_name = "IntransitiveRegionGame"
-            cnt += 1
-            print(f"'{sim_name}:{game_name}'", file = f)
+            for game_name in GAMES.keys():
+                # game_name = "IntransitiveRegionGame"
+                cnt += 1
+                print(f"'{sim_name}:{game_name}'", file = f)
     print('Number of configs:', cnt)

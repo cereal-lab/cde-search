@@ -263,8 +263,8 @@ if __name__ == '__main__':
     # game = GreaterThanGame(0, 2)
     # game = CompareOnOneGame(0, 2)
     # game = FocusingGame(0, 2)
-    # game = IntransitiveGame(0, 2)
-    game = IntransitiveRegionGame(num_intransitive_regions=3, min_num=0, max_num = 5)
+    game = IntransitiveGame(0, 2)
+    # game = IntransitiveRegionGame(num_intransitive_regions=3, min_num=0, max_num = 5)
     # game = IntransitiveGame(num_intransitive_regions=3, min_num=0, max_num = 5)
     # game.save_space()
     # game.load_space()
@@ -310,12 +310,12 @@ if __name__ == '__main__':
     #     rows.append(SEPARATING_LINE)
     int_rows = [[sum(ind_ints), f"{n[0]},{n[1]}", *["" if o == 0 else 1 for o in ind_ints]] for i, ind_ints in enumerate(ints) for n in [game.all_numbers[i]]]
     int_headers = ["win", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]]
-    with open('data/interactions/ints_' + game.__class__.__name__ + ".txt", "w") as f:    
+    with open('data/interactions/ints_' + game.__class__.__name__ + ".tex", "w") as f:    
         print(f"Interactions of {game.__class__.__name__}", file=f)
-        print(tabulate(int_rows, headers=int_headers, tablefmt = "simple", numalign="center", stralign="center"), file=f)
+        print(tabulate(int_rows, headers=int_headers, tablefmt = "latex", numalign="center", stralign="center"), file=f)
         print("\n", file=f)
         print(f"Dims: {len(dim_nums)}, points={max_dim} Origin: {len(origin_nums)} Spanned: {len(spanned_nums)}", file=f)
-        print(tabulate(rows, headers=["dim", "pos", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]], tablefmt='simple', numalign="center", stralign="center"), file=f)
+        print(tabulate(rows, headers=["dim", "pos", "num", *[f"{n[0]},{n[1]}" for n in game.all_numbers]], tablefmt='latex', numalign="center", stralign="center"), file=f)
     # print(f"{game.all_numbers}")
 
     # print(f"Spanned")

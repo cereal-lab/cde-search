@@ -163,7 +163,7 @@ def set_unknown_to_vect(test: list[Optional[int]], vect: list[int]):
         if test[i] is None:
             test[i] = vect[i]
 
-def filter_spanned(dimensions, spanned):
+def filter_spanned(dimensions, spanned_set: set[Any]):
     # still need collect spanned point that appear after point insertions - another pass through dimensions
     dim_filters = []
     for dim in dimensions:
@@ -174,8 +174,8 @@ def filter_spanned(dimensions, spanned):
             point_prev_pos = get_test_prev_pos(point[1], dimensions)
             is_spanned = is_spanned_prev_pos(point_prev_pos, point[1], dimensions)
             if is_spanned:
-                spanned_dims = {dim_id: point_id for dim_id, point_id in point_prev_pos}
-                spanned.update({test_id:spanned_dims for test_id in point[0]})
+                # spanned_dims = {dim_id: next(iter(dimensions[dim_id][point_id][0])) for dim_id, point_id in point_prev_pos}
+                spanned_set.update(point[0])
                 dim_spanned_points.append(point_id)
         dim_spanned_points.sort(reverse=True)
         dim_filters.append(dim_spanned_points)
@@ -186,7 +186,7 @@ def filter_spanned(dimensions, spanned):
 def extract_dims_fix(tests: list[list[int]]):
     ''' Fix case - see matrix-case.txt '''
     origin = [] # tests that are placed at the origin of coordinate system
-    spanned = {} # tests that are combinations of tests on axes (union of CFS)
+    spanned_set = set()
     dimensions = [] # tests on axes     
     
     test_to_insert = []
@@ -211,7 +211,7 @@ def extract_dims_fix(tests: list[list[int]]):
             test_pos, dupl_pos = get_test_pos_def(test, dimensions)
             is_spanned = is_spanned_pos_def(test_pos, test, dimensions)
             if is_spanned:
-                spanned[test_id] = {dim_id: point_id - 1 for dim_id, point_id in test_pos if point_id > 0}
+                spanned_set.add(test_id)
                 continue
             if dupl_pos is not None:                 
                 dim_id, point_id = dupl_pos
@@ -266,14 +266,20 @@ def extract_dims_fix(tests: list[list[int]]):
         del test_outcomes[min_test_id]
         test_to_insert = list(test_outcomes.items())
                 
-    filter_spanned(dimensions, spanned)
+    # spanned refs contain dim_id and test that represent some point in dim. We need to find point id of the test from dimensions 
+    filter_spanned(dimensions, spanned_set)
+    spanned = {}
+    for test_id in spanned_set:
+        test_pos = get_test_prev_pos(tests[test_id], dimensions)
+        spanned[test_id] = {dim_id: point_id for dim_id, point_id in test_pos}    
+
     dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
     return dims, origin, spanned
 
 def extract_dims_approx(tests: list[list[Optional[int]]]):
     ''' Modification of the DE for case of sparse matrix '''
     origin = []
-    spanned = {}
+    spanned_set = set()
     dimensions = [] # tests on axes       
 
     test_to_insert = []
@@ -302,7 +308,7 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
             is_spanned, spanned_approx = is_spanned_pos(test_pos, test, dimensions)
             if is_spanned:
                 set_unknown_to_vect(test, spanned_approx)
-                spanned[test_id] = {dim_id: point_id - 1 for dim_id, point_id in test_pos if point_id > 0}
+                spanned_set.add(test_id)
                 continue
             if dupl_pos is not None: #is_duplicate                 
                 dim_id, point_id = dupl_pos
@@ -373,7 +379,12 @@ def extract_dims_approx(tests: list[list[Optional[int]]]):
         del test_outcomes[min_test_id]
         test_to_insert = list(test_outcomes.items())
 
-    filter_spanned(dimensions, spanned)
+    filter_spanned(dimensions, spanned_set)
+    spanned = {}
+    for test_id in spanned_set:
+        test_pos = get_test_prev_pos(tests[test_id], dimensions)
+        spanned[test_id] = {dim_id: point_id for dim_id, point_id in test_pos}
+
     dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
     return dims, origin, spanned # here all unknown values are approximated
 
@@ -594,7 +605,7 @@ def get_batch_pareto_layers(tests: list[list[int]], max_layers = 1):
 
     return layers 
 
-def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, discard_spanned = lambda x: False):
+def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, discard_spanned = False):
     ''' Works with sparsed matrices '''
     layers = []
     layer_num = 0 
@@ -614,7 +625,7 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, d
         if dupl_of_test is not None:
             duplicates.setdefault(dupl_of_test, set()).add(test_id)
             continue
-        if discard_spanned(test_id):
+        if discard_spanned: # do spanned test
             dominated_tests = [t2 for t2 in tests if all(o1 >= o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None) and any(o1 > o2 for o1, o2 in zip(test, t2) if o1 is not None and o2 is not None)]
             and_all = [1 if any(o == 1 for o in el) else None if any(o is None for o in el) else 0 for el in zip(*dominated_tests)]
             if len(and_all) > 0 and all(o1 == o2 for o1, o2 in zip(test, and_all) if o1 is not None and o2 is not None):
@@ -704,9 +715,9 @@ if __name__ == "__main__":
 [1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1],
 [0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1],
 [1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1]]    
-    # dims1, _, _ = extract_dims(tests)
-    # dims2, _, _ = extract_dims_fix(tests)
-    # dims3, _, _ = extract_dims_approx(tests)
+    dims1, _, _ = extract_dims(tests)
+    dims2, _, _ = extract_dims_fix(tests)
+    dims3, _, _ = extract_dims_approx(tests)
     test2 = [[1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1],
         [0, 1, None, None, None, None, None, None, 0, 0, 0],
         [1, 1, None, None, None, None, None, None, 1, 1, 1],
