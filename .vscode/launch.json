@@ -20,7 +20,7 @@
             "console": "integratedTerminal",
             "args": [
                 "game",
-                "-sim", "hc-r-p:IntransitiveRegionGame",
+                "-sim", "des-mea:span-pairs-1",
                 "--times", "1"
             ],
             "justMyCode": true

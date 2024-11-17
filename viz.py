@@ -387,6 +387,368 @@ def draw_latex_mean_std_tbl(metrics_file: str, metric_name = "ARRA", sim_names =
             print("", file = table_file)
     print(f"\\end{{tabular}}", file = table_file)
 
+def draw_latex_threshold_convergence_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
+                                table_file=None, name_remap = {}, min_threshold = 0.8, max_threshold = 0.9,
+                                exclude_sim_names = ["des-med", "pl-l-1", "pl-d-1", "pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"],
+                                rename = {"pl-d-0": "pl-d", "pl-l-0": "pl-l"}):
+    ''' We compute number of runs in which algo crossed the threshold and did not exit it  '''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    groups = {}
+    sim_names = set(sim_names)
+    present_sim_names = set()
+    exclude_sim_names = set(exclude_sim_names)
+    for run in runs: 
+        sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        if game_name == "IntransitiveRegionGame" and run["param_sel_size"] == 5:
+            continue      
+        if sim_name in exclude_sim_names:
+            continue  
+        if len(sim_names) > 0 and sim_name not in sim_names:
+            continue
+        if game_name not in game_names:
+            continue
+        key = (sim_name, game_name)
+        present_sim_names.add(sim_name)
+        groups.setdefault(key, []).append(run["metric_" + metric_name])    
+    present_sim_names = list(present_sim_names)
+    group_by_sims = {}
+    def score(v):
+        if v >= max_threshold:
+            return 1
+        if v >= min_threshold:
+            return 0.5
+        return 0
+    for (sim_name, game_name), all_values in groups.items():
+        n = sum(score(run_values[-1]) for run_values in all_values)
+        s = [0 if np.isnan(s) else s for run_values in all_values for s, _ in [stats.spearmanr(run_values, range(len(run_values)))]]
+
+        ttrts = []
+        # num_thr = 0
+        # num_thr_reached = 0
+        for run_values in all_values:
+            ttrt = None # never reached                
+            # is_below = True
+            for i, v in enumerate(run_values):
+                if v >= max_threshold and ttrt is None :
+                    ttrt = i 
+            if ttrt is not None:
+                ttrts.append(ttrt)
+        # v = 101 if len(ttrts) == 0 else np.median(ttrts)        
+        group_by_sims.setdefault(sim_name, {})[game_name] = (n, ttrts, s)
+    total_conv = {}
+    total_spearman = {}
+    total_ttrt = {}
+    for sim_name in present_sim_names:
+        total_conv[sim_name] = sum([group_by_sims[sim_name][game_name][0] for game_name in game_names])
+        ttrts = [ttrt for game_name in game_names for ttrt in group_by_sims[sim_name][game_name][1]]
+        total_ttrt[sim_name] = 101 if len(ttrts) == 0 else np.mean(ttrts)
+        total_spearman[sim_name] = np.mean([s for game_name in game_names for s in group_by_sims[sim_name][game_name][2]])
+    # NOTE: should be sorted by general rank
+    rows = sorted(group_by_sims.items(), key=lambda x: total_conv[x[0]], reverse=True) # from best to worst
+    print(f"\\begin{{tabular}}{{ | l | { ' '.join(['c'] * len(game_names)) } | c | { ' '.join(['c'] * len(game_names)) } | c | }}", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # header for games
+    print("\\hline", file = table_file)
+    print(f"Algo", end = "", file = table_file)
+    for game_name in game_names:    
+        gn = name_remap.get(game_name, game_name)
+        print(f"& {gn} ", end = "", file = table_file)
+    print(f"& Rate", end = "", file = table_file)
+    # for game_name in game_names:    
+    #     gn = name_remap.get(game_name, game_name)
+    #     print(f"& {gn} ", end = "", file = table_file)
+    # print(f"& TTRT", end = "", file = table_file) 
+    for game_name in game_names:    
+        gn = name_remap.get(game_name, game_name)
+        print(f"& {gn} ", end = "", file = table_file)
+    print(f"& S", end = "", file = table_file)         
+    print(f"\\\\\\hline", file = table_file)
+    #subheader for metrics
+    # print(f" & ", end="", file = table_file)
+    # for game_name in game_names:
+    #     print(f"& {metric_name} & Rank ", end = "", file = table_file)
+    # print(f" & ", end="", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # body of the table 
+    for row_id, (sim_name, game_groups) in enumerate(rows):
+        print(f"{sim_name} ", end = "", file = table_file)
+        for game_name in game_names:
+            num, _, _ = game_groups[game_name]
+            print(" & {0:.0f} ".format(num * 100 / 30), end = "", file = table_file)
+        print(f"& {total_conv[sim_name] * 100 / (30 * len(game_names)):.1f}", end = "", file = table_file)
+        # for game_name in game_names:
+        #     _, ttrts, _ = game_groups[game_name]
+        #     ttrt = 101 if len(ttrts) == 0 else np.mean(ttrts)
+        #     if ttrt == 101:
+        #         print(" & $\infty$ ", end = "", file = table_file)
+        #     else: 
+        #         print(" & {0:.0f} ".format(ttrt), end = "", file = table_file)
+        # if total_ttrt[sim_name] == 101:
+        #     print(f"& $\infty$", end = "", file = table_file)
+        # else:
+        #     print(f"& {total_ttrt[sim_name]:.0f}", end = "", file = table_file)   
+        for game_name in game_names:
+            _, _, s = game_groups[game_name]
+            sv = np.mean(s)
+            print(" & {0:.2f} ".format(sv), end = "", file = table_file)
+        print(f"& {total_spearman[sim_name]:.2f}", end = "", file = table_file)                 
+        # if row_id != len(rows) - 1:
+        print(f"\\\\\\hline", file = table_file)
+        # else:
+        #     print("", file = table_file)
+    
+    print(f"\\end{{tabular}}", file = table_file)
+
+
+def draw_latex_thr_conv_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
+                                table_file=None, name_remap = {}, min_threshold = 0.8, max_threshold = 0.9,
+                                exclude_sim_names = ["pl-l-1", "pl-d-1", "pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"],
+                                rename = {"pl-d-0": "pl-d", "pl-l-0": "pl-l"}):
+    ''' We compute number of runs in which algo crossed the threshold and did not exit it  '''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    groups = {}
+    sim_names = set(sim_names)
+    present_sim_names = set()
+    exclude_sim_names = set(exclude_sim_names)
+    for run in runs: 
+        sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        if game_name == "IntransitiveRegionGame" and run["param_sel_size"] == 5:
+            continue      
+        if sim_name in exclude_sim_names:
+            continue  
+        if len(sim_names) > 0 and sim_name not in sim_names:
+            continue
+        if game_name not in game_names:
+            continue
+        key = (sim_name, game_name)
+        present_sim_names.add(sim_name)
+        groups.setdefault(key, []).append(run["metric_" + metric_name])    
+    present_sim_names = list(present_sim_names)
+    group_by_sims = {}
+    def score(v):
+        if v >= max_threshold:
+            return 1
+        if v >= min_threshold:
+            return 0.5
+        return 0
+    for (sim_name, game_name), all_values in groups.items():
+        n = sum(score(run_values[-1]) for run_values in all_values)
+        s = [0 if np.isnan(s) else s for run_values in all_values for s, _ in [stats.spearmanr(run_values, range(len(run_values)))]]
+
+        ttrts = []
+        # num_thr = 0
+        # num_thr_reached = 0
+        for run_values in all_values:
+            ttrt = None # never reached                
+            # is_below = True
+            for i, v in enumerate(run_values):
+                if v >= max_threshold and ttrt is None :
+                    ttrt = i 
+            if ttrt is not None:
+                ttrts.append(ttrt)
+        # v = 101 if len(ttrts) == 0 else np.median(ttrts)        
+        group_by_sims.setdefault(sim_name, {})[game_name] = (n, ttrts, s)
+    total_conv = {}
+    total_spearman = {}
+    total_ttrt = {}
+    for sim_name in present_sim_names:
+        total_conv[sim_name] = sum([group_by_sims[sim_name][game_name][0] for game_name in game_names])
+        ttrts = [ttrt for game_name in game_names for ttrt in group_by_sims[sim_name][game_name][1]]
+        total_ttrt[sim_name] = 101 if len(ttrts) == 0 else np.mean(ttrts)
+        total_spearman[sim_name] = np.mean([s for game_name in game_names for s in group_by_sims[sim_name][game_name][2]])
+    # NOTE: should be sorted by general rank
+    rows = sorted(group_by_sims.items(), key=lambda x: total_conv[x[0]], reverse=True) # from best to worst
+    print(f"\\begin{{tabular}}{{ | l | { ' '.join(['c'] * len(game_names)) } | c | }}", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # header for games
+    print("\\hline", file = table_file)
+    print(f"Algo", end = "", file = table_file)
+    for game_name in game_names:    
+        gn = name_remap.get(game_name, game_name)
+        print(f"& {gn} ", end = "", file = table_file)
+    print(f"& Rate", end = "", file = table_file)
+    # for game_name in game_names:    
+    #     gn = name_remap.get(game_name, game_name)
+    #     print(f"& {gn} ", end = "", file = table_file)
+    # print(f"& TTRT", end = "", file = table_file) 
+    # for game_name in game_names:    
+    #     gn = name_remap.get(game_name, game_name)
+    #     print(f"& {gn} ", end = "", file = table_file)
+    # print(f"& S", end = "", file = table_file)         
+    print(f"\\\\\\hline", file = table_file)
+    #subheader for metrics
+    # print(f" & ", end="", file = table_file)
+    # for game_name in game_names:
+    #     print(f"& {metric_name} & Rank ", end = "", file = table_file)
+    # print(f" & ", end="", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # body of the table 
+    for row_id, (sim_name, game_groups) in enumerate(rows):
+        print(f"{sim_name} ", end = "", file = table_file)
+        for game_name in game_names:
+            num, _, _ = game_groups[game_name]
+            print(" & {0:.0f} ".format(num * 100 / 30), end = "", file = table_file)
+        print(f"& {total_conv[sim_name] * 100 / (30 * len(game_names)):.1f}", end = "", file = table_file)
+        # for game_name in game_names:
+        #     _, ttrts, _ = game_groups[game_name]
+        #     ttrt = 101 if len(ttrts) == 0 else np.mean(ttrts)
+        #     if ttrt == 101:
+        #         print(" & $\infty$ ", end = "", file = table_file)
+        #     else: 
+        #         print(" & {0:.0f} ".format(ttrt), end = "", file = table_file)
+        # if total_ttrt[sim_name] == 101:
+        #     print(f"& $\infty$", end = "", file = table_file)
+        # else:
+        #     print(f"& {total_ttrt[sim_name]:.0f}", end = "", file = table_file)   
+        # for game_name in game_names:
+        #     _, _, s = game_groups[game_name]
+        #     sv = np.mean(s)
+        #     print(" & {0:.2f} ".format(sv), end = "", file = table_file)
+        # print(f"& {total_spearman[sim_name]:.2f}", end = "", file = table_file)                 
+        # if row_id != len(rows) - 1:
+        print(f"\\\\\\hline", file = table_file)
+        # else:
+        #     print("", file = table_file)
+    
+    print(f"\\end{{tabular}}", file = table_file)
+
+
+def formatFloat(fmt, val):
+  ret = fmt % val
+  if ret.startswith("0."):
+    return ret[1:]
+  if ret.startswith("-0."):
+    return "-" + ret[2:]
+  return ret
+
+def draw_latex_thr_conv_grp_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_name_groups = [["CompareOnOneGame"]],
+                                table_file=None, name_remap = {}, min_threshold = 0.8, max_threshold = 0.9,
+                                exclude_sim_names = ["pl-l-1", "pl-d-1", "pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"],
+                                rename = {"pl-d-0": "pl-d", "pl-l-0": "pl-l"}):
+    ''' We compute number of runs in which algo crossed the threshold and did not exit it  '''
+    with open(metrics_file, "r") as f:
+        lines = f.readlines()
+    runs = [json.loads(line) for line in lines ]
+    groups = {}
+    sim_names = set(sim_names)
+    present_sim_names = set()
+    exclude_sim_names = set(exclude_sim_names)
+    all_game_names = set([g for gng in game_name_groups for g in gng])
+    groups_map = {game_name: i for i, g in enumerate(game_name_groups) for game_name in g}
+    for run in runs: 
+        sim_name = run["sim_name"]
+        game_name = run["game_name"]
+        if game_name == "IntransitiveRegionGame" and run["param_sel_size"] == 5:
+            continue      
+        if sim_name in exclude_sim_names:
+            continue  
+        if len(sim_names) > 0 and sim_name not in sim_names:
+            continue
+        if game_name not in all_game_names:
+            continue
+        key = (sim_name, groups_map[game_name])
+        present_sim_names.add(sim_name)
+        groups.setdefault(key, []).append(run["metric_" + metric_name])    
+    present_sim_names = list(present_sim_names)
+    group_by_sims = {}
+    def score(v):
+        if v >= max_threshold:
+            return 1
+        if v >= min_threshold:
+            return 0.5
+        return 0
+    for (sim_name, game_group), all_values in groups.items():
+        n = sum(score(run_values[-1]) for run_values in all_values)
+        s = [0 if np.isnan(s) else s for run_values in all_values for s, _ in [stats.spearmanr(run_values, range(len(run_values)))]]
+
+        ttrts = []
+        # num_thr = 0
+        # num_thr_reached = 0
+        for run_values in all_values:
+            ttrt = None # never reached                
+            # is_below = True
+            for i, v in enumerate(run_values):
+                if v >= max_threshold and ttrt is None :
+                    ttrt = i 
+            if ttrt is not None and run_values[-1] >= max_threshold:
+                ttrts.append(ttrt)
+        # v = 101 if len(ttrts) == 0 else np.median(ttrts)        
+        group_by_sims.setdefault(sim_name, {})[game_group] = (n, ttrts, s)
+    total_conv = {}
+    total_spearman = {}
+    total_ttrt = {}
+    for sim_name in present_sim_names:
+        total_conv[sim_name] = sum([group_by_sims[sim_name][i][0] for i in range(len(game_name_groups))])
+        ttrts = [ttrt for i in range(len(game_name_groups)) for ttrt in group_by_sims[sim_name][i][1]]
+        total_ttrt[sim_name] = 101 if len(ttrts) == 0 else np.mean(ttrts)
+        total_spearman[sim_name] = np.mean([s for i in range(len(game_name_groups)) for s in group_by_sims[sim_name][i][2]])
+    # NOTE: should be sorted by general rank
+    rows = sorted(group_by_sims.items(), key=lambda x: total_conv[x[0]], reverse=True) # from best to worst
+    print(f"\\begin{{tabular}}{{ | l | { ' '.join(['c'] * len(game_name_groups)) }  c |  { ' '.join(['c'] * len(game_name_groups)) } c |  { ' '.join(['c'] * len(game_name_groups)) } c |}}", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # header for games
+    print("\\hline", file = table_file)
+    print(f"\\multirow{{2}}{{*}}{{Algo}}", end = "", file = table_file)
+    print(f"& \\multicolumn{{{len(game_name_groups) + 1}}}{{c|}}{{Convergence rate, \%}}", end = "", file = table_file)
+    print(f"& \\multicolumn{{{len(game_name_groups) + 1}}}{{c|}}{{Time to threshold}}", end = "", file = table_file)
+    print(f"& \\multicolumn{{{len(game_name_groups) + 1}}}{{c|}}{{Monotonicity}}", end = "", file = table_file)
+    # print(f"& \\multicolumn{{{len(game_names)}}}{{c}}{{Miss}}", end = "", file = table_file)
+    print("\\\\", file = table_file)
+    # print("&", end = "", file = table_file)
+    for i in range(len(game_name_groups)):
+        print(f"& {(i + 1)} ", end = "", file = table_file)
+    print(f"& $\sum$ ", end = "", file = table_file)
+    for i in range(len(game_name_groups)):
+        print(f"& {(i + 1)} ", end = "", file = table_file)
+    print(f"& $\sum$ ", end = "", file = table_file) 
+    for i in range(len(game_name_groups)):
+        print(f"& {(i + 1)} ", end = "", file = table_file)
+    print(f"& $\sum$ ", end = "", file = table_file)         
+    print(f"\\\\\\hline", file = table_file)
+    #subheader for metrics
+    # print(f" & ", end="", file = table_file)
+    # for game_name in game_names:
+    #     print(f"& {metric_name} & Rank ", end = "", file = table_file)
+    # print(f" & ", end="", file = table_file)
+    # print(f"\\\\\\hline", file = table_file)
+    # body of the table 
+    for row_id, (sim_name, game_groups) in enumerate(rows):
+        print(f"{sim_name} ", end = "", file = table_file)
+        for i in range(len(game_name_groups)):
+            num, _, _ = game_groups[i]
+            print(" & {0:.0f} ".format(num * 100 / (30 * len(game_name_groups[i]))), end = "", file = table_file)
+        print(f"& {total_conv[sim_name] * 100 / (30 * sum(len(g) for g in game_name_groups)):.1f}", end = "", file = table_file)
+        for i in range(len(game_name_groups)):
+            _, ttrts, _ = game_groups[i]
+            ttrt = 101 if len(ttrts) == 0 else np.mean(ttrts)
+            if ttrt == 101:
+                print(" & $\infty$ ", end = "", file = table_file)
+            else: 
+                print(" & {0:.0f} ".format(ttrt), end = "", file = table_file)
+        if total_ttrt[sim_name] == 101:
+            print(f"& $\infty$", end = "", file = table_file)
+        else:
+            print(f"& {total_ttrt[sim_name]:.0f}", end = "", file = table_file)   
+        for i in range(len(game_name_groups)):
+            _, _, s = game_groups[i]
+            sv = np.mean(s)
+            vv = formatFloat("%.2f", sv)
+            print(f" & {vv} ", end = "", file = table_file)
+        vv = formatFloat("%.2f", total_spearman[sim_name])
+        print(f"& {vv}", end = "", file = table_file)                 
+        # if row_id != len(rows) - 1:
+        print(f"\\\\\\hline", file = table_file)
+        # else:
+        #     print("", file = table_file)
+    
+    print(f"\\end{{tabular}}", file = table_file)
+
 def draw_latex_ranks_tbl(metrics_file: str, metric_name = "ARRA", sim_names = [], game_names = ["CompareOnOneGame"],
                                 table_file=None, p_value = 0.05, name_remap = {},
                                 exclude_sim_names = ["pl-d-2", "pl-d-5", "pl-d-100", "pl-l-2", "pl-l-5", "pl-l-100"]):
@@ -803,20 +1165,52 @@ if __name__ == "__main__":
     #                                 name_remap={"CompareOnOneGame": "Cmp1", "FocusingGame": "Focus", "IntransitiveRegionGame": "Intr", "GreaterThanGame":"GrTh"})
     
 
-    space_games = ["ideal", "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
-                                                    "trivial-1","trivial-5", "trivial-10", "trivial-15", "trivial-20",
-                                                    "trivial-25", "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4",
-                                                    "skew-t-5", "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
-                                                    "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
-                                                    "span-all-pairs-1", "dupl-t-2", "dupl-t-3", "dupl-t-4", "dupl-t-5", "dupl-t-10", "dupl-t-100", 
-                                                    "dupl-c-2", "dupl-c-3", "dupl-c-4", "dupl-c-5", "dupl-c-10", "dupl-c-100",
-                                                    "dependant-all-1", "dependant-all-2"]
+    space_games = ["ideal", 
+                   "dependant-all-1", "dependant-all-2",
+                   "skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4", 
+                   "trivial-5", "trivial-25", "trivial-50",
+                    "skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4", "skew-t-5", 
+                    "skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5", 
+                    "dupl-t-5", "dupl-t-10", "dupl-t-50", 
+                    "dupl-c-5", "dupl-c-10", "dupl-c-50",
+                    "span-all-ends-1", "span-all-ends-5", "span-all-ends-10", "span-all-ends-20",
+                    "span-pairs-1", "span-pairs-5", "span-pairs-10", "span-pairs-20"
+                    ]
     # with open("data/plots/tables.tex", "w") as f:
     #     draw_latex_ranks_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
     #                                 sim_names = [], 
     #                                 game_names = space_games, 
     #                                 table_file = f)   
+
+
+    # space_games = ["ideal", "skew-p-4", "trivial-50",
+    #                     "skew-t-1", "skew-t-5", "skew-c-1", "skew-c-5", 
+    #                     "span-all-ends-1", "span-all-ends-10", "span-pairs-1", "span-pairs-10", 
+    #                     "dupl-t-50", "dupl-c-50", "dependant-all-2"]
+    # with open("data/plots/tables.tex", "w") as f:
+    #     draw_latex_thr_conv_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+    #                                 sim_names = [], 
+    #                                 game_names = space_games, 
+    #                                 table_file = f,
+    #                                 name_remap={space_games:i for i, space_games in enumerate(space_games)})       
     
+
+    # space_games = [["ideal"], 
+    #                ["dependant-all-1", "dependant-all-2"],
+    #                ["skew-p-1", "skew-p-2", "skew-p-3", "skew-p-4"], 
+    #                ["trivial-5", "trivial-25", "trivial-50"],
+    #                 ["skew-t-1", "skew-t-2", "skew-t-3", "skew-t-4", "skew-t-5"], 
+    #                 ["skew-c-1", "skew-c-2", "skew-c-3", "skew-c-4", "skew-c-5"], 
+    #                 ["dupl-t-5", "dupl-t-10", "dupl-t-50"], 
+    #                 ["dupl-c-5", "dupl-c-10", "dupl-c-50"],
+    #                 ["span-all-ends-1", "span-all-ends-5", "span-all-ends-10", "span-all-ends-20"], 
+    #                 ["span-pairs-1", "span-pairs-5", "span-pairs-10", "span-pairs-20"], 
+    #                 ]
+    # with open("data/plots/tables.tex", "w") as f:
+    #     draw_latex_thr_conv_grp_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+    #                                 sim_names = [], 
+    #                                 game_name_groups = space_games, 
+    #                                 table_file = f)      
 
     # space_games = ["span-all-pairs-1"]
     # with open("data/plots/tables.tex", "w") as f:
@@ -917,8 +1311,8 @@ if __name__ == "__main__":
     # 
 
     # space_games2 = ["ideal", "skew-p-4", "trivial-25", "skew-t-5", 
-    #                 "skew-c-5", "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", 
-    #                 "span-all-pairs-1", "dupl-t-100", "dupl-c-100"]
+    #                 "skew-c-5", "span-all-ends-1", "span-all-ends-5", "span-pairs-1", 
+    #                 "span-pairs-5", "dupl-t-50", "dupl-c-50"]
     
     # map_names = {name:i for i, name in enumerate(space_games) if name in space_games2 }
 
@@ -940,7 +1334,7 @@ if __name__ == "__main__":
     #             name_remap = {"ideal": "5,5", "skew-p-1": "6,4", "skew-p-2": "7,3", "skew-p-3": "8,2", "skew-p-4": "9,1"})
 
     # draw_ttrt("data/metrics/spaces.jsonlist", metric_name = "ARRA", sim_names = [], 
-    #             game_names=["ideal", "trivial-1", "trivial-5", "trivial-10", "trivial-15", "trivial-20", "trivial-25"],
+    #             game_names=["ideal", "trivial-5", "trivial-25", "trivial-50"],
     #             table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
     #             name_remap = {"ideal": "0", "trivial-1": "1", "trivial-5": "5", "trivial-10": "10", "trivial-15": "15", "trivial-20": "20", "trivial-25": "25"})    
     
@@ -956,19 +1350,24 @@ if __name__ == "__main__":
     #                 name_remap = {"skew-c-1": "x=1", "skew-c-2": "x=2", "skew-c-3": "x=3", "skew-c-4": "x=4", "skew-c-5": "x=5"}) 
 
     # draw_ttrt("data/metrics/spaces.jsonlist",
-    #                 game_names=["ideal", "span-all-ends-1", "span-all-ends-5", "span-one-pair-1", "span-all-pairs-1"],
+    #                 game_names=["ideal", "span-all-ends-1", "span-all-ends-5", "span-all-ends-10", "span-all-ends-20"],
     #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
-    #                 name_remap = {"ideal": "0", "span-all-ends-1": "all", "span-all-ends-5": "all 5", "span-one-pair-1": "pair", "span-all-pairs-1": "pairs"})        
+    #                 name_remap = {"ideal": "0", "span-all-ends-1": "all", "span-all-ends-5": "all 5", "span-all-ends-10": "all 10", "span-all-ends-20": "all 20", "span-one-pair-1": "pair", "span-all-pairs-1": "pairs"})        
+    
+    # draw_ttrt("data/metrics/spaces.jsonlist",
+    #                 game_names=["ideal", "span-pairs-1", "span-pairs-5", "span-pairs-10", "span-pairs-20"],
+    #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
+    #                 name_remap = {"ideal": "0", "span-pairs-1": "1 p", "span-pairs-5": "5 p", "span-pairs-10": "10 p", "span-pairs-20": "20 p"})        
 
     # draw_ttrt("data/metrics/spaces.jsonlist",
-    #                 game_names=["dupl-t-2", "dupl-t-5", "dupl-t-10", "dupl-t-100"],
+    #                 game_names=["ideal", "dupl-t-5", "dupl-t-10", "dupl-t-50"],
     #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
-    #                 name_remap = {"dupl-t-2": "d=2", "dupl-t-3": "3 dupl. tests", "dupl-t-4": "4 dupl. tests", "dupl-t-5": "d=5", "dupl-t-10": "d=10", "dupl-t-100": "d=100"})        
+    #                 name_remap = {"ideal": "0", "dupl-t-5": "d=5", "dupl-t-10": "d=10", "dupl-t-50": "d=50"})        
 
     # draw_ttrt("data/metrics/spaces.jsonlist",
-    #                 game_names=["dupl-c-2", "dupl-c-5", "dupl-c-10", "dupl-c-100"],
+    #                 game_names=["ideal", "dupl-c-5", "dupl-c-10", "dupl-c-50"],
     #                 table_file = open("data/plots/tables.tex", "w"), threshold = 0.9, 
-    #                 name_remap = {"ideal": "no dupl", "dupl-c-2": "d=2", "dupl-c-3": "3 dupl. tests", "dupl-c-4": "4 dupl. tests", "dupl-c-5": "d=5", "dupl-c-10": "d=10", "dupl-c-100": "d-100"})        
+    #                 name_remap = {"ideal": "0", "dupl-c-5": "d=5", "dupl-c-10": "d=10", "dupl-c-50": "d-50"})        
 
     # draw_ttrt("data/metrics/spaces.jsonlist",
     #                 game_names=["ideal", "dependant-all-1", "dependant-all-2"],
@@ -980,10 +1379,34 @@ if __name__ == "__main__":
     #             sim_names=["des-mea", "des-mea-2", "des-mea-5", "des-mea-100"], \
     #             fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})   #         
 
-    draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
-                    game_names=[], \
-                    sim_names=["rand", "des-med", "des-mea"], \
-                    fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})       
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    #                 game_names=[], \
+    #                 sim_names=["rand", "des-med", "des-mea"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})       
+
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["DC", "ARR", "ARRA", "Dup", "R"], aggregation = "all", \
+    #                 sim_names=["rand", "de-d-0", "de-d-1", "de-d-m", "de-d-g", "de-d-d"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0})  
+
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
+    #                 game_names=["ideal", "span-all-ends-1", "span-all-ends-5", "span-all-ends-10", "span-all-ends-20", "span-pairs-1", "span-pairs-5", "span-pairs-10", "span-pairs-20"], \
+    #                 sim_names=["rand", "des-mod", "des-mea", "hc-r-p", "pl-d-0", "de-l", "de-d-1", "de-d-m", "de-d-g", "de-d-d-1", "de-d-d-5"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0},
+    #                 rename={"pl-d-0": "pl-d"})  
+
+    # draw_metrics("data/metrics/spaces.jsonlist", metrics = ["ARRA", "DC", "ARR", "Dup", "R"], aggregation = "all", \
+    #                 game_names=[], \
+    #                 sim_names=["rand", "des-mod", "des-mea", "hc-r-p", "pl-d-0", "de-l", "de-d-1", "de-d-m", "de-d-g", "de-d-d-1", "de-d-d-5"], \
+    #                 fixed_max = {"DC": 100, "ARR": 100, "ARRA": 100}, fixed_mins={"Dup": 0, "R": 0},
+    #                 rename={"pl-d-0": "pl-d"})  
+
+    # with open("data/plots/tables.tex", "w") as f:
+    #     draw_latex_threshold_convergence_tbl("data/metrics/spaces.jsonlist", metric_name = "ARRA", 
+    #                                 sim_names = [], 
+    #                                 game_names = ["GreaterThanGame", "CompareOnOneGame", "FocusingGame", "IntransitiveRegionGame"], 
+    #                                 table_file = f,
+    #                                 name_remap={"CompareOnOneGame": "Cmp1", "FocusingGame": "Focus", "IntransitiveRegionGame": "Intr", "GreaterThanGame":"GrTh"})
+    
     pass
 
 

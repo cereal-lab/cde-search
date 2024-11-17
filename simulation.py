@@ -54,6 +54,10 @@ GAMES = {
     # RQ0: No skew of points on axes, no spanned, no non-informative, no duplicates, strong independance
     #     Space with 10 axes and 5 points per axis. Num cands = 50, num_tests = 50. 
     #     Max ints = 2500, expected ints = 50 (cands) * 10 (axes) = 500
+    # "ideal-2": build_space_game(lambda: CDESpace([5] * 2).with_test_distribution(0, 1).with_candidate_distribution(0, 1)),
+    # "ideal-4": build_space_game(lambda: CDESpace([5] * 4).with_test_distribution(0, 1).with_candidate_distribution(0, 1)),
+    # "ideal-6": build_space_game(lambda: CDESpace([5] * 6).with_test_distribution(0, 1).with_candidate_distribution(0, 1)),
+    # "ideal-8": build_space_game(lambda: CDESpace([5] * 8).with_test_distribution(0, 1).with_candidate_distribution(0, 1)),
     "ideal": build_space_game(lambda: CDESpace([5] * 10).with_test_distribution(0, 1).with_candidate_distribution(0, 1)),
     
     # RQ1: Under skew of points on axes, how does D change for different algos? 
