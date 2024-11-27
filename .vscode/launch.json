@@ -37,6 +37,16 @@
                 "-out", "num-game-spaces"
             ],
             "justMyCode": true
-        }        
+        },
+        {
+            "name": "doc_dof_cse",
+            "type": "python",
+            "request": "launch",
+            "program": "doc_dof_cse.py",
+            "console": "integratedTerminal",
+            "args": [
+            ],
+            "justMyCode": true
+        }          
     ]
 }

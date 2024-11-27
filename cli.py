@@ -24,6 +24,8 @@ import fcntl
 import time
 import numpy as np
 
+from utils import write_metrics
+
 @click.group()
 def cli():
     pass
@@ -111,18 +113,6 @@ def gen_space(axis:list[int] = [1,1], tests: list[int] = [], cand: list[int] = [
             f.writelines([space.to_json() + "\n"])
     return space
 
-class NpEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, np.bool_):
-            return bool(obj)
-        return super(NpEncoder, self).default(obj)
-
 @cli.command("config")
 def show_config():
     print_config()
@@ -158,10 +148,7 @@ def run_game(ctx, sim, times = 1, metrics = ""):
                             "duration_ms": end_ms - start_ms,
                             "seed1": param_seed1, "seed2": param_seed2, **results}
         # click.echo(f"{metric_data}")
-        with open(metrics, "a") as f:                
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps(metric_data, cls=NpEncoder) + "\n")
-            fcntl.flock(f, fcntl.LOCK_UN)
+        write_metrics(metric_data, metrics)
         if param_draw_dynamics > 0 and i == 0:
             os.system(f"./togif.sh '{game_name}_{sim_name}'")
 

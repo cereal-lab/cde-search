@@ -19,6 +19,8 @@
 
 from typing import Any, Optional
 
+import numpy as np
+
 def extract_dims(tests: list[list[int]]):
     ''' Ideas from article (with modifications)
 
@@ -892,6 +894,57 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, d
 
     layers = [[el2 for el in layer for el2 in [el, *duplicates.get(el, [])]] for layer in layers]
     return layers, discarded
+
+
+def run_cse(archive_size, population_size, max_generations, 
+              initialization, breed, int_fn, fitness_fn, get_metrics):
+    """ Run Coordinate System Evolution algorithm as a driver of evolution 
+        Compared to simulations in populations, this is simplest form and no sparse values. 
+        It is one population evolution. Contrast to NSGA-II    
+    """
+    # Create initial population
+    population = [initialization() for _ in range(population_size)]
+    archive = [] # archive of underlying objectives
+    stats = []
+    for generation in range(max_generations):        
+        all_inds = population + archive
+        interactions = np.stack([p.get_interactions(int_fn) for p in all_inds], axis = 0)
+        fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(all_inds)] # to compute p.fitness in individuals
+        # all_fitnesses = np.array(fitnesses + archive_fitenesses)
+        dims, _, spanned = extract_nonb_dims_approx(interactions.tolist()) # programs are in this case CSE tests
+        spanned_objectives = [(spanned_id, [dim_id for dim_id, point_id in spanned_coords.items() if point_id == (len(dims[dim_id]) - 1)], 
+                                    np.sum(interactions[spanned_id], -all_inds[spanned_id].get_depth()))
+                                for spanned_id, spanned_coords in spanned.items()]
+        index_archive = []
+        present_objectives = set()
+        while len(spanned_objectives) > 0 and len(index_archive) < archive_size:
+            spanned_objectives.sort(key = lambda x: (len(x[1]), x[2], x[3]), reverse=True)
+            spanned_id, spanned_dims, spanned_sum, spanned_depth = spanned_objectives.pop(0)
+            index_archive.append(spanned_id)
+            present_objectives.update(spanned_dims)
+            spanned_objectives = [ (a, [dim_id for dim_id in b if dim_id not in present_objectives], c) for a, b, c in spanned_objectives]
+            spanned_objectives = [el for el in spanned_objectives if len(el[1]) > 0]
+
+        mentioned_dims = {}
+        for i in index_archive:
+            for dim_id in spanned[i]:
+                mentioned_dims[dim_id] = mentioned_dims.get(dim_id, 0) + 1        
+
+        for dim_id, dim in sorted(list(enumerate(dims)), key = lambda x: mentioned_dims.get(x[1], 0)):
+            if dim_id in present_objectives:
+                continue
+            point = list(dim[-1])
+            point.sort(key = lambda i: all_inds[i].get_depth())
+            index_archive.append(point[0])
+            if len(index_archive) >= archive_size:
+                break
+        archive = [all_inds[i] for i in index_archive]
+        best_found, metrics = get_metrics(archive)
+        stats.append(metrics)
+        if best_found:
+            break
+        population = breed(archive)
+    return stats
 
 
 # TODO: 
