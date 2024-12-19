@@ -57,6 +57,10 @@ class Node():
             self.fitness = None
         self.fitness = fitness_fn(i, interactions, prev_fitness = self.fitness, **kwargs)
         return self.fitness
+    def get_fitness_or_zero(self, fitness_size: int):
+        if self.fitness is None:
+            return np.zeros(fitness_size)
+        return self.fitness
     def get_depth(self):
         if self.depth is None:
             if len(self.args) == 0:
@@ -89,7 +93,7 @@ class Node():
 def tournament_selection(rnd, tournament_selection_size, population):
     ''' Select parents using tournament selection '''
     selected = rnd.choice(len(population), tournament_selection_size, replace=True)
-    best_index = min(selected, key=lambda i: (*population[i].fitness, population[i].get_depth()))
+    best_index = min(selected, key=lambda i: (*population[i].fitness.tolist(),))
     best = population[best_index]
     return best
 
@@ -254,48 +258,62 @@ def subtree_breed(rnd, mutation_rate, crossover_rate,
         new_population.extend([child1, child2])
     return new_population
 
-def run_koza(population_size, max_generations, initialization, breed, int_fn, fitness_fn, get_metrics):
-    ''' Koza style GP game schema '''
-    population = [initialization() for _ in range(population_size)]
-    stats = [] # stats per generation
-    for generation in range(max_generations):
-        interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-        fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
-        best_found, metrics = get_metrics(population)
-        stats.append(metrics)
-        if best_found:
-            break        
-        population = breed(population)
+# def run_koza(population_size, max_generations, initialization, breed, int_fn, fitness_fn, get_metrics):
+#     ''' Koza style GP game schema '''
+#     population = [initialization() for _ in range(population_size)]
+#     stats = [] # stats per generation
+#     for generation in range(max_generations):
+#         interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
+#         fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
+#         best_found, metrics = get_metrics(population)
+#         stats.append(metrics)
+#         if best_found:
+#             break        
+#         population = breed(population)
 
-    if not best_found:
-        interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-        fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
-        _, metrics = get_metrics(population)
-        stats.append(metrics)    
+#     if not best_found:
+#         interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
+#         fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
+#         _, metrics = get_metrics(population)
+#         stats.append(metrics)    
     
-    return stats
+#     return stats
 
-def run_koza2(int_size, population_size, max_generations, initialization, breed, int_fn, fitness_fn, get_metrics):
+# np.array([np.array([1,2,3]), np.array([4,5,6])])
+
+def gp_evaluate(int_size, int_fn, fitness_fns, population, *, derive_objectives = None):
+    eval_mask = np.array([p.has_no_interactions() for p in population], dtype=bool)
+    interactions = np.array([p.get_interactions_or_zero(int_size) for p in population])
+    call_results = np.array([p() for p in population])
+    interactions[eval_mask] = int_fn(call_results[eval_mask])
+    if derive_objectives is not None:
+        derived_objectives, derived_info = derive_objectives(interactions)
+    else:
+        derived_objectives = None
+        derived_info = {}
+    fitnesses = np.array([ p.get_fitness_or_zero(len(fitness_fns)) for p in population])
+    fitnesses_T = fitnesses.T
+    for i, fitness_fn in enumerate(fitness_fns):
+        fitness_fn(fitnesses_T[i], interactions, eval_mask = eval_mask, population = population, derived_objectives = derived_objectives, **derived_info)
+    # interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
+    # fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
+    for i, p in enumerate(population):
+        p.interactions = interactions[i]
+        p.fitness = fitnesses[i]  
+    return (fitnesses, interactions, call_results, derived_objectives)
+
+def run_koza(population_size, max_generations, initialization, breed, evaluate, get_metrics):
     ''' Koza style GP game schema '''
     population = [initialization() for _ in range(population_size)]
     stats = [] # stats per generation
-    for generation in range(max_generations):
-        eval_mask = np.array([p.has_no_interactions() for p in population], dtype=bool)
-        interactions = np.stack([p.get_interactions_or_zero(int_size) for p in population], axis = 0)
-        call_results = np.stack([p() for p in population], axis = 0)
-        interactions[eval_mask] = int_fn(call_results[eval_mask])
-        # interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-        fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
-        best_found, metrics = get_metrics(population)
+    generation = 0
+    while True:
+        fitnesses, *_ = evaluate(population)
+        best_found, metrics = get_metrics(fitnesses, population)
         stats.append(metrics)
-        if best_found:
+        if best_found or (generation >= max_generations):
             break        
-        population = breed(population)
-
-    if not best_found:
-        interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-        fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
-        _, metrics = get_metrics(population)
-        stats.append(metrics)    
+        generation += 1
+        population = breed(population)  
     
     return stats

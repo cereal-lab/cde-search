@@ -82,44 +82,78 @@ def get_sparsity(fitnesses: np.ndarray) -> np.ndarray:
 
 
 def run_nsga2(archive_size, population_size, max_generations, 
-              initialization, breed, derive_objectives, int_fn, fitness_fn, get_metrics):
+              initialization, breed, derive_objectives, evaluate, get_metrics):
     """ Run NSGA-II algorithm. """
     # Create initial population
     population = [initialization() for _ in range(population_size)]
     archive = []
     stats = []
-    for generation in range(max_generations):        
+    generation = 0
+    while True:
         all_inds = population + archive
-        interactions = np.stack([p.get_interactions(int_fn) for p in all_inds], axis = 0)
-        derived_objectives, derived_info = derive_objectives(interactions)
-        fitnesses = [p.get_fitness(fitness_fn, i, interactions, derived_objectives = derived_objectives, **derived_info) for i, p in enumerate(all_inds)] # to compute p.fitness in individuals
-        # all_fitnesses = np.array(fitnesses + archive_fitenesses)
+        fitnesses, _, _, derived_objectives = evaluate(all_inds, derive_objectives = derive_objectives) 
         new_archive = []
-        prev_fronts_indicies = np.array([], dtype=int)
-        best_front = None
+        all_fronts_indicies = np.array([], dtype=int)
+        best_front_indexes = None
         while len(new_archive) < archive_size:
-            new_front_indices = get_pareto_front_indexes(derived_objectives, exclude_indexes = prev_fronts_indicies)
+            new_front_indices = get_pareto_front_indexes(derived_objectives, exclude_indexes = all_fronts_indicies)
             if len(new_front_indices) == 0:
-                break
-            prev_fronts_indicies = np.concatenate([prev_fronts_indicies, new_front_indices])
+                break            
             new_front = [all_inds[i] for i in new_front_indices]
-            if best_front is None:
-                # new_front_fitness = [all_fitnesses[i] for i in new_front_indices]
-                new_front_derived = [derived_objectives[i] for i in new_front_indices]
-                best_front = (new_front, new_front_derived)
+            if best_front_indexes is None:
+                best_front_indexes = new_front_indices
             if len(new_archive) + len(new_front_indices) <= archive_size:
+                all_fronts_indicies = np.concatenate([all_fronts_indicies, new_front_indices])
                 new_archive += new_front
             else:
                 left_to_take = archive_size - len(new_archive)
                 front_sparsity = get_sparsity(derived_objectives[new_front_indices])
                 front_id_idx = np.argsort(front_sparsity)[-left_to_take:]
                 front_indexes = new_front_indices[front_id_idx]
+                all_fronts_indicies = np.concatenate([all_fronts_indicies, front_indexes])
                 new_archive += [all_inds[i] for i in front_indexes]
                 break  
         archive = new_archive
-        best_found, metrics = get_metrics(archive)
+        # archive_fitnesses = fitnesses[all_fronts_indicies]
+        best_front = [all_inds[i] for i in best_front_indexes]
+        best_front_fitnesses = fitnesses[best_front_indexes]
+        best_found, metrics = get_metrics(best_front_fitnesses, best_front)
         stats.append(metrics)
-        if best_found:
+        if best_found or (generation >= max_generations):
             break
+        generation += 1
         population = breed(archive)
     return stats
+
+
+def run_front_coverage(archive_size, population_size, max_generations, 
+              initialization, breed, select_parents, evaluate, get_metrics):
+    # Create initial population
+    population = [initialization() for _ in range(population_size)]
+    stats = []
+    generation = 0
+    while True:
+        fitnesses, interactions, *_ = evaluate(population) 
+        all_fronts_indexes = np.array([], dtype=int)
+        best_front_indexes = None
+        while len(all_fronts_indexes) < archive_size:
+            new_front_indices = get_pareto_front_indexes(interactions, exclude_indexes = all_fronts_indexes)
+            if len(new_front_indices) == 0:
+                break
+            if best_front_indexes is None:
+                best_front_indexes = new_front_indices
+            all_fronts_indexes = np.concatenate([all_fronts_indexes, new_front_indices])
+        best_front = [population[i] for i in best_front_indexes]
+        best_front_fitnesses = fitnesses[best_front_indexes]
+        best_found, metrics = get_metrics(best_front_fitnesses, best_front)
+        stats.append(metrics)
+        if best_found or (generation >= max_generations):
+            break
+        selected_indexes_ids = select_parents(interactions[all_fronts_indexes]) #, fitnesses[all_fronts_indexes])
+        selected_indexes = all_fronts_indexes[selected_indexes_ids]
+        parents = [population[i] for i in selected_indexes]
+        new_population = breed(population_size - len(best_front) + archive_size, parents)
+        new_population.extend(best_front)
+        generation += 1
+        population = new_population
+    return stats    

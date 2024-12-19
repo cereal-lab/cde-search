@@ -453,6 +453,7 @@ def is_spanned_nonb_pos(test_pos: list[tuple[int, int]], test: list[Optional[flo
         return True, approx
     return False, []
 
+# NOTE: needs to be fixed spanned points -- check _np version
 def extract_nonb_dims_approx(tests: list[list[Optional[float]]]):
     ''' Generalizes CSE to nonbinary continuous outcomes '''    
     spanned_set = set()
@@ -612,6 +613,116 @@ def extract_nonb_dims_approx(tests: list[list[Optional[float]]]):
         spanned[test_id] = {dim_id: point_id for dim_id, point_id in test_pos}
 
     dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
+    return dims, origin, spanned # here all unknown values are approximated
+
+def get_pos_np(test_ids, interactions, dimension_outcomes):
+    test_pos_map = {tid: [] for tid in test_ids}
+    for dim_id, dim in enumerate(dimension_outcomes):  
+        idxs_to_find = np.array(test_ids)
+        fints = interactions[idxs_to_find]
+        all_indexes = np.arange(idxs_to_find.shape[0])
+        mask = np.ones_like(all_indexes, dtype=bool)
+        for point_id, point in reversed(list(enumerate(dim))):
+            ints = fints[mask]
+            original_idxs = all_indexes[mask]
+            idx_idx = np.where(np.all(ints >= point, axis=1))[0]
+            idxs = original_idxs[idx_idx]
+            for idx in idxs:
+                test_pos_map[idxs_to_find[idx]].append((dim_id, point_id))
+            mask[idxs] = False
+            ints = fints[mask]
+            original_idxs = all_indexes[mask]
+            incompat_idx_idx = np.where(np.any(ints > point, axis=1) & np.any(ints < point, axis = 1))[0]
+            incompat_idxs = original_idxs[incompat_idx_idx]
+            mask[incompat_idxs] = False
+            if not(np.any(mask)):
+                break   
+    return test_pos_map 
+
+def extract_dims_np(tests: np.ndarray):
+    ''' Generalizes CSE to nonbinary continuous outcomes '''    
+    # origin = np.where(np.all(tests == 0, axis=1))[0]
+    origin_outcomes = np.min(tests, axis=0)
+    origin = np.where(np.all(tests == origin_outcomes, axis=1))[0]
+    
+    test_to_insert = np.where(np.any(tests != origin_outcomes, axis=1))[0]
+    unique_tests, unique_indexes = np.unique(tests[test_to_insert], axis=0, return_index=True) 
+
+    # spanned_set = set()
+    # dimensions = [] # tests on axes 
+    dimension_outcomes = []
+    test_to_insert = np.arange(unique_tests.shape[0])
+
+
+    one_counts = np.sum(unique_tests, axis=1)    
+    
+    while len(test_to_insert) > 0:
+        test_pos_map = get_pos_np(test_to_insert, unique_tests, dimension_outcomes)
+
+        min_test_id, min_test_pos = min(test_pos_map.items(), key=lambda x: (len(x[1]), (0 if len(x[1]) == 0 else min(pos_id for _, pos_id in x[1])), one_counts[x[0]]))
+        if len(min_test_pos) == 0:
+            dimension_outcomes.append([origin_outcomes, unique_tests[min_test_id]])
+            test_to_insert = test_to_insert[test_to_insert != min_test_id]
+        else:
+
+            spanned_tests = []
+            while len(test_pos_map) > 0:
+                group = [ (test_id, test_pos) for test_id, test_pos in test_pos_map.items() if len(test_pos) == len(min_test_pos) ]
+                min_test_id = None 
+                min_test_pos = None                
+                group.sort(key=lambda x: one_counts[x[0]])
+                for test_id, test_pos in group:
+                    if len(test_pos) > 1:
+                        dim_outcomes = np.array([dimension_outcomes[dim_id][point_id] for dim_id, point_id in test_pos])
+                        if np.all(np.sum(dim_outcomes == unique_tests[test_id], axis = 0) >= 1):
+                            # spanned_set.add(test_id)
+                            spanned_tests.append(test_id)
+                            del test_pos_map[test_id]
+                        else:
+                            min_test_id = test_id
+                            min_test_pos = test_pos
+                            break                            
+                    else:
+                        min_test_id = test_id
+                        min_test_pos = test_pos
+                        break
+                if min_test_id is None and len(test_pos_map) > 0:
+                    min_test_id, min_test_pos = min(test_pos_map.items(), key=lambda x: (len(x[1]), one_counts[x[0]]))  
+                else:
+                    break                 
+                
+            if len(spanned_tests) > 0:
+                test_to_insert = test_to_insert[~np.isin(test_to_insert, spanned_tests)]
+
+            if min_test_id is None:
+                break 
+
+            min_dim_id, min_pos_id = min(min_test_pos, key=lambda x: x[1])
+            dim = dimension_outcomes[min_dim_id]
+            dimension_outcomes[min_dim_id] = [*dim[:min_pos_id+1], unique_tests[min_test_id], *dim[min_pos_id+1:]]
+            test_to_insert = test_to_insert[test_to_insert != min_test_id]
+
+    dims = []
+    point_ids = set(range(len(tests)))
+    for tid in origin:
+        point_ids.remove(tid)
+    for dim in dimension_outcomes:
+        one_dim = []
+        dims.append(one_dim)
+        for point in dim[1:]:
+            point_tests = np.where(np.all(tests == point, axis=1))[0]
+            one_dim.append(point_tests)
+            for tid in point_tests:
+                point_ids.remove(tid)
+
+    spanned = {}
+    if len(point_ids) > 0:
+        spanned_ids = np.array(list(point_ids))
+        spanned_pos = get_pos_np(spanned_ids, tests, dimension_outcomes)
+        for test_id, dim_points in spanned_pos.items():
+            for dim_id, point_id in dim_points:
+                if np.any(dimension_outcomes[dim_id][point_id] == tests[test_id]):
+                    spanned.setdefault(test_id, {})[dim_id] = point_id - 1          
     return dims, origin, spanned # here all unknown values are approximated
 
 # TODO: organize archive variables as state accessible to populations - probably encapsulate into Archive instance 
@@ -895,56 +1006,60 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, d
     layers = [[el2 for el in layer for el2 in [el, *duplicates.get(el, [])]] for layer in layers]
     return layers, discarded
 
+def derive_cse_objectives(interactions):
+    res = extract_dims_np(interactions)
+    return res, {}
 
-def run_cse(archive_size, population_size, max_generations, 
-              initialization, breed, int_fn, fitness_fn, get_metrics):
-    """ Run Coordinate System Evolution algorithm as a driver of evolution 
-        Compared to simulations in populations, this is simplest form and no sparse values. 
-        It is one population evolution. Contrast to NSGA-II    
-    """
-    # Create initial population
-    population = [initialization() for _ in range(population_size)]
-    archive = [] # archive of underlying objectives
-    stats = []
-    for generation in range(max_generations):        
-        all_inds = population + archive
-        interactions = np.stack([p.get_interactions(int_fn) for p in all_inds], axis = 0)
-        fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(all_inds)] # to compute p.fitness in individuals
-        # all_fitnesses = np.array(fitnesses + archive_fitenesses)
-        dims, _, spanned = extract_nonb_dims_approx(interactions.tolist()) # programs are in this case CSE tests
-        spanned_objectives = [(spanned_id, [dim_id for dim_id, point_id in spanned_coords.items() if point_id == (len(dims[dim_id]) - 1)], 
-                                    np.sum(interactions[spanned_id], -all_inds[spanned_id].get_depth()))
-                                for spanned_id, spanned_coords in spanned.items()]
-        index_archive = []
-        present_objectives = set()
-        while len(spanned_objectives) > 0 and len(index_archive) < archive_size:
-            spanned_objectives.sort(key = lambda x: (len(x[1]), x[2], x[3]), reverse=True)
-            spanned_id, spanned_dims, spanned_sum, spanned_depth = spanned_objectives.pop(0)
-            index_archive.append(spanned_id)
-            present_objectives.update(spanned_dims)
-            spanned_objectives = [ (a, [dim_id for dim_id in b if dim_id not in present_objectives], c) for a, b, c in spanned_objectives]
-            spanned_objectives = [el for el in spanned_objectives if len(el[1]) > 0]
+# NOTE: running CSE is quevalent to running NSGA2 with full interaction matrix - consider pareto front == underlying objectives + spanned points
+# def run_cse(archive_size, population_size, max_generations, 
+#               initialization, breed, evaluate, get_metrics):
+#     """ Run Coordinate System Evolution algorithm as a driver of evolution 
+#         Compared to simulations in populations, this is simplest form and no sparse values. 
+#         It is one population evolution. Contrast to NSGA-II    
+#     """
+#     # Create initial population
+#     population = [initialization() for _ in range(population_size)]
+#     archive = [] # archive of underlying objectives
+#     stats = []
+#     generation = 0
+#     while True:
+#         all_inds = population + archive
+#         _, interactions, _, (dims, _, spanned) = evaluate(all_inds, derive_objectives = derive_cse_objectives)
+#         # all_fitnesses = np.array(fitnesses + archive_fitenesses)
+#         spanned_objectives = [(spanned_id, [dim_id for dim_id, point_id in spanned_coords.items() if point_id == (len(dims[dim_id]) - 1)], 
+#                                     np.sum(interactions[spanned_id], -all_inds[spanned_id].get_depth()))
+#                                 for spanned_id, spanned_coords in spanned.items()]
+#         index_archive = []
+#         present_objectives = set()
+#         while len(spanned_objectives) > 0 and len(index_archive) < archive_size:
+#             spanned_objectives.sort(key = lambda x: (len(x[1]), x[2], x[3]), reverse=True)
+#             spanned_id, spanned_dims, spanned_sum, spanned_depth = spanned_objectives.pop(0)
+#             index_archive.append(spanned_id)
+#             present_objectives.update(spanned_dims)
+#             spanned_objectives = [ (a, [dim_id for dim_id in b if dim_id not in present_objectives], c) for a, b, c in spanned_objectives]
+#             spanned_objectives = [el for el in spanned_objectives if len(el[1]) > 0]
 
-        mentioned_dims = {}
-        for i in index_archive:
-            for dim_id in spanned[i]:
-                mentioned_dims[dim_id] = mentioned_dims.get(dim_id, 0) + 1        
+#         mentioned_dims = {}
+#         for i in index_archive:
+#             for dim_id in spanned[i]:
+#                 mentioned_dims[dim_id] = mentioned_dims.get(dim_id, 0) + 1        
 
-        for dim_id, dim in sorted(list(enumerate(dims)), key = lambda x: mentioned_dims.get(x[1], 0)):
-            if dim_id in present_objectives:
-                continue
-            point = list(dim[-1])
-            point.sort(key = lambda i: all_inds[i].get_depth())
-            index_archive.append(point[0])
-            if len(index_archive) >= archive_size:
-                break
-        archive = [all_inds[i] for i in index_archive]
-        best_found, metrics = get_metrics(archive)
-        stats.append(metrics)
-        if best_found:
-            break
-        population = breed(archive)
-    return stats
+#         for dim_id, dim in sorted(list(enumerate(dims)), key = lambda x: mentioned_dims.get(x[1], 0)):
+#             if dim_id in present_objectives:
+#                 continue
+#             point = list(dim[-1])
+#             point.sort(key = lambda i: all_inds[i].get_depth())
+#             index_archive.append(point[0])
+#             if len(index_archive) >= archive_size:
+#                 break
+#         archive = [all_inds[i] for i in index_archive]
+#         best_found, metrics = get_metrics(archive)
+#         stats.append(metrics)
+#         if best_found or (generation >= max_generations):
+#             break
+#         generation += 1
+#         population = breed(archive)
+#     return stats
 
 
 # TODO: 
@@ -972,15 +1087,19 @@ def run_cse(archive_size, population_size, max_generations,
 
 if __name__ == "__main__":
     
-    tests = [
-        [3,1,3],
+    tests = np.array([
+        [9,1,9],
+        [9,2,9],
         [1,2,2],
-        [2,3,1],
-        [3,3,3],
+        [1,2,3],
+        [2,9,1],
+        [3,9,2],
+        [9,9,9],
         [1,1,1],
         [1,2,2],
-        [3,2,3],
-    ]    
+        [9,2,3],
+    ])
+    res = extract_dims_np(tests)
     dims4, orig4, span4 = extract_nonb_dims_approx(tests)
     pass
     #testing of de module functions 
