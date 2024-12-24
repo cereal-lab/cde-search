@@ -82,7 +82,7 @@ def get_sparsity(fitnesses: np.ndarray) -> np.ndarray:
 
 
 def run_nsga2(archive_size, population_size, max_generations, 
-              initialization, breed, derive_objectives, evaluate, get_metrics):
+              initialization, breed, evaluate, get_metrics, derive_objectives = None):
     """ Run NSGA-II algorithm. """
     # Create initial population
     population = [initialization() for _ in range(population_size)]
@@ -122,12 +122,12 @@ def run_nsga2(archive_size, population_size, max_generations,
         if best_found or (generation >= max_generations):
             break
         generation += 1
-        population = breed(archive)
+        population = breed(population_size, archive)
     return stats
 
 
 def run_front_coverage(archive_size, population_size, max_generations, 
-              initialization, breed, select_parents, evaluate, get_metrics):
+              initialization, breed, evaluate, get_metrics, select_parents = None):
     # Create initial population
     population = [initialization() for _ in range(population_size)]
     stats = []
@@ -149,11 +149,12 @@ def run_front_coverage(archive_size, population_size, max_generations,
         stats.append(metrics)
         if best_found or (generation >= max_generations):
             break
-        selected_indexes_ids = select_parents(interactions[all_fronts_indexes]) #, fitnesses[all_fronts_indexes])
+        all_front_inds = [population[i] for i in all_fronts_indexes]
+        selected_indexes_ids = select_parents(interactions[all_fronts_indexes], all_front_inds) #, fitnesses[all_fronts_indexes])
         selected_indexes = all_fronts_indexes[selected_indexes_ids]
         parents = [population[i] for i in selected_indexes]
-        new_population = breed(population_size - len(best_front) + archive_size, parents)
-        new_population.extend(best_front)
+        new_population = breed(population_size, parents)
+        new_population.extend(parents)
         generation += 1
         population = new_population
     return stats    

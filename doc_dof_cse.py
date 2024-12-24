@@ -1,14 +1,14 @@
 ''' Running of DOC, DOF and CSE on benchmarks from bool and alg0 '''
 
+from itertools import combinations, cycle, product, zip_longest
+from typing import Optional
 import numpy as np
+from rnd import default_rnd, seed
 
 from derivedObj import matrix_factorization, xmean_cluster
 from nsga2 import run_nsga2, run_front_coverage
 from utils import write_metrics
 from functools import partial
-
-seed = 117
-seed2 = 119
 
 num_runs = 1
 
@@ -96,29 +96,6 @@ def get_metrics(main_fitness_index: int, fitnesses, population):
 
 # np.lexsort(np.array([np.array([1, 2, 3]), np.array([3, 2, 1])]).T[::-1])
 
-def run_gp_on_benchmarks(sim_name, fitness_fns, get_metrics, idxs = [], metrics_file = "data/metrics/objs.jsonlist"):
-    if len(idxs) == 0:
-        idxs = range(len(benchmark))
-    for idx in idxs:
-        name, problem = benchmark[idx]
-        outputs, func_list, terminal_list = problem()
-        rnd = np.random.RandomState(seed)
-        int_fn = partial(program_test_interactions, outputs)
-        initialization = partial(ramped_half_and_half, rnd, 1, 5, func_list, terminal_list)
-        selection = partial(tournament_selection, rnd, 7)
-        mutation = partial(subtree_mutation, rnd, 0.1, 17, func_list, terminal_list)
-        crossover = partial(subtree_crossover, rnd, 0.1, 17)
-        breed = partial(subtree_breed, rnd, 0.1, 0.9, selection, mutation, crossover, population_size)
-        evaluate = partial(gp_evaluate, len(outputs), int_fn, fitness_fns)
-        for run_id in range(num_runs):
-            stats = run_koza(population_size, max_generations, initialization, breed, evaluate, get_metrics)
-            best_inds, *fitness_metrics = zip(*stats)
-            metrics = dict(game = name, sim = sim_name, seed = seed, seed2 = seed2, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
-            for i, metric in enumerate(fitness_metrics):
-                metrics["fitness" + str(i)] = metric
-            write_metrics(metrics, metrics_file)
-            pass
-
 # np.stack([np.array([1, 2, 3]), np.array([3, 2, 1])], axis=0)
 
 def full_objectives(interactions):
@@ -129,16 +106,15 @@ def doc_objectives(interactions):
     derived_objectives = np.array(centers).T
     return derived_objectives, dict(test_clusters = test_clusters)
 
-rnd2 = np.random.RandomState(seed2)
 def rand_objectives(interactions):
-    rand_ints = rnd2.random(interactions.shape)
+    rand_ints = default_rnd.random(interactions.shape)
     res = doc_objectives(rand_ints)
     return res
 
 def dof_w_objectives(k, alpha, interactions):
     if alpha < 1: 
         num_columns_to_take = int(alpha * interactions.shape[1])
-        random_column_indexes = rnd2.choice(interactions.shape[1], num_columns_to_take, replace = False)
+        random_column_indexes = default_rnd.choice(interactions.shape[1], num_columns_to_take, replace = False)
         interactions = interactions[:, random_column_indexes]
     W, _, _ = matrix_factorization(interactions.tolist(), k)
     return W, {}
@@ -146,144 +122,309 @@ def dof_w_objectives(k, alpha, interactions):
 def dof_wh_objectives(k, alpha, interactions):
     if alpha < 1: 
         num_columns_to_take = int(alpha * interactions.shape[1])
-        random_column_indexes = rnd2.choice(interactions.shape[1], num_columns_to_take, replace = False)
+        random_column_indexes = default_rnd.choice(interactions.shape[1], num_columns_to_take, replace = False)
         interactions = interactions[:, random_column_indexes]    
     W, H, _ = matrix_factorization(interactions.tolist(), k)
     objs = np.sum(W[:, :, None] * H, axis = -1)
     return objs, {}
 
-def run_do_on_benchmarks(sim_name, fitness_fns, get_metrics, derive_objectives, idxs = [], metrics_file = "data/metrics/objs.jsonlist"):
-    if len(idxs) == 0:
-        idxs = range(len(benchmark))
-    for idx in idxs:
-        name, problem = benchmark[idx]
-        outputs, func_list, terminal_list = problem()
-        rnd = np.random.RandomState(seed)
-        int_fn = partial(program_test_interactions, outputs)
-        initialization = partial(ramped_half_and_half, rnd, 1, 5, func_list, terminal_list)
-        selection = partial(tournament_selection, rnd, 7)
-        mutation = partial(subtree_mutation, rnd, 0.1, 17, func_list, terminal_list)
-        crossover = partial(subtree_crossover, rnd, 0.1, 17)
-        breed = partial(subtree_breed, rnd, 0.1, 0.9, selection, mutation, crossover, population_size)
-        evaluate = partial(gp_evaluate, len(outputs), int_fn, fitness_fns)
-        for run_id in range(num_runs):
-            stats = run_nsga2(archive_size, population_size, max_generations, initialization, breed, derive_objectives, evaluate, get_metrics)
-            best_inds, *fitness_metrics = zip(*stats)
-            metrics = dict(game = name, sim = sim_name, seed = seed, seed2 = seed2, run_id = run_id, best_ind = best_inds[-1])
-            for i, metric in enumerate(fitness_metrics):
-                metrics["fitness" + str(i)] = metric
-            write_metrics(metrics, metrics_file)
+def select_test_hardest(ints: np.ndarray, allowed_test_mask: np.ndarray):
+    allowed_test_indexes = np.where(allowed_test_mask)[0]
+    test_stats = np.sum(ints[:, allowed_test_mask], axis = 0) #sum accross columns to see how many programs pass each test    
+    test_id_id = np.argmin(test_stats)    
+    test_id = allowed_test_indexes[test_id_id]
+    return test_id
 
-def select_full_test_coverage(test_selection, selection_size, interactions):
+def select_test_easiest(ints: np.ndarray, allowed_test_mask: np.ndarray):
+    allowed_test_indexes = np.where(allowed_test_mask)[0]
+    test_stats = np.sum(ints[:, allowed_test_mask], axis = 0) #sum accross columns to see how many programs pass each test    
+    test_id_id = np.argmax(test_stats)
+    test_id = allowed_test_indexes[test_id_id]
+    return test_id
+
+def select_test_random(ints: np.ndarray, allowed_test_mask: np.ndarray):
+    allowed_test_indexes = np.where(allowed_test_mask)[0]
+    return default_rnd.choice(allowed_test_indexes)
+
+def select_program_best(ints: np.ndarray, selected_test_id: int, population: list, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
+    allowed_program_indexes = np.where(allowed_program_mask)[0]
+    program_candidate_id_ids = np.where(ints[allowed_program_indexes, selected_test_id] != 0)[0]
+    program_candidate_ids = allowed_program_indexes[program_candidate_id_ids]
+    allowed_test_indexes = np.where(allowed_test_mask)[0]
+    program_stats = np.sum(ints[program_candidate_ids][:, allowed_test_indexes], axis = 1)
+    best_program_solved_test_num = np.max(program_stats)
+    best_program_id_ids = np.where(program_stats == best_program_solved_test_num)[0]
+    best_program_ids = program_candidate_ids[best_program_id_ids] #the program that passes the most tests including selected rare test
+    if len(best_program_ids) > 1:
+        program_depths = np.array([population[i].get_depth() for i in best_program_ids])
+        best_program_id = best_program_ids[np.argmin(program_depths)]
+    else:
+        best_program_id = best_program_ids[0]
+    allowed_program_mask[best_program_id] = False
+    solved_test_ids_by_best = np.where(ints[best_program_id] != 0)[0]
+    allowed_test_mask[solved_test_ids_by_best] = False
+    return best_program_id
+
+def select_program_shallow(ints: np.ndarray, selected_test_id: int, population: list, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
+    allowed_program_indexes = np.where(allowed_program_mask)[0]
+    program_candidate_id_ids = np.where(ints[allowed_program_indexes, selected_test_id] != 0)[0]
+    program_candidate_ids = allowed_program_indexes[program_candidate_id_ids]
+    program_depths = np.array([population[i].get_depth() for i in program_candidate_ids])
+    best_program_id = program_candidate_ids[np.argmin(program_depths)]
+    allowed_program_mask[best_program_id] = False
+    solved_test_ids_by_best = np.where(ints[best_program_id] != 0)[0]
+    allowed_test_mask[solved_test_ids_by_best] = False
+    return best_program_id    
+
+full_coverage_subgroups = iter([])#cyclic iterator
+full_coverage_selected = iter([])
+def full_coverage_selection(population, selection_size = 2):
+    global full_coverage_subgroups
+    global full_coverage_selected
+    if (next_index := next(full_coverage_selected, None)) is None:
+        subgroup_start, subgroup_size = next(full_coverage_subgroups)
+        full_coverage_selected = iter(subgroup_start + default_rnd.choice(subgroup_size, min(subgroup_size, selection_size), replace = False))
+        next_index = next(full_coverage_selected)
+    best = population[next_index]
+    return best
+
+def select_full_test_coverage(test_selection, program_selection, selection_size, interactions, population):
     ''' There are different ways to have full test coverage    
+    Does the selection of test metter?
     Hypothesis 1. selects hardest test and then best program that solves it 
     Hypothesis 2. selects easiest test and then best program that solves it
     Hypothesis 3. selects random test and then best program that solves it'''
-    ints = np.copy(interactions)    
+    global full_coverage_subgroups
+    ints = interactions #np.copy(interactions)    
     # non_zero_test_ids  = np.where(test_stats != 0)[0]
     selected = []
-    while len(selected) < selection_size:
-        test_stats = np.sum(ints, axis = 0) #sum accross columns to see how many programs pass each test    
-        non_zero_test_ids = np.where(test_stats != 0)[0]
-        if len(non_zero_test_ids) == 0:
-            break 
-        non_zero_tests = test_stats[non_zero_test_ids]
-        test_with_min_programs_id_id = test_selection(non_zero_tests)
-        test_with_min_programs_id = non_zero_test_ids[test_with_min_programs_id_id]
-        program_candidate_ids = np.where(ints[:, test_with_min_programs_id] != 0)[0]
-        program_stats = np.sum(ints[program_candidate_ids], axis = 1)
-        # non_zero_program_ids = np.where(ints[:, test_with_min_programs_id] == 1)[0]
-        best_program_id_id = np.argmax(program_stats)
-        best_program_id = program_candidate_ids[best_program_id_id] #the program that passes the most tests including selected rare test
+    allowed_test_mask = np.any(ints, axis = 0) #solvable tests currently
+    allowed_test_mask_all = np.copy(allowed_test_mask) #only have False for really picked tests, while allowed_test_mask set to false on program covering the test
+    allowed_program_mask = np.any(ints, axis = 1) #programs that solve at least one test
+    groups = [0]
+    while (len(selected) < selection_size) and np.any(allowed_test_mask_all):
+        test_with_min_programs_id = test_selection(ints, allowed_test_mask)
+        best_program_id = program_selection(ints, test_with_min_programs_id, population, allowed_program_mask, allowed_test_mask)
+        allowed_test_mask_all[test_with_min_programs_id] = False
+        test_with_min_programs_id = test_selection(ints, allowed_test_mask)
+        # best_program_id, test_with_min_programs_id = test_program_selection(ints, population, allowed_program_mask, allowed_test_mask)
+        allowed_test_mask_all[test_with_min_programs_id] = False
+        groups[-1] += 1
         selected.append(best_program_id)
-        ints[best_program_id] = 0
-        ints[:, test_with_min_programs_id] = 0
+        if not np.any(allowed_test_mask): #try second, thrird etc test coverages
+            allowed_test_mask = np.copy(allowed_test_mask_all)
+            groups.append(0)
+            # NOTE: at this point it makes sense to form coverage groups.
+    if groups[-1] == 0:
+        groups.pop()
+    indexes = list(zip([0, *np.cumsum(groups).tolist()], groups))
+    full_coverage_subgroups = cycle(indexes)
     return np.array(selected)
 
-def select_rand_coverage(rnd, selection_size, interactions): 
-    ''' Randomly samples programs from interactions '''
-    program_ids = rnd.choice(interactions.shape[0], selection_size, replace = False)
-    return program_ids
+full_test_coverage_hardest_test_best_program = partial(select_full_test_coverage, select_test_hardest, select_program_best) 
 
-def select_pair_coverage(rnd, select_kind, selection_size, interactions):
-    ''' Picks two tests to be solved in parent programs combination 
-        There could be many ways to pick a pair, we have some hypothesis but need to check different pair selections
-        Hypothesis 1: tests that are easily solvable is easy to recombine
-        Hypothesis 2: solving first pairs of most difficult tests gives better convergence speed 
-        Hypothesis 3: random pair selection is good enough.
-        NOTE: We need to measure average time to recombine targeted test pair         
-    '''
-    ints = np.copy(interactions)
-    selected = []
-    while len(selected) < selection_size:
-        test_stats = np.sum(ints, axis = 0)
-        non_zero_test_ids = np.where(test_stats != 0)[0]
-        if len(non_zero_test_ids) == 0:
-            break 
-        if len(non_zero_test_ids) == 1:
-            new_program_selection_ids = np.where(ints[:, non_zero_test_ids[0]] != 0)[0]
-            new_program_selection = rnd.choice(new_program_selection_ids, min(len(new_program_selection_ids), selection_size - len(selected)), replace = False)   
-            selected.extend(new_program_selection)
-            break 
-        non_zero_tests = test_stats[non_zero_test_ids]
-        test_sorting = np.argsort(non_zero_tests)
-        if select_kind == 0:
-            # pick easiest 2 tests
-            test1, test2 = non_zero_test_ids[test_sorting[-2:]].tolist()
-            to_select 
-        # test_with_min_programs_id_id = test_selection(non_zero_tests)
-        
-    return np.array(selected)
+full_test_coverage_easiest_test_best_program = partial(select_full_test_coverage, select_test_easiest, select_program_best)
 
-# import numpy as np
+full_test_coverage_random_test_best_program = partial(select_full_test_coverage, select_test_random, select_program_best)
 
-# a = np.array([[1, 0, 1], [0, 1, 1], [1, 1, 1], [0, 1, 1]])
-# t = np.sum(a, axis = 0)
+full_test_coverage_hardest_test_shallow_program = partial(select_full_test_coverage, select_test_hardest, select_program_shallow)
+
+full_test_coverage_easiest_test_shallow_program = partial(select_full_test_coverage, select_test_easiest, select_program_shallow)
+
+full_test_coverage_random_test_shallow_program = partial(select_full_test_coverage, select_test_random, select_program_shallow)
+
+# def select_rand_coverage(selection_size, interactions): 
+#     ''' Randomly samples programs from interactions '''
+#     program_ids = default_rnd.choice(interactions.shape[0], selection_size, replace = False)
+#     return program_ids
+
+# def sorting_test_pairs_easy_first(test_pairs, test_stats):
+#     sorted_pairs = sorted(test_pairs, key = lambda x: test_stats[x[0]] + test_stats[x[1]], reverse=True)
+#     return sorted_pairs
+
+# def sorting_test_pairs_hard_first(test_pairs, test_stats):
+#     test_stats[test_stats == 0] = np.inf
+#     sorted_pairs = sorted(test_pairs, key = lambda x: test_stats[x[0]] + test_stats[x[1]])
+#     return sorted_pairs
+
+# def sorting_test_pairs_random(test_pairs, test_stats):
+#     return default_rnd.permutation(test_pairs).tolist()
+
+# pair_coverage_subgroups = iter([]) #pos and lengthes of each subgroup in population, should be cycling iterator
+# pair_coverage_selected = iter([])
+
+# def subgroup_selection(population):
+#     global pair_coverage_subgroups
+#     global pair_coverage_selected
+#     if (next_index := next(pair_coverage_selected, None)) is None:
+#         pos, (l1, l2) = next(pair_coverage_subgroups)
+#         best_index1 = pos + default_rnd.choice(l1)
+#         best_index2 = pos + l1 + default_rnd.choice(l2)
+#         pair_coverage_selected = iter([best_index1, best_index2])
+#         next_index = next(pair_coverage_selected)
+#     best = population[next_index]
+#     return best
     
+# prev_test_pairs = []
+# def select_pair_coverage(pair_sorting, selection_size, interactions, population, persist_test_pair = False):
+#     ''' Picks two tests to be solved in parent programs combination 
+#         There could be many ways to pick a pair, we have some hypothesis but need to check different pair selections
+#         Hypothesis 1: tests that are easily solvable is easy to recombine
+#         Hypothesis 2: solving first pairs of most difficult tests gives better convergence speed 
+#         Hypothesis 3: random pair selection is good enough.
+#         NOTE: NOTE: We need to measure average time to recombine targeted test pair         
+#         - we need metric to estimate the effect
+#     '''
+#     global prev_test_pairs
+#     global pair_coverage_subgroups
+#     ints = interactions
+#     selected = []
+#     test_pairs = combinations(range(ints.shape[1]), 2)
+#     filtered_test_pairs = [] # tests that are not currently solved together
+#     prev_test_pairs_set = set(prev_test_pairs)
+#     if persist_test_pair:
+#         for test1, test2 in test_pairs:
+#             # if np.all(np.logical_not(np.logical_and(ints[:, test1], ints[:, test2]))) and not((test1, test2) in prev_test_pairs_set):
+#             if not((test1, test2) in prev_test_pairs_set):
+#                 filtered_test_pairs.append((test1, test2))
+#     else:
+#         filtered_test_pairs = list(test_pairs)
+#     test_stats = np.sum(ints, axis = 0)
+#     # if persist_test_pair:
+#     #     pair_sorting = partial(holder.pair_sorting, pair_sorting)
+#     sorted_test_pairs = pair_sorting(filtered_test_pairs, test_stats)
+#     sorted_test_pairs = prev_test_pairs + sorted_test_pairs
+#     sorted_test_pairs_iter = iter(sorted_test_pairs)
+#     group_lengths = []
+#     new_test_pairs = []
+#     while len(selected) < selection_size:
+#         test_id1, test_id2 = next(sorted_test_pairs_iter, (None, None)) #we target first this pair of tests
+#         if test_id1 is None:
+#             break
+#         new_test_pairs.append((test_id1, test_id2))
+#         candidate_program_ids1 = np.where(ints[:, test_id1] != 0)[0]
+#         candidate_program_ids2 = np.where(ints[:, test_id2] != 0)[0]
+#         # fixed_candidate_program_ids1 = np.setdiff1d(candidate_program_ids1, candidate_program_ids2, assume_unique=True)
+#         # fixed_candidate_program_ids2 = np.setdiff1d(candidate_program_ids2, candidate_program_ids1, assume_unique=True)
+#         # candidate_program_ids1 = fixed_candidate_program_ids1
+#         # candidate_program_ids2 = fixed_candidate_program_ids2
+#         if len(candidate_program_ids1) > len(candidate_program_ids2):
+#             candidate_program_ids1, candidate_program_ids2 = candidate_program_ids2, candidate_program_ids1
+#         if len(candidate_program_ids1) == 0:
+#             continue
+#         half_avail_size = (selection_size - len(selected)) // 2
+#         if len(candidate_program_ids1) > half_avail_size:
+#             candidate_program_ids1 = default_rnd.choice(candidate_program_ids1, half_avail_size, replace=False)
+#         other_avail_size = selection_size - len(selected) - len(candidate_program_ids1)
+#         if len(candidate_program_ids2) > other_avail_size:
+#             candidate_program_ids2 = default_rnd.choice(candidate_program_ids2, other_avail_size, replace=False)
+#         group_lengths.append((len(candidate_program_ids1), len(candidate_program_ids2)))
+#         selected.extend(candidate_program_ids1)
+#         selected.extend(candidate_program_ids2)
+#     if persist_test_pair:
+#         prev_test_pairs = new_test_pairs
+#     indexes = list(zip([0, *np.cumsum([x + y for x, y in group_lengths]).tolist()], group_lengths))
+#     pair_coverage_subgroups = cycle(indexes)
+#     return np.array(selected)
 
+# pair_coverage_easy_first = partial(select_pair_coverage, sorting_test_pairs_easy_first)
 
-def run_coverage_on_benchmarks(sim_name, fitness_fns, get_metrics, idxs = [], metrics_file = "data/metrics/objs.jsonlist"):
-    if len(idxs) == 0:
-        idxs = range(len(benchmark))
-    for idx in idxs:
-        name, problem = benchmark[idx]
-        outputs, func_list, terminal_list = problem()
-        rnd = np.random.RandomState(seed)
-        int_fn = partial(program_test_interactions, outputs)    
-        initialization = partial(ramped_half_and_half, rnd, 1, 5, func_list, terminal_list)
-        selection = partial(tournament_selection, rnd, 7)
-        mutation = partial(subtree_mutation, rnd, 0.1, 17, func_list, terminal_list)
-        crossover = partial(subtree_crossover, rnd, 0.1, 17)
-        breed = partial(subtree_breed, rnd, 0.1, 0.9, selection, mutation, crossover)
-        evaluate = partial(gp_evaluate, len(outputs), int_fn, fitness_fns)
-        select_parents = partial(select_full_test_coverage, archive_size)
-        for run_id in range(num_runs):
-            stats = run_front_coverage(archive_size, population_size, max_generations, initialization, breed, select_parents, evaluate, get_metrics)
-            best_inds, *fitness_metrics = zip(*stats)
-            metrics = dict(game = name, sim = sim_name, seed = seed, seed2 = seed2, run_id = run_id, best_ind = best_inds[-1])
-            for i, metric in enumerate(fitness_metrics):
-                metrics["fitness" + str(i)] = metric
-            write_metrics(metrics, metrics_file)
+# pair_coverage_hard_first = partial(select_pair_coverage, sorting_test_pairs_hard_first)
 
-gp = partial(run_gp_on_benchmarks, "gp", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0))
-ifs = partial(run_gp_on_benchmarks, "ifs", [ifs_fitness, hamming_distance_fitness, depth_fitness], partial(get_metrics, 1))
-rand = partial(run_do_on_benchmarks, "rand", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), rand_objectives)
-nsga = partial(run_do_on_benchmarks, "nsga", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), full_objectives)
-doc = partial(run_do_on_benchmarks, "doc", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), doc_objectives)
-doc_p = partial(run_do_on_benchmarks, "doc_p", [hypervolume_fitness, hamming_distance_fitness, depth_fitness], partial(get_metrics, 1), doc_objectives)
-doc_d = partial(run_do_on_benchmarks, "doc_d", [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness], partial(get_metrics, 1), doc_objectives)
-dof_w_2 = partial(run_do_on_benchmarks, "doc_w_2", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_w_objectives, 2, 1))
-dof_w_3 = partial(run_do_on_benchmarks, "doc_w_3", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_w_objectives, 3, 1))
-dof_wh_2 = partial(run_do_on_benchmarks, "doc_wh_2", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_wh_objectives, 2, 1))
-dof_wh_3 = partial(run_do_on_benchmarks, "doc_wh_3", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_wh_objectives, 3, 1))
-dof_w_2_80 = partial(run_do_on_benchmarks, "doc_w_2_80", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_w_objectives, 2, 0.8))
-dof_w_3_80 = partial(run_do_on_benchmarks, "doc_w_3_80", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_w_objectives, 3, 0.8))
-dof_wh_2_80 = partial(run_do_on_benchmarks, "doc_wh_2_80", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_wh_objectives, 2, 0.8))
-dof_wh_3_80 = partial(run_do_on_benchmarks, "doc_wh_3_80", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0), partial(dof_wh_objectives, 3, 0.8))
-# cse = partial(run_cse_on_benchmarks, "cse", [hamming_distance_fitness, depth_fitness], partial(get_metrics, 0))       
+# pair_coverage_random = partial(select_pair_coverage, sorting_test_pairs_random)
+
+# pair_coverage_easy_first_persist = partial(select_pair_coverage, sorting_test_pairs_easy_first, persist_test_pair = True)
+
+# pair_coverage_hard_first_persist = partial(select_pair_coverage, sorting_test_pairs_hard_first, persist_test_pair = True)
+
+# pair_coverage_random_persist = partial(select_pair_coverage, sorting_test_pairs_random, persist_test_pair = True)
+
+def run_pipeline_on_benchmark(sim_name, 
+                            pipeline_fn, idx, 
+                            init_fn = partial(ramped_half_and_half, 1, 5), 
+                            selection_fn = partial(tournament_selection, 7),
+                            mutation_fn = partial(subtree_mutation, 0.1, 17),
+                            crossover_fn = partial(subtree_crossover, 0.1, 17),
+                            breed_fn = partial(subtree_breed, 0.1, 0.9),
+                            get_metrics_fn = partial(get_metrics, 0),
+                            fitness_fns = [hamming_distance_fitness, depth_fitness],
+                            metrics_file = "data/metrics/objs.jsonlist"):
+    name, problem = benchmark[idx]
+    outputs, func_list, terminal_list = problem()
+    int_fn = partial(program_test_interactions, outputs)
+    initialization = partial(init_fn, func_list, terminal_list)
+    selection = selection_fn
+    mutation = partial(mutation_fn, func_list, terminal_list)
+    crossover = crossover_fn
+    breed = partial(breed_fn, selection, mutation, crossover)
+    evaluate = partial(gp_evaluate, len(outputs), int_fn, fitness_fns)
+    for run_id in range(num_runs):
+        stats = pipeline_fn(population_size, max_generations, initialization, breed, evaluate, get_metrics_fn)
+        best_inds, *fitness_metrics = zip(*stats)
+        metrics = dict(game = name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
+        for i, metric in enumerate(fitness_metrics):
+            metrics["fitness" + str(i)] = metric
+        write_metrics(metrics, metrics_file)
+        pass
+
+gp = partial(run_pipeline_on_benchmark, "gp", run_koza)
+ifs = partial(run_pipeline_on_benchmark, "ifs", run_koza, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], get_metrics_fn = partial(get_metrics, 1))
+
+def build_do_pipeline(sim_name, derive_objectives):
+    return partial(run_pipeline_on_benchmark, sim_name, partial(run_nsga2, archive_size, derive_objectives = derive_objectives), 
+                        selection_fn = partial(tournament_selection, 3))
+
+rand = build_do_pipeline("rand", rand_objectives)
+nsga = build_do_pipeline("nsga", full_objectives)
+
+doc = build_do_pipeline("doc", doc_objectives)
+doc_p = partial(build_do_pipeline("doc_p", doc_objectives), 
+                fitness_fns = [hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
+                get_metrics_fn = partial(get_metrics, 1))
+
+doc_d = partial(build_do_pipeline("doc_d", doc_objectives),
+                fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
+                get_metrics_fn = partial(get_metrics, 1))
+
+dof_w_2 = build_do_pipeline("doc_w_2", partial(dof_w_objectives, 2, 1))
+dof_w_3 = build_do_pipeline("doc_w_3", partial(dof_w_objectives, 3, 1))
+dof_wh_2 = build_do_pipeline("doc_wh_2", partial(dof_wh_objectives, 2, 1))
+dof_wh_3 = build_do_pipeline("doc_wh_3", partial(dof_wh_objectives, 3, 1))
+
+dof_w_2_80 = build_do_pipeline("doc_w_2_80", partial(dof_w_objectives, 2, 0.8))
+dof_w_3_80 = build_do_pipeline("doc_w_3_80", partial(dof_w_objectives, 3, 0.8))
+dof_wh_2_80 = build_do_pipeline("doc_wh_2_80", partial(dof_wh_objectives, 2, 0.8))
+dof_wh_3_80 = build_do_pipeline("doc_wh_3_80", partial(dof_wh_objectives, 3, 0.8))
+
+def build_cov_pipeline(sim_name, select_parents_fn, selection_fn):
+    return partial(run_pipeline_on_benchmark, sim_name, partial(run_front_coverage, archive_size, select_parents = partial(select_parents_fn, archive_size)), 
+                        selection_fn = selection_fn)
+
+cov_ht_bp = build_cov_pipeline("cov_ht_bp", full_test_coverage_hardest_test_best_program, full_coverage_selection)
+
+cov_et_bp = build_cov_pipeline("cov_et_bp", full_test_coverage_easiest_test_best_program, full_coverage_selection)
+
+cov_rt_bp = build_cov_pipeline("cov_rt_bp", full_test_coverage_random_test_best_program, full_coverage_selection)
+
+cov_ht_sp = build_cov_pipeline("cov_ht_sp", full_test_coverage_hardest_test_shallow_program, full_coverage_selection)
+
+cov_et_sp = build_cov_pipeline("cov_et_sp", full_test_coverage_easiest_test_shallow_program, full_coverage_selection)
+
+cov_rt_sp = build_cov_pipeline("cov_rt_sp", full_test_coverage_random_test_shallow_program, full_coverage_selection)
+
+# pair_cov_ht = build_cov_pipeline("pair_cov_ht", pair_coverage_hard_first, subgroup_selection)
+
+# pair_cov_et = build_cov_pipeline("pair_cov_et", pair_coverage_easy_first, subgroup_selection)
+
+# pair_cov_rt = build_cov_pipeline("pair_cov_rt", pair_coverage_random, subgroup_selection)
+
+# pair_cov_ht_p = build_cov_pipeline("pair_cov_ht", pair_coverage_hard_first_persist, subgroup_selection)
+
+# pair_cov_et_p = build_cov_pipeline("pair_cov_et", pair_coverage_easy_first_persist, subgroup_selection),
+
+# pair_cov_rt_p = build_cov_pipeline("pair_cov_rt", pair_coverage_random_persist, subgroup_selection)
 
 if __name__ == "__main__":
     print("testing evo runs")
-    # gp(idxs=[0])
-    cse(idxs=[0])
+    pair_cov_ht_p(idx = 0)
     pass
