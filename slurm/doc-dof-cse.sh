@@ -360,6 +360,6 @@ module load apps/anaconda/5.3.1
 
 source activate cde-search-env
 
-srun python ~/cde-search/cli.py objs -sid "$game" --out "$WORK/cde-search/gp-objs.jsonlist"
+srun python ~/cde-search/cli.py objs -sid "$game" -out "$WORK/cde-search/gp-objs.jsonlist"
 
 echo "Done job $SLURM_ARRAY_TASK_ID with game $game"

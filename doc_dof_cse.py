@@ -10,7 +10,7 @@ from nsga2 import run_nsga2, run_front_coverage
 from utils import write_metrics
 from functools import partial
 
-num_runs = 30
+num_runs = 1
 
 from domain_alg0 import build_vars, disc, f_a1, f_a2, f_a3, f_a4, f_a5, malcev
 from gp import gp_evaluate, ramped_half_and_half, run_koza, subtree_breed, subtree_mutation, subtree_crossover, tournament_selection
@@ -410,6 +410,7 @@ def run_pipeline_on_benchmark(sim_name,
                             breed_fn = partial(subtree_breed, 0.1, 0.9),
                             get_metrics_fn = partial(get_metrics, 0),
                             fitness_fns = [hamming_distance_fitness, depth_fitness],
+                            record_fitness_ids = [0, 1],
                             metrics_file = "data/metrics/objs.jsonlist"):
     name, problem = benchmark[idx]
     outputs, func_list, terminal_list = problem()
@@ -425,12 +426,16 @@ def run_pipeline_on_benchmark(sim_name,
         best_inds, *fitness_metrics = zip(*stats)
         metrics = dict(game = name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
         for i, metric in enumerate(fitness_metrics):
-            metrics["fitness" + str(i)] = metric
+            if i in record_fitness_ids:
+                i_i = record_fitness_ids.index(i)
+                metrics["fitness" + str(i_i)] = metric
         write_metrics(metrics, metrics_file)
         pass
 
 gp = partial(run_pipeline_on_benchmark, "gp", run_koza)
-ifs = partial(run_pipeline_on_benchmark, "ifs", run_koza, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], get_metrics_fn = partial(get_metrics, 1))
+ifs = partial(run_pipeline_on_benchmark, "ifs", run_koza, 
+              fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], get_metrics_fn = partial(get_metrics, 1),
+              record_fitness_ids = [1, 2, 0])
 
 def build_do_pipeline(sim_name, derive_objectives):
     return partial(run_pipeline_on_benchmark, sim_name, partial(run_nsga2, archive_size, derive_objectives = derive_objectives), 
@@ -442,11 +447,11 @@ do_nsga = build_do_pipeline("do_nsga", full_objectives)
 doc = build_do_pipeline("doc", doc_objectives)
 doc_p = partial(build_do_pipeline("doc_p", doc_objectives), 
                 fitness_fns = [hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
-                get_metrics_fn = partial(get_metrics, 1))
+                get_metrics_fn = partial(get_metrics, 1), record_fitness_ids = [1, 2, 0])
 
 doc_d = partial(build_do_pipeline("doc_d", doc_objectives),
                 fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
-                get_metrics_fn = partial(get_metrics, 1))
+                get_metrics_fn = partial(get_metrics, 1), record_fitness_ids = [1, 2, 0])
 
 dof_w_2 = build_do_pipeline("doc_w_2", partial(dof_w_objectives, 2, 1))
 dof_w_3 = build_do_pipeline("doc_w_3", partial(dof_w_objectives, 3, 1))
@@ -498,8 +503,8 @@ sim_names = [ 'gp', 'ifs', 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w
 
 if __name__ == "__main__":
     print("testing evo runs")
-    for sim_name in sim_names:
-        for b_name in benchmark_map.keys():
-            print(f"{sim_name}:{b_name}")
-    # cov_ht_bp(idx = 0)
+    # for sim_name in sim_names:
+    #     for b_name in benchmark_map.keys():
+    #         print(f"{sim_name}:{b_name}")
+    gp(idx = 10)
     pass

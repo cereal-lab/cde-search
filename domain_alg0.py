@@ -34,7 +34,7 @@ def disc():
     inputs = np.array(list(product(x, y, z)))
     inputs_T = inputs.T
     outputs = np.where(inputs_T[0] != inputs_T[1], inputs_T[0], inputs_T[2])
-    return inputs, outputs
+    return inputs_T, outputs
 
 # disc()
 
@@ -50,7 +50,7 @@ def malcev():
             outputs.append(x)
     inputs = np.array(inputs)
     outputs = np.array(outputs)
-    return inputs, outputs
+    return inputs.T, outputs
 
 def build_vars(inputs: np.ndarray):
     res = []

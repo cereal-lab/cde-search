@@ -1,5 +1,6 @@
 
 import numpy as np
+import warnings
 
 # def matrix_factorization(tests: list[list[float]], k: int, steps: int, alpha: float, beta: float, epsilon = 0.001) -> tuple[np.ndarray, np.ndarray, float]:
 #     m = len(tests)
@@ -66,11 +67,14 @@ import numpy as np
 #     return P.detach().numpy(), Q.detach().numpy(), loss.item()
 
 from sklearn.decomposition import NMF
+from sklearn.exceptions import ConvergenceWarning
 
 def matrix_factorization(tests: list[list[float]], k: int) -> tuple[np.ndarray, np.ndarray, float]:
-    model = NMF(n_components=k, init='random', random_state=0)
-    W = model.fit_transform(tests)
-    H = model.components_
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category = ConvergenceWarning)
+        model = NMF(n_components=k, init='random', random_state=0)
+        W = model.fit_transform(tests)
+        H = model.components_
     return W, H, model.reconstruction_err_
 
 from pyclustering.cluster.xmeans import xmeans
