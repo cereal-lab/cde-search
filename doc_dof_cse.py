@@ -128,11 +128,18 @@ def dof_wh_objectives(k, alpha, interactions):
     objs = np.sum(W[:, :, None] * H, axis = -1)
     return objs, {}
 
-def do_pca_objectives(num_components, interactions):
+def do_pca_abs_objectives(num_components, interactions):
     from sklearn.decomposition import PCA
     pca = PCA(n_components=num_components)
     components = pca.fit_transform(interactions)
     return np.abs(components), {}
+
+def do_pca_diff_objectives(num_components, interactions):
+    from sklearn.decomposition import PCA
+    pca = PCA(n_components=num_components)
+    components = pca.fit_transform(interactions)
+    min_components = np.min(components, axis = 0)
+    return (components - min_components + 0.1), {}
 
 def do_feature_objectives(interactions):
     ''' we extract derived objectives based on program features: 
@@ -173,6 +180,8 @@ def select_program_best_by_test(test_selection, ints: np.ndarray, allowed_progra
     program_candidate_ids = allowed_program_indexes[program_candidate_id_ids]
     allowed_test_indexes = np.where(allowed_test_mask)[0]
     program_stats = np.sum(ints[program_candidate_ids][:, allowed_test_indexes], axis = 1)
+    if len(program_stats) == 0:
+        return None, None
     best_program_solved_test_num = np.max(program_stats)
     best_program_id_ids = np.where(program_stats == best_program_solved_test_num)[0]
     best_program_ids = program_candidate_ids[best_program_id_ids] #the program that passes the most tests including selected rare test
@@ -186,6 +195,8 @@ def select_program_random(test_selection, ints: np.ndarray, allowed_program_mask
     selected_test_id = test_selection(ints, allowed_test_mask)
     allowed_program_indexes = np.where(allowed_program_mask)[0]
     program_candidate_id_ids = np.where(ints[allowed_program_indexes, selected_test_id] != 0)[0]
+    if len(program_candidate_id_ids) == 0:
+        return None, None
     program_candidate_id_id = default_rnd.choice(program_candidate_id_ids, 1)[0]
     best_program_id = allowed_program_indexes[program_candidate_id_id]
     allowed_program_mask[best_program_id] = False
@@ -262,16 +273,17 @@ def select_full_test_coverage(test_program_selection, selection_size, interactio
     allowed_test_mask_all = np.copy(allowed_test_mask) #only have False for really picked tests, while allowed_test_mask set to false on program covering the test
     allowed_program_mask = np.any(ints, axis = 1) #programs that solve at least one test
     groups = [0]
-    while (len(selected) < selection_size) and np.any(allowed_test_mask_all):
+    while (len(selected) < selection_size) and np.any(allowed_test_mask_all) and np.any(allowed_program_mask):
         # test_with_min_programs_id = test_selection(ints, allowed_test_mask)
         # best_program_id = program_selection(ints, test_with_min_programs_id, population, allowed_program_mask, allowed_test_mask)
         # allowed_test_mask_all[test_with_min_programs_id] = False
         # test_with_min_programs_id = test_selection(ints, allowed_test_mask)
         best_program_id, test_with_min_programs_id = test_program_selection(ints, allowed_program_mask, allowed_test_mask)
-        allowed_test_mask_all[test_with_min_programs_id] = False
-        groups[-1] += 1
-        selected.append(best_program_id)
-        if not np.any(allowed_test_mask): #try second, thrird etc test coverages
+        if best_program_id is not None:
+            allowed_test_mask_all[test_with_min_programs_id] = False
+            groups[-1] += 1
+            selected.append(best_program_id)
+        if best_program_id is None or not np.any(allowed_test_mask): #try second, thrird etc test coverages
             allowed_test_mask = np.copy(allowed_test_mask_all)
             groups.append(0)
             # NOTE: at this point it makes sense to form coverage groups.
@@ -465,7 +477,11 @@ dof_wh_3_80 = build_do_pipeline("doc_wh_3_80", partial(dof_wh_objectives, 3, 0.8
 
 do_fo = build_do_pipeline("do_fo", do_feature_objectives)
 
-do_pca = build_do_pipeline("do_pca", do_pca_objectives)
+do_pca_abs_2 = build_do_pipeline("do_pca_abs_2", partial(do_pca_abs_objectives, 2))
+do_pca_abs_3 = build_do_pipeline("do_pca_abs_3", partial(do_pca_abs_objectives, 3))
+
+do_pca_diff_2 = build_do_pipeline("do_pca_diff_2", partial(do_pca_diff_objectives, 2))
+do_pca_diff_3 = build_do_pipeline("do_pca_diff_3", partial(do_pca_diff_objectives, 3))
 
 def build_cov_pipeline(sim_name, select_parents_fn, selection_fn):
     return partial(run_pipeline_on_benchmark, sim_name, partial(run_front_coverage, archive_size, select_parents = partial(select_parents_fn, archive_size)), 
@@ -499,12 +515,12 @@ cov_rt_rp = build_cov_pipeline("cov_rt_rp", full_test_coverage_random_test_rand_
 
 benchmark_map = {name: i for i, (name, _) in enumerate(benchmark) }
 
-sim_names = [ 'gp', 'ifs', 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca', 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp', 'cov_rt_rp' ]
+sim_names = [ 'gp', 'ifs', 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3', 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp', 'cov_rt_rp' ]
 
 if __name__ == "__main__":
     print("testing evo runs")
-    # for sim_name in sim_names:
-    #     for b_name in benchmark_map.keys():
-    #         print(f"{sim_name}:{b_name}")
-    gp(idx = 10)
+    for sim_name in sim_names:
+        for b_name in benchmark_map.keys():
+            print(f"{sim_name}:{b_name}")
+    # gp(idx = 10)
     pass
