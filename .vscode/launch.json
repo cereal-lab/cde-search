@@ -39,14 +39,17 @@
             "justMyCode": true
         },
         {
-            "name": "doc_dof_cse",
+            "name": "gp objs simulation",
             "type": "python",
             "request": "launch",
-            "program": "doc_dof_cse.py",
+            "program": "cli.py",
             "console": "integratedTerminal",
             "args": [
+                "objs",
+                "-sid", "cov_ht_bp:cmp6",
+                "-out", "data/metrics/objs.jsonlist"
             ],
             "justMyCode": true
-        }          
+        } 
     ]
 }

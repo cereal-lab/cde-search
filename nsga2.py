@@ -149,12 +149,12 @@ def run_front_coverage(archive_size, population_size, max_generations,
         stats.append(metrics)
         if best_found or (generation >= max_generations):
             break
-        all_front_inds = [population[i] for i in all_fronts_indexes]
-        selected_indexes_ids = select_parents(interactions[all_fronts_indexes], all_front_inds) #, fitnesses[all_fronts_indexes])
+        # all_front_inds = [population[i] for i in all_fronts_indexes]
+        selected_indexes_ids = select_parents(interactions[all_fronts_indexes]) #, fitnesses[all_fronts_indexes])
         selected_indexes = all_fronts_indexes[selected_indexes_ids]
         parents = [population[i] for i in selected_indexes]
         new_population = breed(population_size, parents)
         new_population.extend(parents)
         generation += 1
         population = new_population
-    return stats    
+    return stats
