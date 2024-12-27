@@ -154,34 +154,34 @@ def do_feature_objectives(interactions):
     res = np.stack([program_stats, interactions.shape[0] - program_min_test_difficulty], axis = 1)
     return res, {}
 
-def select_test_hardest(ints: np.ndarray, allowed_test_mask: np.ndarray):
+def select_test_hardest(ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
     allowed_test_indexes = np.where(allowed_test_mask)[0]
-    test_stats = np.sum(ints[:, allowed_test_mask], axis = 0) #sum accross columns to see how many programs pass each test    
+    test_stats = np.sum(ints[allowed_program_mask][:, allowed_test_mask], axis = 0) #sum accross columns to see how many programs pass each test    
     test_stats[test_stats == 0] = np.inf
     test_id_id = np.argmin(test_stats)    
     test_id = allowed_test_indexes[test_id_id]
     return test_id
 
-def select_test_easiest(ints: np.ndarray, allowed_test_mask: np.ndarray):
+def select_test_easiest(ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
     allowed_test_indexes = np.where(allowed_test_mask)[0]
-    test_stats = np.sum(ints[:, allowed_test_mask], axis = 0) #sum accross columns to see how many programs pass each test    
+    test_stats = np.sum(ints[allowed_program_mask][:, allowed_test_indexes], axis = 0) #sum accross columns to see how many programs pass each test    
     test_id_id = np.argmax(test_stats)
     test_id = allowed_test_indexes[test_id_id]
     return test_id
 
-def select_test_random(ints: np.ndarray, allowed_test_mask: np.ndarray):
+def select_test_random(ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
     allowed_test_indexes = np.where(allowed_test_mask)[0]
     return default_rnd.choice(allowed_test_indexes)
 
 def select_program_best_by_test(test_selection, ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
-    selected_test_id = test_selection(ints, allowed_test_mask)
+    selected_test_id = test_selection(ints, allowed_program_mask, allowed_test_mask)
     allowed_program_indexes = np.where(allowed_program_mask)[0]
     program_candidate_id_ids = np.where(ints[allowed_program_indexes, selected_test_id] != 0)[0]
+    if len(program_candidate_id_ids) == 0:
+        return None, None
     program_candidate_ids = allowed_program_indexes[program_candidate_id_ids]
     allowed_test_indexes = np.where(allowed_test_mask)[0]
     program_stats = np.sum(ints[program_candidate_ids][:, allowed_test_indexes], axis = 1)
-    if len(program_stats) == 0:
-        return None, None
     best_program_solved_test_num = np.max(program_stats)
     best_program_id_ids = np.where(program_stats == best_program_solved_test_num)[0]
     best_program_ids = program_candidate_ids[best_program_id_ids] #the program that passes the most tests including selected rare test
@@ -519,8 +519,8 @@ sim_names = [ 'gp', 'ifs', 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w
 
 if __name__ == "__main__":
     print("testing evo runs")
-    for sim_name in sim_names:
-        for b_name in benchmark_map.keys():
-            print(f"{sim_name}:{b_name}")
-    # gp(idx = 10)
+    # for sim_name in sim_names:
+    #     for b_name in benchmark_map.keys():
+    #         print(f"{sim_name}:{b_name}")
+    cov_ht_bp(idx = 11)
     pass
