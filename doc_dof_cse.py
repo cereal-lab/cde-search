@@ -10,7 +10,7 @@ from nsga2 import run_nsga2, run_front_coverage
 from utils import write_metrics
 from functools import partial
 
-num_runs = 1
+num_runs = 30
 
 from domain_alg0 import build_vars, disc, f_a1, f_a2, f_a3, f_a4, f_a5, malcev
 from gp import gp_evaluate, ramped_half_and_half, run_koza, subtree_breed, subtree_mutation, subtree_crossover, tournament_selection
