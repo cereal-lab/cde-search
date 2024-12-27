@@ -192,7 +192,7 @@ def select_program_best_by_test(test_selection, ints: np.ndarray, allowed_progra
     return best_program_id, selected_test_id
 
 def select_program_random(test_selection, ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
-    selected_test_id = test_selection(ints, allowed_test_mask)
+    selected_test_id = test_selection(ints, allowed_program_mask, allowed_test_mask)
     allowed_program_indexes = np.where(allowed_program_mask)[0]
     program_candidate_id_ids = np.where(ints[allowed_program_indexes, selected_test_id] != 0)[0]
     if len(program_candidate_id_ids) == 0:
@@ -254,7 +254,7 @@ def full_coverage_selection(population, selection_size = 2):
     global full_coverage_selected
     if (next_index := next(full_coverage_selected, None)) is None:
         subgroup_start, subgroup_size = next(full_coverage_subgroups)
-        full_coverage_selected = iter(subgroup_start + default_rnd.choice(subgroup_size, min(subgroup_size, selection_size), replace = False))
+        full_coverage_selected = iter(subgroup_start + default_rnd.choice(subgroup_size, size = min(subgroup_size, selection_size), replace = False))
         next_index = next(full_coverage_selected)
     best = population[next_index]
     return best
@@ -272,7 +272,9 @@ def select_full_test_coverage(test_program_selection, selection_size, interactio
     allowed_test_mask = np.any(ints, axis = 0) #solvable tests currently
     allowed_test_mask_all = np.copy(allowed_test_mask) #only have False for really picked tests, while allowed_test_mask set to false on program covering the test
     allowed_program_mask = np.any(ints, axis = 1) #programs that solve at least one test
-    groups = [0]
+    groups = []
+    cur_counter = 0 #number of selected programs in current group
+    # should_break_next_time = False
     while (len(selected) < selection_size) and np.any(allowed_test_mask_all) and np.any(allowed_program_mask):
         # test_with_min_programs_id = test_selection(ints, allowed_test_mask)
         # best_program_id = program_selection(ints, test_with_min_programs_id, population, allowed_program_mask, allowed_test_mask)
@@ -281,14 +283,18 @@ def select_full_test_coverage(test_program_selection, selection_size, interactio
         best_program_id, test_with_min_programs_id = test_program_selection(ints, allowed_program_mask, allowed_test_mask)
         if best_program_id is not None:
             allowed_test_mask_all[test_with_min_programs_id] = False
-            groups[-1] += 1
+            cur_counter += 1
             selected.append(best_program_id)
+            # should_break_next_time = False
         if best_program_id is None or not np.any(allowed_test_mask): #try second, thrird etc test coverages
+            if cur_counter == 0:
+                break
             allowed_test_mask = np.copy(allowed_test_mask_all)
-            groups.append(0)
+            groups.append(cur_counter)
+            cur_counter = 0
             # NOTE: at this point it makes sense to form coverage groups.
-    if groups[-1] == 0:
-        groups.pop()
+    # if len(groups) == 0:
+    #     groups.append(len(selected))
     indexes = list(zip([0, *np.cumsum(groups).tolist()], groups))
     full_coverage_subgroups = cycle(indexes)
     return np.array(selected)
@@ -522,5 +528,5 @@ if __name__ == "__main__":
     # for sim_name in sim_names:
     #     for b_name in benchmark_map.keys():
     #         print(f"{sim_name}:{b_name}")
-    cov_ht_bp(idx = 11)
+    cov_ht_rp(idx = 11)
     pass

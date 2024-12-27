@@ -40,12 +40,7 @@ class Node():
             return replacements[self]
         else:
             new_args = [arg.copy(replacements) for arg in self.args]
-            return Node(self.func, new_args)
-    def get_interactions(self, int_fn):
-        if self.int_fn != int_fn:
-            self.interactions = int_fn(self)
-            self.int_fn = int_fn        
-        return self.interactions
+            return self.__class__(self.func, new_args)
     def get_interactions_or_zero(self, int_size: int):
         if self.interactions is None:
             return np.zeros(int_size)
@@ -73,6 +68,10 @@ class Node():
         return len(self.args) == 0
     def is_of_type(self, node):
         return self.return_type == node.return_type
+    def bottom_up_left_right(self):
+        for arg in self.args:
+            yield from arg.bottom_up_left_right()        
+        yield self
     def traverse(self, filter, break_filter, at_depth = 0):
         if break_filter(at_depth, self):
             if filter(at_depth, self):
@@ -131,12 +130,12 @@ def tournament_selection(tournament_selection_size, population):
 # gt = inspect.signature(g).parameters
 
 
-def grow(depth, leaf_prob, func_list, terminal_list):
+def grow(depth, leaf_prob, func_list, terminal_list, node_class = Node):
     ''' Grow a tree with a given depth '''
     if depth == 0:
         terminal_index = default_rnd.choice(len(terminal_list))
         terminal = terminal_list[terminal_index]
-        return Node(terminal)
+        return node_class(terminal)
     else:
         if leaf_prob is None:
             func_index = default_rnd.choice(len(func_list + terminal_list))
@@ -154,14 +153,14 @@ def grow(depth, leaf_prob, func_list, terminal_list):
                 continue
             node = grow(depth - 1, leaf_prob, func_list, terminal_list)
             args.append(node)
-        return Node(func, args)
+        return node_class(func, args)
 
-def full(depth, func_list, terminal_list):
+def full(depth, func_list, terminal_list, node_class = Node):
     ''' Grow a tree with a given depth '''
     if depth == 0:
         terminal_index = default_rnd.choice(len(terminal_list))
         terminal = terminal_list[terminal_index]
-        return Node(terminal)
+        return node_class(terminal)
     else:
         func_index = default_rnd.choice(len(func_list))
         func = func_list[func_index]
@@ -171,15 +170,15 @@ def full(depth, func_list, terminal_list):
                 continue
             node = full(depth - 1, func_list, terminal_list)
             args.append(node)
-        return Node(func, args)
+        return node_class(func, args)
 
-def ramped_half_and_half(min_depth, max_depth, func_list, terminal_list):
+def ramped_half_and_half(min_depth, max_depth, func_list, terminal_list, node_class = Node):
     ''' Generate a population of half full and half grow trees '''
     depth = default_rnd.randint(min_depth, max_depth+1)
     if default_rnd.rand() < 0.5:
-        return grow(depth, None, func_list, terminal_list)
+        return grow(depth, None, func_list, terminal_list, node_class = node_class)
     else:
-        return full(depth, func_list, terminal_list)
+        return full(depth, func_list, terminal_list, node_class = node_class)
 
 def select_node(leaf_prob, in_node: Node, filter, break_filter) -> Optional[Node]:
     places = [(at_d, n) for at_d, n in in_node.traverse(filter, break_filter) ]
@@ -199,8 +198,8 @@ def select_node(leaf_prob, in_node: Node, filter, break_filter) -> Optional[Node
             selected = nonleaves[selected_idx]
     return selected
 
-def subtree_mutation(leaf_prob, max_depth, func_list, terminal_list, node):
-    new_node = grow(5, None, func_list, terminal_list)
+def subtree_mutation(leaf_prob, max_depth, func_list, terminal_list, node, node_class = Node):
+    new_node = grow(5, None, func_list, terminal_list, node_class = node_class)
     new_node_depth = new_node.get_depth()
     # at_depth, at_node = select_node(leaf_prob, node, lambda d, n: (d > 0) and n.is_of_type(new_node), 
     #                                     lambda d, n: (d + new_node_depth) <= max_depth)
@@ -260,29 +259,6 @@ def subtree_breed(mutation_rate, crossover_rate,
         new_population.extend([child1, child2])
     return new_population
 
-# def run_koza(population_size, max_generations, initialization, breed, int_fn, fitness_fn, get_metrics):
-#     ''' Koza style GP game schema '''
-#     population = [initialization() for _ in range(population_size)]
-#     stats = [] # stats per generation
-#     for generation in range(max_generations):
-#         interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-#         fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
-#         best_found, metrics = get_metrics(population)
-#         stats.append(metrics)
-#         if best_found:
-#             break        
-#         population = breed(population)
-
-#     if not best_found:
-#         interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-#         fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
-#         _, metrics = get_metrics(population)
-#         stats.append(metrics)    
-    
-#     return stats
-
-# np.array([np.array([1,2,3]), np.array([4,5,6])])
-
 def gp_evaluate(int_size, int_fn, fitness_fns, population, *, derive_objectives = None):
     eval_mask = np.array([p.has_no_interactions() for p in population], dtype=bool)
     interactions = np.array([p.get_interactions_or_zero(int_size) for p in population])
@@ -297,8 +273,6 @@ def gp_evaluate(int_size, int_fn, fitness_fns, population, *, derive_objectives 
     fitnesses_T = fitnesses.T
     for i, fitness_fn in enumerate(fitness_fns):
         fitness_fn(fitnesses_T[i], interactions, eval_mask = eval_mask, population = population, derived_objectives = derived_objectives, **derived_info)
-    # interactions = np.stack([p.get_interactions(int_fn) for p in population], axis = 0)
-    # fitnesses = [p.get_fitness(fitness_fn, i, interactions) for i, p in enumerate(population)] # to compute p.fitness in individuals
     for i, p in enumerate(population):
         p.interactions = interactions[i]
         p.fitness = fitnesses[i]  

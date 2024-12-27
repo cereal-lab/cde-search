@@ -2,7 +2,7 @@
 #SBATCH --job-name=doc-dof-cse
 #SBATCH --time=72:00:00
 #SBATCH --output=out/doc-dof-cse.out
-#SBATCH --mem=8G
+#SBATCH --mem=16G
 #SBATCH --open-mode=append
 #SBATCH --array=0-389
 
