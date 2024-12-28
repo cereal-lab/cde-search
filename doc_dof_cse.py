@@ -293,8 +293,12 @@ def select_full_test_coverage(test_program_selection, selection_size, interactio
             groups.append(cur_counter)
             cur_counter = 0
             # NOTE: at this point it makes sense to form coverage groups.
-    # if len(groups) == 0:
-    #     groups.append(len(selected))
+    if cur_counter > 0:
+        groups.append(cur_counter)
+    if len(selected) == 0:
+        selected = default_rnd.choice(ints.shape[0], size = min(selection_size, ints.shape[0]), replace = False)
+    if len(groups) == 0:
+        groups.append(len(selected))
     indexes = list(zip([0, *np.cumsum(groups).tolist()], groups))
     full_coverage_subgroups = cycle(indexes)
     return np.array(selected)
@@ -528,5 +532,5 @@ if __name__ == "__main__":
     # for sim_name in sim_names:
     #     for b_name in benchmark_map.keys():
     #         print(f"{sim_name}:{b_name}")
-    cov_ht_rp(idx = 11)
+    cov_ht_bp(idx = 11)
     pass
