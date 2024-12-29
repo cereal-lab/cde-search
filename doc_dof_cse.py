@@ -1,8 +1,10 @@
 ''' Running of DOC, DOF and CSE on benchmarks from bool and alg0 '''
 
 from itertools import combinations, cycle, product, zip_longest
+import json
 from typing import Optional
 import numpy as np
+from tabulate import tabulate
 from rnd import default_rnd, seed
 
 from derivedObj import matrix_factorization, xmean_cluster
@@ -22,7 +24,7 @@ from domain_bool import cmp, maj, mul, par, default_funcs, build_lines
 #   crossover: subtree crossover with 0.9 probability
 #   fitness_fn: distance to ideal L1 or L2 norm 
 
-archive_size = 10
+archive_size = 100
 max_generations = 100
 population_size = 1000
 
@@ -475,15 +477,15 @@ doc_d = partial(build_do_pipeline("doc_d", doc_objectives),
                 fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
                 get_metrics_fn = partial(get_metrics, 1), record_fitness_ids = [1, 2, 0])
 
-dof_w_2 = build_do_pipeline("doc_w_2", partial(dof_w_objectives, 2, 1))
-dof_w_3 = build_do_pipeline("doc_w_3", partial(dof_w_objectives, 3, 1))
-dof_wh_2 = build_do_pipeline("doc_wh_2", partial(dof_wh_objectives, 2, 1))
-dof_wh_3 = build_do_pipeline("doc_wh_3", partial(dof_wh_objectives, 3, 1))
+dof_w_2 = build_do_pipeline("dof_w_2", partial(dof_w_objectives, 2, 1))
+dof_w_3 = build_do_pipeline("dof_w_3", partial(dof_w_objectives, 3, 1))
+dof_wh_2 = build_do_pipeline("dof_wh_2", partial(dof_wh_objectives, 2, 1))
+dof_wh_3 = build_do_pipeline("dof_wh_3", partial(dof_wh_objectives, 3, 1))
 
-dof_w_2_80 = build_do_pipeline("doc_w_2_80", partial(dof_w_objectives, 2, 0.8))
-dof_w_3_80 = build_do_pipeline("doc_w_3_80", partial(dof_w_objectives, 3, 0.8))
-dof_wh_2_80 = build_do_pipeline("doc_wh_2_80", partial(dof_wh_objectives, 2, 0.8))
-dof_wh_3_80 = build_do_pipeline("doc_wh_3_80", partial(dof_wh_objectives, 3, 0.8))
+dof_w_2_80 = build_do_pipeline("dof_w_2_80", partial(dof_w_objectives, 2, 0.8))
+dof_w_3_80 = build_do_pipeline("dof_w_3_80", partial(dof_w_objectives, 3, 0.8))
+dof_wh_2_80 = build_do_pipeline("dof_wh_2_80", partial(dof_wh_objectives, 2, 0.8))
+dof_wh_3_80 = build_do_pipeline("dof_wh_3_80", partial(dof_wh_objectives, 3, 0.8))
 
 do_fo = build_do_pipeline("do_fo", do_feature_objectives)
 
@@ -527,10 +529,57 @@ benchmark_map = {name: i for i, (name, _) in enumerate(benchmark) }
 
 sim_names = [ 'gp', 'ifs', 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3', 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp', 'cov_rt_rp' ]
 
+# postprocessing 
+def compute_run_stats(file_name: str):
+    with open(file_name, 'r') as f:
+        json_lines = f.readlines()
+    metrics = [json.loads(l) for l in json_lines]
+    stats = {}
+    for m in metrics:
+        game = m['game']
+        sim = m['sim']
+        fitness0 = m['fitness0']
+        game_sim_m = stats.setdefault((game, sim), {})
+        conv_count = game_sim_m.setdefault("conv_count", 0) 
+        game_sim_m["conv_count"] = conv_count + (1 if fitness0[-1] == 0 else 0)
+    for (game, sim), m in stats.items():
+        m["conv_rate"] = m["conv_count"] / num_runs    
+
+    # stats_maps = {}
+    game_conv = {}
+    sim_conv = {}
+    for (game, sim), m in stats.items():
+        # game_m = stats_maps.setdefault(sim, {})
+        # game_m[game] = m 
+        gd = game_conv.setdefault(game, 0)
+        game_conv[game] = gd + m["conv_count"]
+        sd = sim_conv.setdefault(sim, 0)
+        sim_conv[sim] = sd + m["conv_count"]
+
+    # games_s = sorted(game_conv.keys(), key = lambda x: game_conv[x], reverse=True)
+    # rows = []
+    # for sim in sorted(sim_conv.keys(), key = lambda x: sim_conv[x], reverse=True):    
+    #     sim_rates = [('' if r == 0 else r) for g in games_s for r in [round(stats[(g, sim)]['conv_rate'] * 100)]]
+    #     rows.append([sim, *sim_rates])
+
+    col_names = sorted(sim_conv.keys(), key = lambda x: sim_conv[x], reverse=True)
+    # col_names = ['gp', 'ifs', 'do_rand', 'doc', 'doc_p', 'doc_d'] #'cov_ht_bp', 'doc_wh_2_80', 'doc_w_2_80', 'doc_w_2', 'doc_wh_2',  'cov_rt_bp', 'do_fo', 'cov_et_bp', 'doc_w_3_80', 'doc_wh_3_80', 'doc_w_3', 'doc_wh_3', 'do_pca_diff_3', 'do_nsga', 'do_pca_diff_2', 'cov_ht_rp', 'do_pca_abs_2', 'do_pca_abs_3', 'cov_et_rp', 'cov_rt_rp']
+    rows = []
+    # row_names = ['cmp6', 'cmp8', 'disc1', 'disc2', 'disc3', 'disc4', 'disc5', 'maj6', 'malcev1', 'malcev2', 'malcev3', 'malcev4', 'malcev5', 'mux6', 'par5']
+    row_names = sorted(game_conv.keys(), key = lambda x: game_conv[x], reverse=True)
+    for rn in row_names:
+        sim_rates = [('' if v == 0 else v) for cn in col_names for v in [round(stats[(rn, cn)]['conv_rate'] * 100)]]
+        rows.append([rn, *sim_rates])
+
+    print(tabulate(rows, headers=["", *col_names], tablefmt='grid', numalign="center", stralign="center"), file=open("./dmp.txt", "w"))
+
+    return stats
+
 if __name__ == "__main__":
     print("testing evo runs")
     # for sim_name in sim_names:
     #     for b_name in benchmark_map.keys():
     #         print(f"{sim_name}:{b_name}")
-    cov_ht_bp(idx = 11)
+    # cov_ht_bp(idx = 11)
+    compute_run_stats("data/metrics/gp-objs.jsonlist")
     pass
