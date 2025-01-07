@@ -89,6 +89,7 @@ def run_nsga2(archive_size, population_size, max_generations,
     archive = []
     stats = []
     generation = 0
+    best_found = False
     while True:
         all_inds = population + archive
         fitnesses, _, _, derived_objectives = evaluate(all_inds, derive_objectives = derive_objectives) 
@@ -123,7 +124,7 @@ def run_nsga2(archive_size, population_size, max_generations,
             break
         generation += 1
         population = breed(population_size, archive)
-    return stats
+    return best_found, stats
 
 
 def run_front_coverage(archive_size, population_size, max_generations, 
@@ -132,6 +133,7 @@ def run_front_coverage(archive_size, population_size, max_generations,
     population = [initialization() for _ in range(population_size)]
     stats = []
     generation = 0
+    best_found = False
     while True:
         fitnesses, interactions, *_ = evaluate(population) 
         all_fronts_indexes = np.array([], dtype=int)
@@ -157,4 +159,4 @@ def run_front_coverage(archive_size, population_size, max_generations,
         new_population.extend(parents)
         generation += 1
         population = new_population
-    return stats
+    return best_found, stats

@@ -27,10 +27,10 @@ class Node():
         return self.outcomes
     def __str__(self):
         if self.str is None:
-            node_args = ", ".join(arg.__str__() for arg in self.args)
             if len(self.args) == 0:
                 self.str = self.func.__name__
             else:
+                node_args = ", ".join(arg.__str__() for arg in self.args)
                 self.str = self.func.__name__ + "(" + node_args + ")"
         return self.str
     def __repr__(self):
@@ -94,6 +94,13 @@ def tournament_selection(tournament_selection_size, population):
     ''' Select parents using tournament selection '''
     selected = default_rnd.choice(len(population), tournament_selection_size, replace=True)
     best_index = min(selected, key=lambda i: (*population[i].fitness.tolist(),))
+    best = population[best_index]
+    return best
+
+def tournament_selection_scalar(tournament_selection_size, fitness_index, population):
+    ''' Select parents using tournament selection '''
+    selected = default_rnd.choice(len(population), tournament_selection_size, replace=True)
+    best_index = min(selected, key=lambda i: population[i].fitness[fitness_index])
     best = population[best_index]
     return best
 
@@ -283,6 +290,7 @@ def run_koza(population_size, max_generations, initialization, breed, evaluate, 
     population = [initialization() for _ in range(population_size)]
     stats = [] # stats per generation
     generation = 0
+    best_found = False
     while True:
         fitnesses, *_ = evaluate(population)
         best_found, metrics = get_metrics(fitnesses, population)
@@ -292,4 +300,4 @@ def run_koza(population_size, max_generations, initialization, breed, evaluate, 
         generation += 1
         population = breed(population_size, population)  
     
-    return stats
+    return best_found, stats

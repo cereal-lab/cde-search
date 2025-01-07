@@ -15,7 +15,7 @@ from functools import partial
 num_runs = 30
 
 from domain_alg0 import build_vars, disc, f_a1, f_a2, f_a3, f_a4, f_a5, malcev
-from gp import gp_evaluate, ramped_half_and_half, run_koza, subtree_breed, subtree_mutation, subtree_crossover, tournament_selection
+from gp import gp_evaluate, ramped_half_and_half, run_koza, subtree_breed, subtree_mutation, subtree_crossover, tournament_selection, tournament_selection_scalar
 from domain_bool import cmp, maj, mul, par, default_funcs, build_lines
 
 # included setups: GP - classic Koza
@@ -24,7 +24,7 @@ from domain_bool import cmp, maj, mul, par, default_funcs, build_lines
 #   crossover: subtree crossover with 0.9 probability
 #   fitness_fn: distance to ideal L1 or L2 norm 
 
-archive_size = 100
+archive_size = 10
 max_generations = 100
 population_size = 1000
 
@@ -446,9 +446,16 @@ def run_pipeline_on_benchmark(sim_name,
     breed = partial(breed_fn, selection, mutation, crossover)
     evaluate = partial(gp_evaluate, len(outputs), int_fn, fitness_fns)
     for run_id in range(num_runs):
-        stats = pipeline_fn(population_size, max_generations, initialization, breed, evaluate, get_metrics_fn)
+        best_found, stats = pipeline_fn(population_size, max_generations, initialization, breed, evaluate, get_metrics_fn)
         best_inds, *fitness_metrics = zip(*stats)
-        metrics = dict(game = name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
+        last_best_program = best_inds[-1]
+        old_outcomes = last_best_program.outcomes
+        last_best_program.outcomes = None 
+        new_outcomes = last_best_program()
+        assert np.all(old_outcomes == new_outcomes)
+        if best_found:
+            assert np.all(new_outcomes == outputs)
+        metrics = dict(game = name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(last_best_program), best_found = best_found, best_ind_depth = best_inds[-1].get_depth())
         for i, metric in enumerate(fitness_metrics):
             if i in record_fitness_ids:
                 i_i = record_fitness_ids.index(i)
@@ -459,6 +466,11 @@ def run_pipeline_on_benchmark(sim_name,
 gp = partial(run_pipeline_on_benchmark, "gp", run_koza)
 ifs = partial(run_pipeline_on_benchmark, "ifs", run_koza, 
               fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], get_metrics_fn = partial(get_metrics, 1),
+              record_fitness_ids = [1, 2, 0])
+
+ifs0 = partial(run_pipeline_on_benchmark, "ifs0", run_koza, 
+              fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], get_metrics_fn = partial(get_metrics, 1),
+              selection_fn = partial(tournament_selection_scalar, 7, 0),
               record_fitness_ids = [1, 2, 0])
 
 def build_do_pipeline(sim_name, derive_objectives):
@@ -577,9 +589,28 @@ def compute_run_stats(file_name: str):
 
 if __name__ == "__main__":
     print("testing evo runs")
-    # for sim_name in sim_names:
-    #     for b_name in benchmark_map.keys():
-    #         print(f"{sim_name}:{b_name}")
+    # print(benchmark_map)
+    
+    # with open("data/metrics/gp-objs-10.jsonlist", 'r') as f:
+    #     json_lines = f.readlines()
+    # metrics = [json.loads(l) for l in json_lines]
+    # i = 0
+    # ofile = open(f"progs.txt", "w")
+    # progs = []     
+    # for m in metrics:   
+    #     if m['sim'] == 'ifs' and m['game'] == 'disc3' and m['fitness0'][-1] == 0:
+    #         prog = f'lambda x, y, z: {m["best_ind"]}'
+    #         progs.append(prog)
+    # print(",\n".join(progs), file = ofile)
+
+    # ifs0(idx = 3)
+    sim_names = ['ifs', 'ifs0']
+    i = 0
+    for sim_name in sim_names:
+        for b_name in benchmark_map.keys():
+            print(f"'{sim_name}:{b_name}'")
+            i += 1
+    print("Total: ", i)
     # cov_ht_bp(idx = 11)
-    compute_run_stats("data/metrics/gp-objs.jsonlist")
+    # compute_run_stats("data/metrics/gp-objs.jsonlist")
     pass
