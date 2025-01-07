@@ -59,16 +59,41 @@ def depth_fitness(prev_fitness, interactions, *, population = [], **kwargs):
     for i in range(len(population)):
         prev_fitness[i] = population[i].get_depth()
 
-def hamming_distance_fitness(prev_fitness, interactions, *, eval_mask = None, **kwargs):
-    if eval_mask is None:
-        eval_mask = np.ones(interactions.shape[0], dtype=bool)
-    prev_fitness[eval_mask] = np.sum(1 - interactions[eval_mask], axis = 1)
+def hamming_distance_fitness(prev_fitness, interactions, *, eval_idxs = None, **kwargs):
+    if eval_idxs is None:
+        prev_fitness[:] = np.sum(1 - interactions, axis = 1)
+    else:
+        prev_fitness[eval_idxs] = np.sum(1 - interactions[eval_idxs], axis = 1)
 
 def ifs_fitness(prev_fitness, interactions, **kwargs):
     counts = np.sum((interactions[:, None] == interactions) & (interactions == 1), axis = 0).astype(float)
     counts[counts > 0] = 1 / counts[counts > 0]
     ifs = np.sum(counts, axis=1)
     prev_fitness[:] = -ifs
+
+# def ifs_fitness_fn(interactions, **kwargs):
+#     counts = np.sum((interactions[:, None] == interactions) & (interactions == 1), axis = 0).astype(float)
+#     counts[counts > 0] = 1 / counts[counts > 0]
+#     ifs = np.sum(counts, axis=1)
+#     return ifs
+
+
+# interactions = np.array([[1, 0, 1, 1], [0, 1, 0, 1], [1, 1, 1, 1], [0, 1, 1, 1], [0, 0, 0, 1]])
+# ifss = []
+# for i in range(interactions.shape[0]):
+#     r = []
+#     for t in range(interactions.shape[1]):
+#         if interactions[i][t] == 1:
+#             r.append(np.sum(interactions[:, t] == 1))
+#         else:
+#             r.append(np.inf)
+#     ifss.append(r)
+# ifss2 = np.array(ifss)
+# np.sum(1 / ifss2, axis=1)
+
+# ifs_fitness_fn(interactions)
+
+    # ifss.append(ifs_fitness(0, interactions, eval_idxs = [i]))
 
 # ifs_fitness(0, np.array([[1, 0, 1, 1], [0, 1, 0, 1], [1, 1, 1, 1], [0, 1, 1, 1]]))
 
@@ -251,7 +276,7 @@ def select_program_random(test_selection, ints: np.ndarray, allowed_program_mask
 
 full_coverage_subgroups = iter([])#cyclic iterator
 full_coverage_selected = iter([])
-def full_coverage_selection(population, selection_size = 2):
+def full_coverage_selection(population, fitnesses, selection_size = 2):
     global full_coverage_subgroups
     global full_coverage_selected
     if (next_index := next(full_coverage_selected, None)) is None:
@@ -428,10 +453,10 @@ full_test_coverage_random_test_rand_program = partial(select_full_test_coverage,
 def run_pipeline_on_benchmark(sim_name, 
                             pipeline_fn, idx, 
                             init_fn = partial(ramped_half_and_half, 1, 5), 
-                            selection_fn = partial(tournament_selection, 7),
+                            selection_fn = partial(tournament_selection, selection_size = 7),
                             mutation_fn = partial(subtree_mutation, 0.1, 17),
                             crossover_fn = partial(subtree_crossover, 0.1, 17),
-                            breed_fn = partial(subtree_breed, 0.1, 0.9),
+                            breed_fn = partial(subtree_breed, mutation_rate = 0.1, crossover_rate = 0.9),
                             get_metrics_fn = partial(get_metrics, 0),
                             fitness_fns = [hamming_distance_fitness, depth_fitness],
                             record_fitness_ids = [0, 1],
@@ -440,10 +465,8 @@ def run_pipeline_on_benchmark(sim_name,
     outputs, func_list, terminal_list = problem()
     int_fn = partial(program_test_interactions, outputs)
     initialization = partial(init_fn, func_list, terminal_list)
-    selection = selection_fn
-    mutation = partial(mutation_fn, func_list, terminal_list)
-    crossover = crossover_fn
-    breed = partial(breed_fn, selection, mutation, crossover)
+    mutation_fn = partial(mutation_fn, func_list, terminal_list)
+    breed = partial(breed_fn, selection_fn = selection_fn, mutation_fn = mutation_fn, crossover_fn = crossover_fn)
     evaluate = partial(gp_evaluate, len(outputs), int_fn, fitness_fns)
     for run_id in range(num_runs):
         stats = pipeline_fn(population_size, max_generations, initialization, breed, evaluate, get_metrics_fn)
@@ -461,9 +484,13 @@ ifs = partial(run_pipeline_on_benchmark, "ifs", run_koza,
               fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], get_metrics_fn = partial(get_metrics, 1),
               record_fitness_ids = [1, 2, 0])
 
+ifs0 = partial(run_pipeline_on_benchmark, "ifs0", run_koza, 
+              fitness_fns = [ifs_fitness], get_metrics_fn = partial(get_metrics, 1),
+              record_fitness_ids = [1, 2, 0])
+
 def build_do_pipeline(sim_name, derive_objectives):
     return partial(run_pipeline_on_benchmark, sim_name, partial(run_nsga2, archive_size, derive_objectives = derive_objectives), 
-                        selection_fn = partial(tournament_selection, 3))
+                        selection_fn = partial(tournament_selection, selection_size = 3))
 
 do_rand = build_do_pipeline("do_rand", rand_objectives)
 do_nsga = build_do_pipeline("do_nsga", full_objectives)
@@ -581,5 +608,5 @@ if __name__ == "__main__":
     #     for b_name in benchmark_map.keys():
     #         print(f"{sim_name}:{b_name}")
     # cov_ht_bp(idx = 11)
-    compute_run_stats("data/metrics/gp-objs.jsonlist")
+    compute_run_stats("data/metrics/gp-objs-1000.jsonlist")
     pass

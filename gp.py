@@ -1,5 +1,6 @@
 ''' Module for classic genetic programming. '''
 import inspect
+from itertools import product
 from typing import Optional
 
 import numpy as np
@@ -10,21 +11,34 @@ class Node():
     def __init__(self, func, args = []):
         self.func = func # symbol to identify and also can be called 
         self.args = args # List of Nodes 
-        self.outcomes = None
-        self.interactions = None
-        self.int_fn = None
-        self.fitness = None # distance to desired objectives
-        self.fitness_func = None
         self.str = None
         self.depth = None
         self.signature = inspect.signature(func)
         self.return_type = self.signature.return_annotation
-    def __call__(self, *args, **kwds):
-        if self.outcomes is None:
-            node_args = [arg.__call__(*args, **kwds) for arg in self.args]
-            new_outcomes = self.func(*node_args, *args, **kwds)
-            self.outcomes = new_outcomes
-        return self.outcomes
+    def call(self, *args, node_bindings = {}, node_outcomes: Optional[dict] = None, node_called: Optional[dict] = None, **kwargs):
+        ''' Executes Node tree, 
+            @param node_bindings - redirects execution to another subtree (actually getters!!!)
+            @param node_outcomes - map, allows to collect the outcomes of all nodes into the dict if provided
+            @param node_executed - map, tracks loops if passed 
+        '''
+        if node_called is not None :
+            if self in node_called: # this could happen only through binding or incorrect build of a tree
+                raise ValueError(f"Execution loop detected. Node {str(self)} was already executed") 
+            else:
+                node_called[self] = True
+        if self in node_bindings and (other_self := node_bindings[self]()) is not None:
+            return other_self.call(*args, node_bindings = node_bindings, 
+                                            node_outcomes = node_outcomes, node_called = node_called, **kwargs)
+        node_args = []
+        for arg in self.args:
+            arg_outcomes = arg.call(*args, node_bindings = node_bindings, 
+                                            node_outcomes = node_outcomes, node_called = node_called, **kwargs)
+            node_args.append(arg_outcomes)
+        new_outcomes = self.func(*node_args, *args, **kwargs)
+        if node_outcomes is not None:
+            node_outcomes[self] = new_outcomes
+        return new_outcomes
+
     def __str__(self):
         if self.str is None:
             node_args = ", ".join(arg.__str__() for arg in self.args)
@@ -41,22 +55,7 @@ class Node():
         else:
             new_args = [arg.copy(replacements) for arg in self.args]
             return self.__class__(self.func, new_args)
-    def get_interactions_or_zero(self, int_size: int):
-        if self.interactions is None:
-            return np.zeros(int_size)
-        return self.interactions
-    def has_no_interactions(self):
-        return self.interactions is None
-    def get_fitness(self, fitness_fn, i, interactions, **kwargs):
-        if self.fitness_func != fitness_fn:
-            self.fitness_func = fitness_fn
-            self.fitness = None
-        self.fitness = fitness_fn(i, interactions, prev_fitness = self.fitness, **kwargs)
-        return self.fitness
-    def get_fitness_or_zero(self, fitness_size: int):
-        if self.fitness is None:
-            return np.zeros(fitness_size)
-        return self.fitness
+
     def get_depth(self):
         if self.depth is None:
             if len(self.args) == 0:
@@ -68,67 +67,19 @@ class Node():
         return len(self.args) == 0
     def is_of_type(self, node):
         return self.return_type == node.return_type
-    def bottom_up_left_right(self):
-        for arg in self.args:
-            yield from arg.bottom_up_left_right()        
-        yield self
     def traverse(self, filter, break_filter, at_depth = 0):
         if break_filter(at_depth, self):
             if filter(at_depth, self):
                 yield (at_depth, self)
             for arg in self.args:
-                yield from arg.traverse(filter, break_filter, at_depth = at_depth + 1)        
-    
-# a = np.array([1,2,3])
-# b = np.array([4,5,6])
-# np.full((3,), 1)
+                yield from arg.traverse(filter, break_filter, at_depth = at_depth + 1)
 
-# class ERC(Node):
-#     ''' Class for terminal nodes '''
-#     def __call__(self, *args, **kwds):
-#         return kwds[self.func]
-#     def __str__(self):
-#         return self.func
-
-def tournament_selection(tournament_selection_size, population):
+def tournament_selection(population, fitnesses, comp_fn = min, selection_size = 7):
     ''' Select parents using tournament selection '''
-    selected = default_rnd.choice(len(population), tournament_selection_size, replace=True)
-    best_index = min(selected, key=lambda i: (*population[i].fitness.tolist(),))
+    selected = default_rnd.choice(len(population), selection_size, replace=True)
+    best_index = comp_fn(selected, key=lambda i: (*fitnesses[i].tolist(),))
     best = population[best_index]
     return best
-
-# TODO: make this comparison less strict
-# def have_compatible_types(func1, func2):
-#     sig1 = inspect.signature(func1)
-#     sig2 = inspect.signature(func2)
-    
-#     params1 = [(param.annotation, param.default) for param in sig1.parameters.values()]
-#     return1 = sig1.return_annotation
-#     params2 = [(param.annotation, param.default) for param in sig2.parameters.values()]
-#     return2 = sig2.return_annotation
-    
-#     return params1 == params2 and return1 == return2
-
-# def have_compatible_return_types(func1, func2):
-#     sig1 = inspect.signature(func1)
-#     sig2 = inspect.signature(func2)
-    
-#     return1 = sig1.return_annotation
-#     return2 = sig2.return_annotation
-    
-#     return return1 == return2
-
-# def f(x: float) -> float:
-#     return x + 42
-
-# def g(y: float, z:float = 10) -> float:
-#     return y + 43
-
-# have_compatible_types(f, g)
-# ft = inspect.signature(f).parameters
-# [(param.annotation, param.default) for param in inspect.signature(g).parameters.values()]
-# gt = inspect.signature(g).parameters
-
 
 def grow(depth, leaf_prob, func_list, terminal_list, node_class = Node):
     ''' Grow a tree with a given depth '''
@@ -179,7 +130,36 @@ def ramped_half_and_half(min_depth, max_depth, func_list, terminal_list, node_cl
         return grow(depth, None, func_list, terminal_list, node_class = node_class)
     else:
         return full(depth, func_list, terminal_list, node_class = node_class)
-
+    
+def all_trees_init(depth, max_size, func_list, terminal_list, node_class = Node):
+    ''' Generate all possible trees till given depth 
+        Very expensive for large depth
+    '''    
+    zero_depth = []
+    for terminal in terminal_list:
+        zero_depth.append(node_class(terminal))
+        max_size -= 1
+        if max_size <= 0:
+            return zero_depth
+    trees_by_depth = [zero_depth]
+    for _ in range(1, depth + 1):
+        depth_trees = []
+        for func in func_list:
+            args = []
+            for _, p in inspect.signature(func).parameters.items():
+                if p.default is not inspect.Parameter.empty:
+                    continue
+                args.append(trees_by_depth[-1])
+            for a in product(*args):
+                depth_trees.append(node_class(func, a))
+                max_size -= 1
+                if max_size <= 0:
+                    trees_by_depth.append(depth_trees)
+                    return [t for trees in trees_by_depth for t in trees]
+        trees_by_depth.append(depth_trees)
+    all_trees = [t for trees in trees_by_depth for t in trees]
+    return all_trees
+    
 def select_node(leaf_prob, in_node: Node, filter, break_filter) -> Optional[Node]:
     places = [(at_d, n) for at_d, n in in_node.traverse(filter, break_filter) ]
     if len(places) == 0:
@@ -197,6 +177,20 @@ def select_node(leaf_prob, in_node: Node, filter, break_filter) -> Optional[Node
             selected_idx = default_rnd.choice(len(nonleaves))
             selected = nonleaves[selected_idx]
     return selected
+
+node_cache = {} # global archive of trees for syntax dedup 
+def syntax_dedup(node_class):
+    ''' Node class modification for syntactic dedupl '''
+    def new_node_class(*args):
+        global node_cache
+        candidate = node_class(*args)
+        candidate_id = str(candidate) # we use string representation as a key
+        if candidate_id in node_cache:
+            return node_cache[candidate_id]
+        else:
+            node_cache[candidate_id] = candidate
+            return candidate
+    return new_node_class
 
 def subtree_mutation(leaf_prob, max_depth, func_list, terminal_list, node, node_class = Node):
     new_node = grow(5, None, func_list, terminal_list, node_class = node_class)
@@ -240,43 +234,66 @@ def subtree_crossover(leaf_prob, max_depth, parent1: Node, parent2: Node):
     return child1, child2       
 
 def subtree_breed(mutation_rate, crossover_rate, 
-            selection, mutation, crossover, breed_size, population):
+            selection_fn, mutation_fn, crossover_fn, breed_size, population, fitnesses):
     new_population = []
     while len(new_population) < breed_size:
         # Select parents for the next generation
-        parent1 = selection(population)
-        parent2 = selection(population)
+        parent1 = selection_fn(population, fitnesses)
+        parent2 = selection_fn(population, fitnesses)
         if default_rnd.rand() < mutation_rate:
-            child1 = mutation(parent1)
+            child1 = mutation_fn(parent1)
         else:
             child1 = parent1
         if default_rnd.rand() < mutation_rate:
-            child2 = mutation(parent2)        
+            child2 = mutation_fn(parent2)
         else:
             child2 = parent2
         if default_rnd.rand() < crossover_rate:
-            child1, child2 = crossover(child1, child2)   
+            child1, child2 = crossover_fn(child1, child2)   
         new_population.extend([child1, child2])
     return new_population
 
-def gp_evaluate(int_size, int_fn, fitness_fns, population, *, derive_objectives = None):
-    eval_mask = np.array([p.has_no_interactions() for p in population], dtype=bool)
-    interactions = np.array([p.get_interactions_or_zero(int_size) for p in population])
-    call_results = np.array([p() for p in population])
-    interactions[eval_mask] = int_fn(call_results[eval_mask])
+eval_cache = {}
+
+def get_cached_evals(int_size, fitness_size, population: list[Node]):
+    global eval_cache
+    outcomes = np.zeros((len(population), int_size), dtype = float)
+    interactions = np.zeros((len(population), int_size), dtype=bool) # np.array([p.get_interactions_or_zero(int_size) for p in population])
+    fitnesses = np.zeros_like((len(population), fitness_size))
+    eval_idxs = []
+    for i, p in enumerate(population):
+        if p in eval_cache:
+            p_outcomes, p_ints, p_fitness = eval_cache[p]
+            outcomes[i] = p_outcomes
+            interactions[i] = p_ints
+            fitnesses[i] = p_fitness
+        else:
+            eval_idxs.append(i)
+    return eval_idxs, outcomes, interactions, fitnesses
+
+def update_cached_evals(new_population: list[Node], new_outcomes, new_interactions, new_fitnesses):
+    global eval_cache
+    keys_to_keep = {}
+    for i, node in enumerate(new_population):
+        if node not in eval_cache:
+            eval_cache[node] = (new_outcomes[i], new_interactions[i], new_fitnesses[i])
+        keys_to_keep[node] = True    
+    eval_cache = {node: eval_cache[node] for node in keys_to_keep.keys() }
+
+def gp_evaluate(int_size, int_fn, fitness_fns, population: list[Node], *, derive_objectives = None, eval_cache = {}):
+    eval_idxs, outcomes, interactions, fitnesses = get_cached_evals(int_size, len(fitness_fns), population)
+    outcomes[eval_idxs] = np.array([population[i].call() for i in eval_idxs])
+    interactions[eval_idxs] = int_fn(outcomes[eval_idxs])
     if derive_objectives is not None:
         derived_objectives, derived_info = derive_objectives(interactions)
     else:
         derived_objectives = None
         derived_info = {}
-    fitnesses = np.array([ p.get_fitness_or_zero(len(fitness_fns)) for p in population])
     fitnesses_T = fitnesses.T
     for i, fitness_fn in enumerate(fitness_fns):
-        fitness_fn(fitnesses_T[i], interactions, eval_mask = eval_mask, population = population, derived_objectives = derived_objectives, **derived_info)
-    for i, p in enumerate(population):
-        p.interactions = interactions[i]
-        p.fitness = fitnesses[i]  
-    return (fitnesses, interactions, call_results, derived_objectives)
+        fitness_fn(fitnesses_T[i], interactions, eval_idxs = eval_idxs, population = population, derived_objectives = derived_objectives, **derived_info)
+    update_cached_evals(population, outcomes, interactions, fitnesses)
+    return (fitnesses, interactions, outcomes, derived_objectives)
 
 def run_koza(population_size, max_generations, initialization, breed, evaluate, get_metrics):
     ''' Koza style GP game schema '''
@@ -290,6 +307,6 @@ def run_koza(population_size, max_generations, initialization, breed, evaluate, 
         if best_found or (generation >= max_generations):
             break        
         generation += 1
-        population = breed(population_size, population)  
+        population = breed(population_size, population, fitnesses)  
     
     return stats

@@ -113,8 +113,6 @@ def run_nsga2(archive_size, population_size, max_generations,
                 all_fronts_indicies = np.concatenate([all_fronts_indicies, front_indexes])
                 new_archive += [all_inds[i] for i in front_indexes]
                 break  
-        archive = new_archive
-        # archive_fitnesses = fitnesses[all_fronts_indicies]
         best_front = [all_inds[i] for i in best_front_indexes]
         best_front_fitnesses = fitnesses[best_front_indexes]
         best_found, metrics = get_metrics(best_front_fitnesses, best_front)
@@ -122,7 +120,9 @@ def run_nsga2(archive_size, population_size, max_generations,
         if best_found or (generation >= max_generations):
             break
         generation += 1
-        population = breed(population_size, archive)
+        archive = new_archive
+        archive_fitnesses = fitnesses[all_fronts_indicies]
+        population = breed(population_size, archive, archive_fitnesses)
     return stats
 
 
@@ -153,7 +153,8 @@ def run_front_coverage(archive_size, population_size, max_generations,
         selected_indexes_ids = select_parents(interactions[all_fronts_indexes]) #, fitnesses[all_fronts_indexes])
         selected_indexes = all_fronts_indexes[selected_indexes_ids]
         parents = [population[i] for i in selected_indexes]
-        new_population = breed(population_size, parents)
+        parents_fitnesses = fitnesses[selected_indexes]
+        new_population = breed(population_size, parents, parents_fitnesses)
         new_population.extend(parents)
         generation += 1
         population = new_population
