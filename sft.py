@@ -190,7 +190,7 @@ def compute_and_save_ints(group = 'fruits', max_seq_len = 8, list_num = 1):
     min_l = min(len(l) for l in loaded_lists)
     int_fs = {
         # "w2v_flow_all": partial(get_ints, partial(cut_list, 8), w2v_embedding, agg_i_cos_mean, no_agg),
-        # "w2v_flow": partial(get_ints, partial(cut_list, 8), w2v_embedding, agg_i_cos_mean, agg_cumavg),
+        "w2v_flow": partial(get_ints, partial(cut_list, 8), w2v_embedding, agg_i_cos_mean, agg_cumavg),
         # "w2v_all": partial(get_ints, partial(cut_list, 8), w2v_embedding, agg_i_cos_cat, no_agg),
         # "w2v_cdot": partial(get_ints, partial(cut_list, 8), w2v_embedding, agg_i_cos_centroid, agg_cumavg),
         # "w2v_abs":  partial(get_ints, partial(cut_list, 8), w2v_embedding, agg_i_cos_ctx, no_agg),

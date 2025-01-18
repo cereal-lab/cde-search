@@ -3,6 +3,7 @@
     and "Automatic Derivation of Search Objectives for Test-Based Genetic Programming" of Krawiec
 '''
 
+from typing import Optional
 import numpy as np
 
 from utils import create_named_function
@@ -55,7 +56,9 @@ def malcev():
 def build_vars(inputs: np.ndarray):
     res = []
     for i, name in enumerate(['x', 'y', 'z']):
-        def v(i=i, inputs = inputs):
+        def v(i=i, inputs = inputs, test_ids: Optional[np.ndarray] = None):
+            if test_ids is not None:
+                return inputs[i][test_ids]
             return inputs[i]
         res.append(create_named_function(name, v))
     return res 

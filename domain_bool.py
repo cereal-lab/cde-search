@@ -1,5 +1,6 @@
 ''' Symbolic regression on boolean domain. Here we define major functions and test cases '''
 
+from typing import Optional
 import numpy as np
 
 from utils import create_named_function
@@ -33,7 +34,9 @@ def build_lines(true_table_inputs: np.ndarray):
     lines = []
     true_table_inputs_T = true_table_inputs.T
     for i in range(len(true_table_inputs_T)):
-        def x(i=i, true_table_inputs_T = true_table_inputs_T) -> np.ndarray:
+        def x(i=i, true_table_inputs_T = true_table_inputs_T, test_ids: Optional[np.ndarray] = None) -> np.ndarray:
+            if test_ids is not None:
+                return true_table_inputs_T[i][test_ids]
             return true_table_inputs_T[i]
         lines.append(create_named_function(f"x{i}", x))
     return lines

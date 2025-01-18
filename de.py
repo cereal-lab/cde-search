@@ -640,7 +640,7 @@ def get_pos_np(test_ids, interactions, dimension_outcomes):
     return test_pos_map 
 
 def extract_dims_np(tests: np.ndarray):
-    ''' Generalizes CSE to nonbinary continuous outcomes '''    
+    ''' Generalizes CSE to nonbinary continuous outcomes, fully defined outcomes '''
     # origin = np.where(np.all(tests == 0, axis=1))[0]
     origin_outcomes = np.min(tests, axis=0)
     origin = np.where(np.all(tests == origin_outcomes, axis=1))[0]
@@ -1087,20 +1087,20 @@ def derive_cse_objectives(interactions):
 
 if __name__ == "__main__":
     
-    tests = np.array([
-        [9,1,9],
-        [9,2,9],
-        [1,2,2],
-        [1,2,3],
-        [2,9,1],
-        [3,9,2],
-        [9,9,9],
-        [1,1,1],
-        [1,2,2],
-        [9,2,3],
-    ])
-    res = extract_dims_np(tests)
-    dims4, orig4, span4 = extract_nonb_dims_approx(tests)
+    # tests = np.array([
+    #     [9,1,9],
+    #     [9,2,9],
+    #     [1,2,2],
+    #     [1,2,3],
+    #     [2,9,1],
+    #     [3,9,2],
+    #     [9,9,9],
+    #     [1,1,1],
+    #     [1,2,2],
+    #     [9,2,3],
+    # ])
+    # res = extract_dims_np(tests)
+    # dims4, orig4, span4 = extract_nonb_dims_approx(tests)
     pass
     #testing of de module functions 
     tests = [
@@ -1115,6 +1115,7 @@ if __name__ == "__main__":
     ]
     dims3, orig3, span3 = extract_dims_approx(tests)
     dims4, orig4, span4 = extract_nonb_dims_approx(tests)
+    dims5, orig5, span5 = extract_dims_np(np.array(tests ))
     pass
 
     tests = [[1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
@@ -1141,6 +1142,7 @@ if __name__ == "__main__":
     dims2, _, _ = extract_dims_fix(tests)
     dims3, _, _ = extract_dims_approx(tests)
     dims4, _, _ = extract_nonb_dims_approx(tests)
+    dims5, _, _ = extract_dims_np(np.array(tests))
     test2 = [[1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1],
         [0, 1, None, None, None, None, None, None, 0, 0, 0],
         [1, 1, None, None, None, None, None, None, 1, 1, 1],
