@@ -4,37 +4,33 @@
 from functools import partial
 import numpy as np
 from de import extract_dims_np
-from gp import depth_fitness, get_metrics, gp_evaluate, hamming_distance_fitness, init_each, tournament_selection, ramped_half_and_half, random_selection, subtree_breed, subtree_crossover, subtree_mutation
-from rnd import default_rnd, seed
-from utils import write_metrics
+from gp import analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed, tournament_selection
+from rnd import default_rnd
+import utils
 
-def run_coevolution(max_num_interactions, 
-              initialization_fn, selection_fns, interract_fn, update_fn, get_metric_fn):
-    """ General coevolution loop that interracts programs and tests. """
+def coevol_loop(max_gens, population_sizes, init_fn, select_fns, interract_fn, update_fn, analyze_pop_fn):
+    """ General coevolution loop """
     # Create initial population
-    populations = initialization_fn() # list of populations that should interract
-    stats = []
-    step = 0
-    while step < max_num_interactions:
+    populations = init_fn(population_sizes) # list of populations that should interract
+    gen = 0
+    best_ind = None
+    fitnesses = [None for _ in populations]
+    while gen < max_gens:
 
-        selections = [s(pop) for s, pop in zip(selection_fns, populations)] # selecting who should interract from populations
+        selections = [s(pop, fitnesses) for s, pop in zip(select_fns, populations, fitnesses)] # selecting who should interract from populations
 
-        fitnesses, interactions = interract_fn(selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
+        outputs, fitnesses, interactions = interract_fn(selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
         # test-based GP we consider - zero-sum game where sum = 1, win = 1 (program solved test), 0
 
-        best_found, metrics = get_metric_fn(fitnesses, selections) 
-        stats.append(metrics)
-        if best_found:
+        best_ind = analyze_pop_fn(selections[0], outputs, fitnesses, all_populations = selections)
+        if best_ind is not None:
             break
 
-        populations = update_fn(selections, interactions) # update populations based on interactions
+        populations, fitnesses = update_fn(selections, interactions, fitnesses) # update populations based on interactions
 
-        step += 1
+        gen += 1
 
-    return stats
-
-def get_program_metrics(main_fitness_index, fitnesses, populations):
-    return get_metrics(main_fitness_index, fitnesses, populations[0])
+    return best_ind
 
 # def init_programs_tests(init_programs, test_pool_size, test_fraction = 1.0):
 #     programs = init_programs()
@@ -42,67 +38,68 @@ def get_program_metrics(main_fitness_index, fitnesses, populations):
 #     tests = default_rnd.choice(test_pool_size, num_tests, replace=False)
 #     return [programs, tests]
 
-def zero_init():
-    return [[], []]
+def zero_init(population_sizes, num_pops = 2):
+    return [[] for _ in range(num_pops)]
 
-#                                     init_fn = partial(ramped_half_and_half, 1, 5),
-#                                     selection_fn = random_selection,
-#                                     mutation_fn = partial(subtree_mutation, 0.1, 17),
-#                                     crossover_fn = partial(subtree_crossover, 0.1, 17),                               
-#                                     breed_fn = partial(subtree_breed, mutation_rate = 0.1, crossover_rate = 0.9),
-# # 
+class BreedingGroups():
+    ''' Contains relation of what inds are good for breedins, computed from coordinate system extraction '''
+    def __init__(self):
+        # group has relation of ind_id to other ind_ids. np.ndarray
+        self.groups = {}
+        self.selected_ind_id = None
+        self.selected_group_ids = None
 
-fitness_cache = {}
-current_good_programs = []
-interaction_cache = {}
-breed_groups = {} # for program, defines good candidates for breeding
 
-previously_selected = None
+# fitness_cache = {}
+# current_good_programs = []
+# interaction_cache = {}
+# breed_groups = {} # for program, defines good candidates for breeding
 
-def select_based_on_breeding_group(population, fitnesses, one_selection = tournament_selection):
-    global previously_selected
-    if previously_selected is not None:
-        res = previously_selected
-        previously_selected = None 
-        return res
-    selected_one = one_selection(population, fitnesses)
-    breeding_group = breed_groups.get(selected_one, [])
-    if len(breeding_group) == 0:
-        previously_selected = one_selection(population, fitnesses)
-    else:
-        next_id = default_rnd.choice(len(breeding_group))
-        previously_selected = breeding_group[next_id]
-    return selected_one
+# previously_selected = None
 
-# def tournament_selection(population, fitnesses, comp_fn = min, selection_size = 7):
-#     ''' Select parents using tournament selection '''
-#     selected = default_rnd.choice(len(population), selection_size, replace=True)
-#     best_index = comp_fn(selected, key=lambda i: (*fitnesses[i].tolist(),))
-#     best = population[best_index]
-#     return best    
+def breeding_group_selection(population, fitnesses, select_fn = tournament_selection, *, breeding_groups: BreedingGroups):
+    if breeding_groups.selected_ind_id is not None:
+        if breeding_groups.selected_group_ids is None:
+            subpop = population
+            subpop_fitnesses = fitnesses
+        else: 
+            subpop = [population[i] for i in breeding_groups.selected_group_ids]
+            subpop_fitnesses = fitnesses[breeding_groups.selected_group_ids]
+        new_ind_id = select_fn(subpop, subpop_fitnesses)
+        # new_ind = subpop[new_ind_id]
+        breeding_groups.selected_ind_id = None 
+        breeding_groups.selected_group_ids = None
+        if breeding_groups.selected_group_ids is not None:
+            new_ind_id = breeding_groups.selected_group_ids[new_ind_id]
+        return new_ind_id 
+    selected_one_id = select_fn(population, fitnesses)
+    breeding_groups.selected_ind_id = selected_one_id
+    breeding_groups.selected_group_ids = breeding_groups.groups.get(selected_one_id, None)
+    return selected_one_id
 
-def explore_exploit_programs(good_programs, init_fn, breed_fn, explore_size = 0, exploit_size = 100):
+def select_explore_exploit_programs(good_programs, fitnesses, init_fn = init_each, 
+                                    breed_fn = partial(subtree_breed, breed_select_fn = breeding_group_selection), 
+                                    explore_size = 0, exploit_size = 100):
     ''' select those programs who previously distinguished tests of underlying objectives and then add new programs to explore'''
     global current_good_programs
     current_good_programs = good_programs # we store them to use later for coordinate system extraction
     if len(good_programs) == 0: # nobody can breed
-        all_programs = [init_fn() for _ in range(explore_size + exploit_size)]
+        all_programs = init_fn(explore_size + exploit_size)
     else:
-        # all_programs = list(discriminating_programs)
-        all_programs = []
-        inited_programs = [ init_fn() for _ in range(explore_size)]
+        # all_programs = []
+        all_programs = list(good_programs)
+        inited_programs = init_fn(explore_size)
         all_programs.extend(inited_programs)
-        fitnesses = [fitness_cache[p] for p in good_programs]
-        breed_programs = breed_fn(breed_size = exploit_size, population = good_programs, fitnesses = fitnesses)
+        breed_programs = breed_fn(exploit_size, good_programs, fitnesses)
         all_programs.extend(breed_programs)
     return all_programs
 
-def explore_exploit_tests(good_tests, gold_outputs, selection_size_fraction = 1):
+def select_explore_exploit_tests(good_tests, fitnesses, fraction = 1, *, gold_outputs):
     ''' selecting tests found to be underlying objectives '''
-    if selection_size_fraction == 1:
+    if fraction == 1:
         return np.arange(len(gold_outputs))
     
-    to_select_num = int(selection_size_fraction * len(gold_outputs)) - len(good_tests)
+    to_select_num = int(fraction * len(gold_outputs)) - len(good_tests)
     if to_select_num <= 0:
         return good_tests
     
@@ -111,17 +108,14 @@ def explore_exploit_tests(good_tests, gold_outputs, selection_size_fraction = 1)
     selected_new_tests = default_rnd.choice(possible_new_tests, to_select_num, replace=False)
     return np.concatenate([good_tests, selected_new_tests])
 
-def prog_test_interractions(populations, evaluate_fn = gp_evaluate):
+def prog_test_interractions(populations, eval_fn = cached_eval, *, gold_outputs):
     ''' Test-based interactions, zero-sum game '''
     programs, tests = populations
-    fitnesses, interactions, *_ = evaluate_fn(programs)
-    for i, p in enumerate(programs):
-        fitness_cache[p] = fitnesses[i]
-        interaction_cache[p] = interactions[i]
-    all_programs = current_good_programs + programs
-    all_fitnesses = np.array([fitness_cache[p] for p in all_programs])
-    all_interactions = np.array([interaction_cache[p] for p in all_programs])
-    return all_fitnesses, all_interactions[:, tests]
+    fitnesses, interactions, outputs = eval_fn(programs)
+    if len(gold_outputs) == len(tests):
+        return fitnesses, interactions    
+    subset_interactions = interactions[:, tests]
+    return outputs, fitnesses, subset_interactions
 
 # def get_discriminating_set(selected_other: np.ndarray, interactions: np.ndarray):
 #     ''' Returns candidates that could distinguish selected individuals based on seen interactions 
@@ -224,7 +218,7 @@ def select_discriminative_tests(tests, prog_interactions: np.ndarray):
     discriminating_tests = [tests[i] for i in discriminating_test_ids]
     return discriminating_tests
 
-def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_all_tests, max_obj_size = 20, ignore_same_dim = True):
+def update_cand_underlying_objectives(populations, interactions, fitnesses, test_selection_strategy = select_all_tests, max_obj_size = 20, ignore_same_dim = True, *, breeding_groups: BreedingGroups):
     """ Finds underlying objectives for programs, samples most discriminating tests (if necessary)
         Extracted coordinate system preserve relation of what individuals could be combined in breeding 
         Each underlying objective could be combined with other one, or spanned point which is at the end but does not fulfill this objective 
@@ -234,9 +228,7 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
             - in case if size of spanned is too small, we just randomly sample underlying objectives to be preserved
             - otherwise, we discard all of the objectives from interactions and build new objectives from spanned points and repeat size analysis 
     """
-    global breed_groups    
-    ps, tests = populations
-    programs = current_good_programs + ps
+    programs, tests = populations
 
     selected_programs = programs
     selected_interactions = interactions
@@ -249,6 +241,7 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
         objs_count = sum(len(point) for point in objs)
         dim_ends = [ (dim_id, len(d) - 1) for dim_id, d in enumerate(dims) ]
         spanned_ends = { }
+        # filtering out spanned points which are not ends of axes
         for test_id, position in spanned.items():
             for dim_id, point_id in position.items():
                 spanned_ends.setdefault((dim_id, point_id), []).append(test_id)
@@ -268,8 +261,6 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
             selected_interactions = selected_interactions[spanned_ids]
             # repeat dimension extraction on spanned points
     
-    prog_poss = {test_id: {dim_id: len(dim) - 1} for dim_id, dim in enumerate(dims) for test_id in dim[-1] }
-    prog_poss.update(spanned)
     selected_program_ids = list(preserved_spanned)
     if add_all_objs:
         for obj in objs:
@@ -277,9 +268,11 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
                 selected_program_ids.append(prog_id)
     elif need_to_sample_objs:
         # resort to random sampling of objectives
+        objs_wins = np.sum(selected_interactions[[obj[0] for obj in objs]], axis = 1)
+        objs_with_wins = sorted(zip(objs, objs_wins), key = lambda x: x[1], reverse = True)
+        objs = [obj for obj, _ in objs_with_wins]
         while (len(selected_program_ids) < max_obj_size) and len(objs) > 0:
             obj_idxs = list(range(0, len(objs)))
-            default_rnd.shuffle(obj_idxs)
             idx_to_delete = set()
             for obj_id in obj_idxs:
                 obj = objs[obj_id]
@@ -293,71 +286,58 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
             objs = [obj for i, obj in enumerate(objs) if i not in idx_to_delete]
 
     all_selected_programs = [selected_programs[i] for i in selected_program_ids]
+    selected_fitnesses = fitnesses[selected_program_ids]
+
+    prog_poss = {test_id: {dim_id: len(dim) - 1} for dim_id, dim in enumerate(dims) for test_id in dim[-1] }
+    prog_poss.update(spanned)
 
     # test_interactions = 1 - interactions[all_selected_programs].T
     all_selected_tests = test_selection_strategy(tests, selected_interactions[selected_program_ids])
     new_breed_groups = {}
-    for prog_id in selected_program_ids:
+    for new_id, prog_id in enumerate(selected_program_ids):
         prog_dims = prog_poss[prog_id]
         prog_breed_group = []
         prog_keys = set(prog_dims.keys())
-        for prog_id2 in selected_program_ids:
+        for new_id2, prog_id2 in enumerate(selected_program_ids):
             prog_dims2 = prog_poss[prog_id2]
             prog_keys2 = set(prog_dims2.keys())
             common_keys = prog_keys & prog_keys2
             new_keys = prog_keys2 - prog_keys
             # second part of eq - could we ignore it??
             if (len(new_keys) > 0) or (not ignore_same_dim and any(prog_dims[dim_id] < prog_dims2[dim_id] for dim_id in common_keys)):
-                prog_breed_group.append(selected_programs[prog_id2])
-        new_breed_groups[selected_programs[prog_id]] = prog_breed_group
-    breed_groups = new_breed_groups
-    return [all_selected_programs, all_selected_tests]
+                prog_breed_group.append(new_id2)
+        new_breed_groups[new_id] = np.array(prog_breed_group)
+    breeding_groups.groups = new_breed_groups
+    breeding_groups.selected_group_ids = None 
+    breeding_groups.selected_ind_id = None
+    return [all_selected_programs, all_selected_tests], [selected_fitnesses, None]
+    
+def gp_coevolve2(gold_outputs, func_list, terminal_list,
+                 population_sizes = [0, 0], max_gens = 100,
+                fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = None,
+                init_fn = zero_init, first_select_fn = select_explore_exploit_programs,
+                second_select_fn = select_explore_exploit_tests,
+                interract_fn = prog_test_interractions,
+                update_fn = update_cand_underlying_objectives,
+                analyze_pop_fn = analyze_population):
+    stats = {}
+    syntax_cache = {}
+    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder)
+    breeding_groups = BreedingGroups()
+    shared_context = dict(
+        gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
+        fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
+        syntax_cache = syntax_cache, eval_cache = {}, stats = stats, breeding_groups = breeding_groups)
+    init_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn = utils.bind_fns(shared_context, init_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn)
+    best_ind = coevol_loop(max_gens, population_sizes, max_gens, init_fn, [first_select_fn, second_select_fn], interract_fn, update_fn, analyze_pop_fn)
+    return best_ind, stats
 
-def run_coevolution_experiment(sim_name, game_name, gold_outputs, func_list, terminal_list,
-                        evaluate_fn = gp_evaluate,
-                        init_fn = partial(ramped_half_and_half, 1, 5),
-                        mutation_fn = partial(subtree_mutation, 0.1, 17),
-                        breed_fn = partial(subtree_breed, mutation_rate = 0.1, crossover_rate = 0.9,                                            
-                                            crossover_fn = partial(subtree_crossover, 0.1, 17),
-                                            selection_fn = select_based_on_breeding_group),                        
-                        program_selection_fn = 
-                            partial(explore_exploit_programs, explore_size = 0, exploit_size = 100),
-                        test_selection_fn = partial(explore_exploit_tests, selection_size_fraction = 1),
-                        interract_fn = prog_test_interractions,
-                        update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = select_all_tests, 
-                                                max_obj_size = 20, ignore_same_dim = True),
-                        get_metrics_fn = partial(get_program_metrics, 0),
-                        fitness_fns = [hamming_distance_fitness, depth_fitness],
-                        record_fitness_ids = [0, 1],
-                        metrics_file = "data/metrics/objs.jsonlist",
-                        max_generations = 100,
-                        num_runs = 30):
-    mutation = partial(mutation_fn, func_list, terminal_list)
-    breed = partial(breed_fn, mutation_fn = mutation)
-    program_selection = partial(program_selection_fn, 
-                                init_fn = partial(init_fn, func_list = func_list, terminal_list = terminal_list), 
-                                breed_fn = breed)
-    test_selection = partial(test_selection_fn, gold_outputs = gold_outputs)
-    selection_fns = [ program_selection, test_selection ]
-    evaluate = partial(evaluate_fn, gold_outputs, fitness_fns = fitness_fns)
-    interract = partial(interract_fn, evaluate_fn = evaluate)
-    for run_id in range(num_runs):
-        stats = run_coevolution(max_generations, zero_init, selection_fns, interract, update_fn, get_metrics_fn)
-        best_inds, *fitness_metrics = zip(*stats)
-        metrics = dict(game = game_name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
-        for i, metric in enumerate(fitness_metrics):
-            if i in record_fitness_ids:
-                i_i = record_fitness_ids.index(i)
-                metrics["fitness" + str(i_i)] = metric
-        write_metrics(metrics, metrics_file)
-        pass
-
-coevol_uo = partial(run_coevolution_experiment, "coevol_uo")
+coevol_uo = gp_coevolve2
 
 coevol_sim_names = ["coevol_uo"]
 
-if __name__ == "__main__":
-    import gp_benchmarks
-    game_name, (gold_outcomes, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    coevol_uo(game_name, gold_outcomes, func_list, terminal_list)
-    pass
+# if __name__ == "__main__":
+#     import gp_benchmarks
+#     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
+#     coevol_uo(game_name, gold_outputs, func_list, terminal_list)
+#     pass

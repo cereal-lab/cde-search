@@ -1,12 +1,13 @@
 ''' Module for classic genetic programming. '''
-from functools import partial
 import inspect
+from functools import partial
 from itertools import product
-from typing import Optional
-from utils import write_metrics
+from typing import Any, Optional
+import utils
 
 import numpy as np
-from rnd import default_rnd, seed
+from rnd import default_rnd
+import utils
 
 class Node():
     ''' Node class for tree representation '''
@@ -21,7 +22,7 @@ class Node():
                 test_ids: Optional[np.ndarray] = None, **kwargs):
         ''' Executes Node tree, 
             @param node_bindings - redirects execution to another subtree (actually getters!!!)
-            @param node_outcomes - map, allows to collect the outcomes of all nodes into the dict if provided
+            @param node_outcomes - map, allows to collect the outputs of all nodes into the dict if provided
             @param node_executed - map, tracks loops if passed 
         '''
         if node_called is not None :
@@ -82,29 +83,113 @@ class Node():
             for arg in self.args:
                 yield from arg.traverse(filter, break_filter, at_depth = at_depth + 1)
 
-def tournament_selection(population, fitnesses, comp_fn = min, selection_size = 7):
+def simple_node_builder(func, args):
+    return Node(func, args)
+
+def cached_node_builder(func, args, *, syntax_cache, node_builder):
+    ''' Builds the node with node_builder, but first checks cache '''
+    # NOTE: trees are always built from bottom to up, so we can use existing Node objects as key elements
+    # TODO: add stats???
+    key = (func, *args)
+    if key not in syntax_cache:
+        syntax_cache[key] = node_builder(func, args)
+    return syntax_cache[key]
+    
+def test_based_interactions(gold_outputs: np.ndarray, program_outputs: np.ndarray):
+    return (program_outputs == gold_outputs).astype(int)
+    
+def _compute_fitnesses(fitness_fns, interactions, population, gold_outputs, derived_objectives = [], derived_info = {}):
+    fitness_list = []
+    for fitness_fn in fitness_fns:
+        fitness = fitness_fn(interactions, population = population, gold_outputs = gold_outputs, 
+                                derived_objectives = derived_objectives, **derived_info)
+        fitness_list.append(fitness) 
+    fitnesses = np.array(fitness_list).T  
+    return fitnesses   
+
+def eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, *, gold_outputs, fitness_fns, stats):
+    ''' Eager node evaluator '''
+    # NOTE: we do not use here partial evaluation (test_ids) - probably for later 
+    # TODO: dealing with bindings in sketches - for later
+    # TODO: dealing with partial evaluation - interface of node_evaluator should be extended
+    if save_stats:
+        stats.setdefault("num_evals", []).append(len(nodes))
+    outputs = np.array([node.call() for node in nodes ])
+    interactions = int_fn(gold_outputs, outputs)
+    if derive_objs_fn is not None:
+        derived_objectives, derived_info = derive_objs_fn(interactions)
+    else:
+        derived_objectives = None
+        derived_info = {}
+    fitnesses = _compute_fitnesses(fitness_fns, interactions, nodes, gold_outputs, derived_objectives, derived_info)
+    if derived_objectives is None:
+        return outputs, fitnesses, interactions  
+    return outputs, fitnesses, interactions, derived_objectives
+
+def cached_eval(nodes: list[Node], eval_fn = eval, save_stats = True, force_fitness_compute = False, *, eval_cache, gold_outputs, fitness_fns, stats):
+    ''' Cached node evaluator '''
+    # NOTE: derived objectives does not work with cache as they are computed on per given group of nodes
+    if len(nodes) == 0:
+        raise ValueError("Empty population")
+    node_ids_to_eval = [node_id for node_id, node in enumerate(nodes) if node not in eval_cache]
+    fit_size = 0
+    int_size = 0
+    out_size = 0
+    if save_stats:
+        stats.setdefault("num_evals", []).append(len(node_ids_to_eval))
+        stats.setdefault("cache_hits", []).append(len(nodes) - len(node_ids_to_eval))
+    if len(node_ids_to_eval) > 0:
+        nodes_to_eval = [nodes[node_id] for node_id in node_ids_to_eval]
+        new_fitnesses, new_interactions, new_outcomes = eval_fn(nodes_to_eval, save_stats = False)
+        fit_size = new_fitnesses.shape[1]
+        int_size = new_interactions.shape[1]
+        out_size = new_outcomes.shape[1]
+        for node, new_fitness, new_ints, new_outs in zip(nodes_to_eval, new_fitnesses, new_interactions, new_outcomes):
+            eval_cache[node] = (new_fitness, new_ints, new_outs)
+    else:
+        node = nodes[0]
+        fit_size = len(eval_cache[node][0])
+        int_size = len(eval_cache[node][1])
+        out_size = len(eval_cache[node][2])
+    fitnesses = np.zeros((len(nodes), fit_size), dtype = float)
+    interactions = np.zeros((len(nodes), int_size), dtype=bool)
+    outputs = np.zeros((len(nodes), out_size), dtype=float)
+    for node_id, node in enumerate(nodes):
+        f, i, o = eval_cache[node]
+        fitnesses[node_id] = f
+        interactions[node_id] = i
+        outputs[node_id] = o
+    if force_fitness_compute:
+        fitnesses = _compute_fitnesses(fitness_fns, interactions, nodes, gold_outputs)
+    return outputs, fitnesses, interactions
+
+def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = np.argmin, tournament_selection_size = 7):
     ''' Select parents using tournament selection '''
-    selected = default_rnd.choice(len(population), selection_size, replace=True)
-    best_index = comp_fn(selected, key=lambda i: (*fitnesses[i].tolist(),))
-    best = population[best_index]
-    return best
+    selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True)
+    selected_fitnesses = fitnesses[selected_ids]
+    best_id_id = fitness_comp_fn(selected_fitnesses, axis=0)
+    best_id = selected_ids[best_id_id]
+    # best = population[best_id]
+    return best_id
 
-def random_selection(population, fitnesses):
+def random_selection(population: list[Any], fitnesses: np.ndarray):
     ''' Select parents using random selection '''
-    return default_rnd.choice(population)
+    rand_id = default_rnd.choice(len(population))
+    # selected = population[rand_id]
+    return rand_id
 
-def grow(depth, leaf_prob, func_list, terminal_list, node_class = Node):
+def grow(grow_depth = 5, grow_leaf_prob = None, *, func_list, terminal_list, node_builder):
     ''' Grow a tree with a given depth '''
-    if depth == 0:
+    if grow_depth == 0:
         terminal_index = default_rnd.choice(len(terminal_list))
         terminal = terminal_list[terminal_index]
-        return node_class(terminal)
+        return node_builder(terminal)
     else:
-        if leaf_prob is None:
+        if grow_leaf_prob is None:
             func_index = default_rnd.choice(len(func_list + terminal_list))
             func = func_list[func_index] if func_index < len(func_list) else terminal_list[func_index - len(func_list)]
         else:
-            if default_rnd.rand() < leaf_prob:
+            if default_rnd.rand() < grow_leaf_prob:
                 terminal_index = default_rnd.choice(len(terminal_list))
                 func = terminal_list[terminal_index]
             else:
@@ -114,47 +199,48 @@ def grow(depth, leaf_prob, func_list, terminal_list, node_class = Node):
         for _, p in inspect.signature(func).parameters.items():
             if p.default is not inspect.Parameter.empty:
                 continue
-            node = grow(depth - 1, leaf_prob, func_list, terminal_list)
+            node = grow(grow_depth = grow_depth - 1, grow_leaf_prob = grow_leaf_prob, 
+                        func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
             args.append(node)
-        return node_class(func, args)
+        return node_builder(func, args)
 
-def full(depth, func_list, terminal_list, node_class = Node):
+def full(full_depth = 5, *, func_list, terminal_list, node_builder):
     ''' Grow a tree with a given depth '''
-    if depth == 0:
-        terminal_index = default_rnd.choice(len(terminal_list))
-        terminal = terminal_list[terminal_index]
-        return node_class(terminal)
+    if full_depth == 0:
+        terminal_id = default_rnd.choice(len(terminal_list))
+        terminal = terminal_list[terminal_id]
+        return node_builder(terminal)
     else:
-        func_index = default_rnd.choice(len(func_list))
-        func = func_list[func_index]
+        func_id = default_rnd.choice(len(func_list))
+        func = func_list[func_id]
         args = []
         for _, p in inspect.signature(func).parameters.items():
             if p.default is not inspect.Parameter.empty:
                 continue
-            node = full(depth - 1, func_list, terminal_list)
+            node = full(full_depth=full_depth - 1, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
             args.append(node)
-        return node_class(func, args)
+        return node_builder(func, args)
 
-def ramped_half_and_half(min_depth, max_depth, func_list, terminal_list, node_class = Node):
+def ramped_half_and_half(rhh_min_depth = 1, rhh_max_depth = 5, rhh_grow_prob = 0.5, *, func_list, terminal_list, node_builder):
     ''' Generate a population of half full and half grow trees '''
-    depth = default_rnd.randint(min_depth, max_depth+1)
-    if default_rnd.rand() < 0.5:
-        return grow(depth, None, func_list, terminal_list, node_class = node_class)
+    depth = default_rnd.randint(rhh_min_depth, rhh_max_depth+1)
+    if default_rnd.rand() < rhh_grow_prob:
+        return grow(grow_depth = depth, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
     else:
-        return full(depth, func_list, terminal_list, node_class = node_class)
+        return full(full_depth = depth, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
     
-def init_each(init_fn, population_size):
-    return [init_fn() for _ in range(population_size)]    
+def init_each(size, init_fn = ramped_half_and_half):
+    return [init_fn() for _ in range(size)]    
     
-def init_all(depth, max_size, func_list, terminal_list, node_class = Node):
+def init_all(size, depth = 3, *, func_list, terminal_list, node_builder):
     ''' Generate all possible trees till given depth 
         Very expensive for large depth
     '''    
     zero_depth = []
     for terminal in terminal_list:
-        zero_depth.append(node_class(terminal))
-        max_size -= 1
-        if max_size <= 0:
+        zero_depth.append(node_builder(terminal))
+        size -= 1
+        if size <= 0:
             return zero_depth
     trees_by_depth = [zero_depth]
     for _ in range(1, depth + 1):
@@ -166,26 +252,26 @@ def init_all(depth, max_size, func_list, terminal_list, node_class = Node):
                     continue
                 args.append(trees_by_depth[-1])
             for a in product(*args):
-                depth_trees.append(node_class(func, a))
-                max_size -= 1
-                if max_size <= 0:
+                depth_trees.append(node_builder(func, a))
+                size -= 1
+                if size <= 0:
                     trees_by_depth.append(depth_trees)
                     return [t for trees in trees_by_depth for t in trees]
         trees_by_depth.append(depth_trees)
     all_trees = [t for trees in trees_by_depth for t in trees]
     return all_trees
     
-def select_node(leaf_prob, in_node: Node, filter, break_filter) -> Optional[Node]:
+def _select_node(in_node: Node, filter, break_filter, select_node_leaf_prob = None) -> Optional[Node]:
     places = [(at_d, n) for at_d, n in in_node.traverse(filter, break_filter) ]
     if len(places) == 0:
         return None, None 
-    if leaf_prob is None: 
+    if select_node_leaf_prob is None: 
         selected_idx = default_rnd.choice(len(places))
         selected = places[selected_idx]
     else:
         nonleaves = [(at_d, n) for (at_d, n) in places if not n.is_leaf()]
         leaves = [(at_d, n) for (at_d, n) in places if n.is_leaf()]
-        if (default_rnd.rand() < leaf_prob and len(leaves) > 0) or len(nonleaves) == 0:
+        if (default_rnd.rand() < select_node_leaf_prob and len(leaves) > 0) or len(nonleaves) == 0:
             selected_idx = default_rnd.choice(len(leaves))
             selected = leaves[selected_idx]
         else:
@@ -193,27 +279,15 @@ def select_node(leaf_prob, in_node: Node, filter, break_filter) -> Optional[Node
             selected = nonleaves[selected_idx]
     return selected
 
-node_cache = {} # global archive of trees for syntax dedup 
-def syntax_dedup(node_class):
-    ''' Node class modification for syntactic dedupl '''
-    def new_node_class(*args):
-        global node_cache
-        candidate = node_class(*args)
-        candidate_id = str(candidate) # we use string representation as a key
-        if candidate_id in node_cache:
-            return node_cache[candidate_id]
-        else:
-            node_cache[candidate_id] = candidate
-            return candidate
-    return new_node_class
-
-def subtree_mutation(leaf_prob, max_depth, func_list, terminal_list, node, node_class = Node):
-    new_node = grow(5, None, func_list, terminal_list, node_class = node_class)
+def subtree_mutation(node, select_node_leaf_prob = 0.1, tree_max_depth = 17, *, func_list, terminal_list, node_builder):
+    new_node = grow(grow_depth = 5, func_list = func_list, terminal_list = terminal_list, 
+                    grow_leaf_prob = None, node_builder = node_builder)
     new_node_depth = new_node.get_depth()
     # at_depth, at_node = select_node(leaf_prob, node, lambda d, n: (d > 0) and n.is_of_type(new_node), 
     #                                     lambda d, n: (d + new_node_depth) <= max_depth)
-    at_depth, at_node = select_node(leaf_prob, node, lambda d, n: n.is_of_type(new_node), 
-                                        lambda d, n: (d + new_node_depth) <= max_depth)
+    at_depth, at_node = _select_node(node, lambda d, n: n.is_of_type(new_node), 
+                                        lambda d, n: (d + new_node_depth) <= tree_max_depth, 
+                                        select_node_leaf_prob = select_node_leaf_prob)
     if at_node is None:
         return node
     return node.copy({at_node: new_node})
@@ -221,7 +295,7 @@ def subtree_mutation(leaf_prob, max_depth, func_list, terminal_list, node, node_
 def no_mutation(node):
     return node
     
-def subtree_crossover(leaf_prob, max_depth, parent1: Node, parent2: Node):
+def subtree_crossover(parent1: Node, parent2: Node, select_node_leaf_prob = 0.1, tree_max_depth = 17):
     ''' Crossover two trees '''
     # NOTE: we can crossover root nodes
     # if parent1.get_depth() == 0 or parent2.get_depth() == 0:
@@ -229,13 +303,14 @@ def subtree_crossover(leaf_prob, max_depth, parent1: Node, parent2: Node):
     parent1, parent2 = sorted([parent1, parent2], key = lambda x: x.get_depth())
     # for _ in range(3):
     # at1_at_depth, at1 = select_node(leaf_prob, parent1, lambda d, n: (d > 0), lambda d, n: True)
-    at1_at_depth, at1 = select_node(leaf_prob, parent1, lambda d, n: True, lambda d, n: True)
+    at1_at_depth, at1 = _select_node(parent1, lambda d, n: True, lambda d, n: True, select_node_leaf_prob=select_node_leaf_prob)
     if at1 is None:
         return parent1, parent2
     at1_depth = at1.get_depth()
-    at2_depth, at2 = select_node(leaf_prob, parent2, 
-                        lambda d, n: n.is_of_type(at1) and at1.is_of_type(n) and ((n.get_depth() + at1_at_depth) <= max_depth) and (at1_at_depth > 0 or d > 0), 
-                        lambda d, n: ((d + at1_depth) <= max_depth))
+    at2_depth, at2 = _select_node(parent2, 
+                        lambda d, n: n.is_of_type(at1) and at1.is_of_type(n) and ((n.get_depth() + at1_at_depth) <= tree_max_depth) and (at1_at_depth > 0 or d > 0), 
+                        lambda d, n: ((d + at1_depth) <= tree_max_depth),
+                        select_node_leaf_prob=select_node_leaf_prob)
     # at2_depth, at2 = select_node(leaf_prob, parent2, 
     #                     lambda d, n: (d > 0) and n.is_of_type(at1) and at1.is_of_type(n), 
     #                     lambda d, n: ((d + at1_depth) <= max_depth) and ((n.get_depth() + at1_at_depth) <= max_depth))
@@ -248,13 +323,16 @@ def subtree_crossover(leaf_prob, max_depth, parent1: Node, parent2: Node):
     child2 = parent2.copy({at2: at1})
     return child1, child2       
 
-def subtree_breed(mutation_rate, crossover_rate, 
-            selection_fn, mutation_fn, crossover_fn, breed_size, population, fitnesses):
+def subtree_breed(size, population, fitnesses,
+                    breed_select_fn = tournament_selection, mutation_fn = subtree_mutation, crossover_fn = subtree_crossover,
+                    mutation_rate = 0.1, crossover_rate = 0.9):
     new_population = []
-    while len(new_population) < breed_size:
+    while len(new_population) < size:
         # Select parents for the next generation
-        parent1 = selection_fn(population, fitnesses)
-        parent2 = selection_fn(population, fitnesses)
+        parent1_id = breed_select_fn(population, fitnesses)
+        parent2_id = breed_select_fn(population, fitnesses)
+        parent1 = population[parent1_id]
+        parent2 = population[parent2_id]
         if default_rnd.rand() < mutation_rate:
             child1 = mutation_fn(parent1)
         else:
@@ -267,114 +345,14 @@ def subtree_breed(mutation_rate, crossover_rate,
             child1, child2 = crossover_fn(child1, child2)   
         new_population.extend([child1, child2])
     return new_population
-
-# eval_cache = {}
-
-# def get_cached_evals(int_size, fitness_size, population: list[Node]):
-#     global eval_cache
-#     outcomes = np.zeros((len(population), int_size), dtype = float)
-#     interactions = np.zeros((len(population), int_size), dtype=bool) # np.array([p.get_interactions_or_zero(int_size) for p in population])
-#     fitnesses = np.zeros_like((len(population), fitness_size))
-#     eval_idxs = []
-#     for i, p in enumerate(population):
-#         if p in eval_cache:
-#             p_outcomes, p_ints, p_fitness = eval_cache[p]
-#             outcomes[i] = p_outcomes
-#             interactions[i] = p_ints
-#             fitnesses[i] = p_fitness
-#         else:
-#             eval_idxs.append(i)
-#     return eval_idxs, outcomes, interactions, fitnesses
-
-# def update_cached_evals(new_population: list[Node], new_outcomes, new_interactions, new_fitnesses):
-#     global eval_cache
-#     keys_to_keep = {}
-#     for i, node in enumerate(new_population):
-#         if node not in eval_cache:
-#             eval_cache[node] = (new_outcomes[i], new_interactions[i], new_fitnesses[i])
-#         keys_to_keep[node] = True    
-#     eval_cache = {node: eval_cache[node] for node in keys_to_keep.keys() }
-
-def test_based_interactions(gold_outputs: np.ndarray, program_outputs: np.ndarray):
-    return (program_outputs == gold_outputs).astype(int)
     
-def gp_eager_call(gold_outputs, node, test_ids: Optional[np.ndarray] = None):
-    outcomes = node.call(test_ids = test_ids)
-    return outcomes
-
-gp_eval_masks = {}
-gp_outcomes = {}
-
-def gp_cached_subset_call(gold_outputs, node: Node, test_ids: Optional[np.ndarray] = None):
-    ''' Cached call to GP node '''
-    req_mask = np.ones(len(gold_outputs), dtype=bool)
-    if test_ids is not None:
-        req_mask[test_ids] = 0
-        req_mask = ~req_mask
-    if node in gp_eval_masks:
-        done_mask = gp_eval_masks[node]
-        eval_mask = req_mask & ~done_mask
-        eval_test_ids = np.where(eval_mask)[0]
-        if len(eval_test_ids) > 0:
-            eval_outcomes = node.call(test_ids = eval_test_ids)
-            gp_outcomes[node][eval_test_ids] = eval_outcomes
-            done_mask[eval_test_ids] = 1        
-    else:
-        if test_ids is None:
-            eval_outcomes = node.call()
-        else:
-            eval_outcomes = node.call(test_ids = test_ids)
-        gp_outcomes[node] = np.zeros(len(gold_outputs))
-        gp_outcomes[node][req_mask] = eval_outcomes
-        gp_eval_masks[node] = req_mask
-    return gp_outcomes[node][req_mask]
-
-def gp_cached_call(gold_outputs, node: Node):
-    ''' Cached call to GP node '''
-    if node not in gp_outcomes:
-        gp_outcomes[node] = node.call()
-    return gp_outcomes[node]
-    
-def gp_evaluate(gold_outputs, population: list[Node], gp_call = gp_cached_call, int_fn = test_based_interactions, 
-                    fitness_fns = [], derive_objectives = None):
-    outcomes = np.array([gp_call(gold_outputs, p) for p in population])
-    interactions = int_fn(gold_outputs, outcomes)
-    if derive_objectives is not None:
-        derived_objectives, derived_info = derive_objectives(interactions)
-    else:
-        derived_objectives = None
-        derived_info = {}
-    fitnesses = []
-    for fitness_fn in fitness_fns:
-        fitness = fitness_fn(interactions, population = population, derived_objectives = derived_objectives, **derived_info)
-        fitnesses.append(fitness)
-    fitnesses_all = np.array(fitnesses).T
-    return (fitnesses_all, interactions, outcomes, derived_objectives)
-
-def run_gp(max_generations, initialization_fn, breed, evaluate, get_metrics):
-    ''' Koza style GP game schema '''
-    population = initialization_fn()
-    stats = [] # stats per generation
-    generation = 0
-    while True:
-        fitnesses, *_ = evaluate(population)
-        best_found, metrics = get_metrics(fitnesses, population)
-        stats.append(metrics)
-        if best_found or (generation >= max_generations):
-            break        
-        generation += 1
-        population = breed(population, fitnesses)  
-    
-    return stats
-    
-
-def depth_fitness(interactions, *, population = [], **kwargs):
+def depth_fitness(interactions, population = [], **_):
     return [p.get_depth() for p in population]
 
-def hamming_distance_fitness(interactions, **kwargs):
+def hamming_distance_fitness(interactions, **_):
     return np.sum(1 - interactions, axis = 1)
 
-def ifs_fitness(interactions, **kwargs):
+def ifs_fitness(interactions, **_):
     counts = np.sum((interactions[:, None] == interactions) & (interactions == 1), axis = 0).astype(float)
     counts[counts > 0] = 1 / counts[counts > 0]
     ifs = np.sum(counts, axis=1)
@@ -406,55 +384,105 @@ def ifs_fitness(interactions, **kwargs):
 
 # ifs_fitness(0, np.array([[1, 0, 1, 1], [0, 1, 0, 1], [1, 1, 1, 1], [0, 1, 1, 1]]))
 
+def collect_additional_stats(stats, nodes: list[Node], outputs):
+    syntax_counts = {}
+    sem_counts = {}
+    sem_repr_counts = {}
+    for node_id, node in enumerate(nodes):
+        # first, syntax stats - number of times each syntax was evaluated
+        node_str = str(node)
+        syntax_counts[node_str] = syntax_counts.get(node_str, 0) + 1
+        # second, number of times semantics appears in evaluation
+        node_sem = tuple(outputs[node_id])
+        sem_counts[node_sem] = sem_counts.get(node_sem, 0) + 1
+        # third, how many representatives this semantics has
+        sem_repr_counts.setdefault(node_sem, set()).add(node_str)
+    syntax_dupl_rate = sum(c - 1 for c in syntax_counts.values()) / len(nodes)
+    stats.setdefault('syntax_dupl_rate', []).append(syntax_dupl_rate)
+    sem_dupl_rate = sum(c - 1 for c in sem_counts.values()) / len(nodes)
+    stats.setdefault('sem_dupl_rate', []).append(sem_dupl_rate)
+    sem_repr_rate = np.mean([len(c) for c in sem_repr_counts.values()]) / len(syntax_counts)
+    stats.setdefault('sem_repr_rate', []).append(sem_repr_rate)
+    num_uniq_syntaxes = len(syntax_counts)
+    stats.setdefault('num_uniq_syntaxes', []).append(num_uniq_syntaxes)
+    num_uniq_sems = len(sem_counts)
+    stats.setdefault('num_uniq_sems', []).append(num_uniq_sems)
 
-def get_metrics(main_fitness_index: int, fitnesses, population):
+def analyze_population(population, outputs, fitnesses, save_stats = True, *, stats, fitness_fns, main_fitness_fn, **_):
     ''' Get the best program in the population '''
     fitness_order = np.lexsort(fitnesses.T[::-1])
     best_index = fitness_order[0]
     best_fitness = fitnesses[best_index]
     best = population[best_index]
-    is_best = best_fitness[main_fitness_index] == 0
-    return is_best, (best, *best_fitness)
+    stats['best'] = best
+    is_best = False 
+    if main_fitness_fn is None and len(fitness_fns) > 0:
+        main_fitness_fn = fitness_fns[0]
+    for fitness_idx, fitness_fn in enumerate(fitness_fns):
+        if fitness_fn == main_fitness_fn:
+            is_best = best_fitness[fitness_idx] == 0
+        stats.setdefault(fitness_fn.__name__, []).append(best_fitness[fitness_idx])
+    if save_stats:
+        collect_additional_stats(stats, population, outputs)
+    if is_best:
+        return population[best_index]
+    return None
 
-def run_gp_experiment(sim_name, game_name, gold_outputs, func_list, terminal_list,
-                            evaluate_fn = gp_evaluate,
-                            init_fn = partial(init_each, partial(ramped_half_and_half, 1, 5)),
-                            selection_fn = partial(tournament_selection, selection_size = 7),
-                            mutation_fn = partial(subtree_mutation, 0.1, 17),
-                            crossover_fn = partial(subtree_crossover, 0.1, 17),
-                            breed_fn = partial(subtree_breed, mutation_rate = 0.1, crossover_rate = 0.9),
-                            get_metrics_fn = partial(get_metrics, 0),
-                            fitness_fns = [hamming_distance_fitness, depth_fitness],
-                            record_fitness_ids = [0, 1],
-                            metrics_file = "data/metrics/objs.jsonlist",
-                            max_generations = 100,
-                            population_size = 1000,
-                            num_runs = 30):
-    initialization = partial(init_fn, func_list, terminal_list, population_size)
-    mutation_fn = partial(mutation_fn, func_list, terminal_list)
-    breed = partial(breed_fn, selection_fn = selection_fn, mutation_fn = mutation_fn, crossover_fn = crossover_fn, breed_size = population_size)
-    evaluate = partial(evaluate_fn, gold_outputs, fitness_fns = fitness_fns)
-    for run_id in range(num_runs):
-        stats = run_gp(max_generations, initialization, breed, evaluate, get_metrics_fn)
-        best_inds, *fitness_metrics = zip(*stats)
-        metrics = dict(game = game_name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
-        for i, metric in enumerate(fitness_metrics):
-            if i in record_fitness_ids:
-                i_i = record_fitness_ids.index(i)
-                metrics["fitness" + str(i_i)] = metric
-        write_metrics(metrics, metrics_file)
-        pass
+def evol_loop(population_size, max_gens, init_fn, breed_fn, eval_fn, analyze_pop_fn):
+    ''' Classic evolution loop '''
+    population = init_fn(population_size)
+    gen = 0
+    best_ind = None
+    while gen < max_gens:
+        outputs, fitnesses, *_ = eval_fn(population)
+        best_ind = analyze_pop_fn(population, outputs, fitnesses) 
+        if best_ind is not None:
+            break        
+        population = breed_fn(population_size, population, fitnesses)  
+        gen += 1
+    
+    return best_ind
 
-gp = partial(run_gp_experiment, "gp")
+# NOTE: fitness function should not have any shared structure bound, but given by eval_fn method
+#       it means, that there is no binding of these structures at pipeline design time
+# NOTE: next is the list of shared structures (bound at design time): 
+#           gold_outputs (labels or expected outcomes)
+#           func_list (list of gp node functions)
+#           terminal_list (list of gp terminal functions)
+#           fitness_fns (list of fitness functions)
+#           main_fitness_fn (main fitness function)
+#           node_builder (function to build nodes)
+#           syntax_cache (cache for syntax trees)
+#           eval_cache (cache for evaluation results)
+#           stats (dictionary for statistics)
+# NOTE: binding happens by name of these parameters in funcs and after *!
+# Any other parameters should be bound explicitly or defaults should be used
+def koza_evolve(gold_outputs, func_list, terminal_list,
+                population_size = 1000, max_gens = 100,
+                fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
+                init_fn = init_each, breed_fn = subtree_breed, 
+                eval_fn = cached_eval, analyze_pop_fn = analyze_population):
+    stats = {}
+    syntax_cache = {}
+    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder)
+    shared_context = dict(
+        gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
+        fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
+        syntax_cache = syntax_cache, eval_cache = {}, stats = stats)
+    evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn)
+    best_ind = evol_loop(population_size, max_gens, *evol_fns)
+    return best_ind, stats
 
-ifs = partial(run_gp_experiment, "ifs", 
-              fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], 
-              get_metrics_fn = partial(get_metrics, 1),
-              record_fitness_ids = [1, 2, 0])
+gp = koza_evolve
 
-ifs0 = partial(run_gp_experiment, "ifs0", 
-              fitness_fns = [ifs_fitness], get_metrics_fn = partial(get_metrics, 1),
-              record_fitness_ids = [1, 2, 0])
+ifs = partial(koza_evolve, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness])
 
+gp_sim_names = [ 'gp', 'ifs' ]
 
-gp_sim_names = [ 'gp', 'ifs0', 'ifs' ]
+# if __name__ == '__main__':
+#     import gp_benchmarks
+#     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
+#     best_prog, stats = gp(gold_outputs, func_list, terminal_list)
+#     print(best_prog)
+#     print(stats)
+#     pass    

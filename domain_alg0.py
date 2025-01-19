@@ -9,24 +9,24 @@ import numpy as np
 from utils import create_named_function
 
 def f_a1(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    outcomes = np.array([[2, 1, 2], [1, 0, 0], [0, 0, 1]])
-    return outcomes[x, y]
+    outputs = np.array([[2, 1, 2], [1, 0, 0], [0, 0, 1]])
+    return outputs[x, y]
 
 def f_a2(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    outcomes = np.array([[2, 0, 2], [1, 0, 2], [1, 2, 1]])
-    return outcomes[x, y]
+    outputs = np.array([[2, 0, 2], [1, 0, 2], [1, 2, 1]])
+    return outputs[x, y]
 
 def f_a3(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    outcomes = np.array([[1, 0, 1], [1, 2, 0], [0, 0, 0]])
-    return outcomes[x, y]
+    outputs = np.array([[1, 0, 1], [1, 2, 0], [0, 0, 0]])
+    return outputs[x, y]
 
 def f_a4(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    outcomes = np.array([[1, 0, 1], [0, 2, 0], [0, 1, 0]])
-    return outcomes[x, y]
+    outputs = np.array([[1, 0, 1], [0, 2, 0], [0, 1, 0]])
+    return outputs[x, y]
 
 def f_a5(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    outcomes = np.array([[1, 0, 2], [1, 2, 0], [0, 1, 0]])
-    return outcomes[x, y]    
+    outputs = np.array([[1, 0, 2], [1, 2, 0], [0, 1, 0]])
+    return outputs[x, y]    
 
 from itertools import product
 

@@ -1,11 +1,11 @@
 """ Implements NSGA-II algorithm. """
-from functools import partial
 import numpy as np
 from derivedObj import matrix_factorization, xmean_cluster
-from rnd import default_rnd, seed
+from rnd import default_rnd
+from functools import partial
 
-from gp import depth_fitness, get_metrics, gp_evaluate, hamming_distance_fitness, init_each, ramped_half_and_half, subtree_breed, subtree_crossover, subtree_mutation, tournament_selection
-from utils import write_metrics
+from gp import analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+import utils
 
 def get_pareto_front_indexes(fitnesses: np.ndarray, exclude_indexes: np.array = []) -> np.ndarray:
     ''' Get the pareto front from a population. 
@@ -87,17 +87,17 @@ def get_sparsity(fitnesses: np.ndarray) -> np.ndarray:
 # get_pareto_front_indexes(f, [0,1,2,3])
 
 
-def run_nsga2(archive_size, max_generations, 
-              initialization_fn, breed, evaluate, get_metrics):
+def nsga2_loop(archive_size, population_size, max_gens, 
+              init_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn):
     """ Run NSGA-II algorithm. """
     # Create initial population
-    population = initialization_fn()
+    population = init_fn(population_size)
     archive = []
-    stats = []
-    generation = 0
-    while True:
+    gen = 0
+    best_ind = None
+    while gen < max_gens:
         all_inds = population + archive
-        fitnesses, _, _, derived_objectives = evaluate(all_inds) 
+        outputs, fitnesses, _, derived_objectives = eval_fn(all_inds, derive_objs_fn) 
         new_archive = []
         all_fronts_indicies = np.array([], dtype=int)
         best_front_indexes = None
@@ -121,15 +121,15 @@ def run_nsga2(archive_size, max_generations,
                 break  
         best_front = [all_inds[i] for i in best_front_indexes]
         best_front_fitnesses = fitnesses[best_front_indexes]
-        best_found, metrics = get_metrics(best_front_fitnesses, best_front)
-        stats.append(metrics)
-        if best_found or (generation >= max_generations):
+        best_front_outcomes = outputs[best_front_indexes]
+        best_ind = analyze_pop_fn(best_front, best_front_outcomes, best_front_fitnesses)
+        if best_ind is not None:
             break
-        generation += 1
+        gen += 1
         archive = new_archive
         archive_fitnesses = fitnesses[all_fronts_indicies]
-        population = breed(archive, archive_fitnesses)
-    return stats
+        population = breed_fn(population_size, archive, archive_fitnesses)
+    return best_ind
 
 def full_objectives(interactions):
     return interactions, dict()
@@ -144,7 +144,7 @@ def rand_objectives(interactions):
     res = doc_objectives(rand_ints)
     return res
 
-def dof_w_objectives(k, alpha, interactions):
+def dof_w_objectives(interactions, k, alpha):
     if alpha < 1: 
         num_columns_to_take = int(alpha * interactions.shape[1])
         random_column_indexes = default_rnd.choice(interactions.shape[1], num_columns_to_take, replace = False)
@@ -152,7 +152,7 @@ def dof_w_objectives(k, alpha, interactions):
     W, _, _ = matrix_factorization(interactions.tolist(), k)
     return W, {}
 
-def dof_wh_objectives(k, alpha, interactions):
+def dof_wh_objectives(interactions, k, alpha):
     if alpha < 1: 
         num_columns_to_take = int(alpha * interactions.shape[1])
         random_column_indexes = default_rnd.choice(interactions.shape[1], num_columns_to_take, replace = False)
@@ -161,15 +161,15 @@ def dof_wh_objectives(k, alpha, interactions):
     objs = np.sum(W[:, :, None] * H, axis = -1)
     return objs, {}
 
-def do_pca_abs_objectives(num_components, interactions):
+def do_pca_abs_objectives(interactions, k):
     from sklearn.decomposition import PCA
-    pca = PCA(n_components=num_components)
+    pca = PCA(n_components=k)
     components = pca.fit_transform(interactions)
     return np.abs(components), {}
 
-def do_pca_diff_objectives(num_components, interactions):
+def do_pca_diff_objectives(interactions, k):
     from sklearn.decomposition import PCA
-    pca = PCA(n_components=num_components)
+    pca = PCA(n_components=k)
     components = pca.fit_transform(interactions)
     min_components = np.min(components, axis = 0)
     return (components - min_components + 0.1), {}
@@ -187,36 +187,26 @@ def do_feature_objectives(interactions):
     res = np.stack([program_stats, interactions.shape[0] - program_min_test_difficulty], axis = 1)
     return res, {}
 
-def run_nsga2_experiment(sim_name, game_name, gold_outputs, func_list, terminal_list,
-                            evaluate_fn = gp_evaluate,
-                            init_fn = partial(init_each, partial(ramped_half_and_half, 1, 5)),
-                            selection_fn = partial(tournament_selection, selection_size = 7),
-                            mutation_fn = partial(subtree_mutation, 0.1, 17),
-                            crossover_fn = partial(subtree_crossover, 0.1, 17),
-                            breed_fn = partial(subtree_breed, mutation_rate = 0.1, crossover_rate = 0.9),
-                            get_metrics_fn = partial(get_metrics, 0),
-                            fitness_fns = [hamming_distance_fitness, depth_fitness],
-                            derive_objectives_fn = full_objectives,
-                            record_fitness_ids = [0, 1],
-                            metrics_file = "data/metrics/objs.jsonlist",
-                            archive_size = 1000,
-                            max_generations = 100,
-                            population_size = 1000,
-                            num_runs = 30):
-    initialization = partial(init_fn, func_list, terminal_list, population_size)
-    mutation_fn = partial(mutation_fn, func_list, terminal_list)
-    breed = partial(breed_fn, selection_fn = selection_fn, mutation_fn = mutation_fn, crossover_fn = crossover_fn, breed_size = population_size)
-    evaluate = partial(evaluate_fn, gold_outputs, fitness_fns = fitness_fns, derive_objectives = derive_objectives_fn)
-    for run_id in range(num_runs):
-        stats = run_nsga2(archive_size, max_generations, initialization, breed, evaluate, get_metrics_fn)
-        best_inds, *fitness_metrics = zip(*stats)
-        metrics = dict(game = game_name, sim = sim_name, seed = seed, run_id = run_id, best_ind = str(best_inds[-1]), best_ind_depth = best_inds[-1].get_depth())
-        for i, metric in enumerate(fitness_metrics):
-            if i in record_fitness_ids:
-                i_i = record_fitness_ids.index(i)
-                metrics["fitness" + str(i_i)] = metric
-        write_metrics(metrics, metrics_file)
-        pass
+# NOTE: cached_eval does not work with derived objectives 
+# # as deriviation happens on per group basis which change and fitness based on derived objectives would have to be recomputed
+# if there is no fitness that depends on derived objectives - it is fine to use cached_evals
+def gp_nsga2(gold_outputs, func_list, terminal_list, *,
+                        population_size = 1000, max_gens = 100, archive_size = 1000,
+                        fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
+                        init_fn = init_each, breed_fn = subtree_breed, 
+                        eval_fn = cached_eval, analyze_pop_fn = analyze_population,
+                        derive_objs_fn = full_objectives, force_fitness_compute = False):
+    stats = {}
+    syntax_cache = {}
+    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder)
+    shared_context = dict(
+        gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
+        fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
+        syntax_cache = syntax_cache, stats = stats, eval_cache = {})
+    eval_fn = partial(eval_fn, force_fitness_compute = force_fitness_compute)
+    evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn)
+    best_ind = nsga2_loop(archive_size, population_size, max_gens, *evol_fns)
+    return best_ind, stats
 
 def hypervolume_fitness(interactions, derived_objectives = [], **kwargs):
     return -np.prod(derived_objectives, axis = 1)
@@ -227,34 +217,35 @@ def weighted_hypervolume_fitness(interactions, derived_objectives = [], test_clu
     return np.prod(weighted_objs, axis = 1)
 
 
-do_nsga = partial(run_nsga2_experiment, "do_nsga")
-do_rand = partial(run_nsga2_experiment, "do_rand", derive_objectives_fn = rand_objectives)
+do_nsga = gp_nsga2
 
-doc = partial(run_nsga2_experiment, "doc", derive_objectives_fn = doc_objectives)
-doc_p = partial(run_nsga2_experiment, "doc_p", derive_objectives_fn = doc_objectives, 
+do_rand = partial(gp_nsga2, derive_objs_fn = rand_objectives)
+
+doc = partial(gp_nsga2, derive_objs_fn = doc_objectives)
+doc_p = partial(gp_nsga2, derive_objs_fn = doc_objectives, 
                 fitness_fns = [hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
-                get_metrics_fn = partial(get_metrics, 1), record_fitness_ids = [1, 2, 0])
+                force_fitness_compute = True)
 
-doc_d = partial(run_nsga2_experiment, "doc_d", derive_objectives_fn = doc_objectives,
+doc_d = partial(gp_nsga2, derive_objs_fn = doc_objectives,
                 fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
-                get_metrics_fn = partial(get_metrics, 1), record_fitness_ids = [1, 2, 0])
+                force_fitness_compute = True)
 
-dof_w_2 = partial(run_nsga2_experiment, "dof_w_2", derive_objectives_fn = partial(dof_w_objectives, 2, 1))
-dof_w_3 = partial(run_nsga2_experiment, "dof_w_3", derive_objectives_fn = partial(dof_w_objectives, 3, 1))
-dof_wh_2 = partial(run_nsga2_experiment, "dof_wh_2", derive_objectives_fn = partial(dof_wh_objectives, 2, 1))
-dof_wh_3 = partial(run_nsga2_experiment, "dof_wh_3", derive_objectives_fn = partial(dof_wh_objectives, 3, 1))
+dof_w_2 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 2, alpha = 1))
+dof_w_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 3, alpha = 1))
+dof_wh_2 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 2, alpha = 1))
+dof_wh_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 3, alpha = 1))
 
-dof_w_2_80 = partial(run_nsga2_experiment, "dof_w_2_80", derive_objectives_fn = partial(dof_w_objectives, 2, 0.8))
-dof_w_3_80 = partial(run_nsga2_experiment, "dof_w_3_80", derive_objectives_fn = partial(dof_w_objectives, 3, 0.8))
-dof_wh_2_80 = partial(run_nsga2_experiment, "dof_wh_2_80", derive_objectives_fn = partial(dof_wh_objectives, 2, 0.8))
-dof_wh_3_80 = partial(run_nsga2_experiment, "dof_wh_3_80", derive_objectives_fn = partial(dof_wh_objectives, 3, 0.8))
+dof_w_2_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 2, alpha = 0.8))
+dof_w_3_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 3, alpha = 0.8))
+dof_wh_2_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 2, alpha = 0.8))
+dof_wh_3_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 3, alpha = 0.8))
 
-do_fo = partial(run_nsga2_experiment, "do_fo", derive_objectives_fn = do_feature_objectives)
+do_fo = partial(gp_nsga2, derive_objs_fn = do_feature_objectives)
 
-do_pca_abs_2 = partial(run_nsga2_experiment, "do_pca_abs_2", derive_objectives_fn = partial(do_pca_abs_objectives, 2))
-do_pca_abs_3 = partial(run_nsga2_experiment, "do_pca_abs_3", derive_objectives_fn = partial(do_pca_abs_objectives, 3))
+do_pca_abs_2 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_abs_objectives, k = 2))
+do_pca_abs_3 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_abs_objectives, k = 3))
 
-do_pca_diff_2 = partial(run_nsga2_experiment, "do_pca_diff_2", derive_objectives_fn = partial(do_pca_diff_objectives, 2))
-do_pca_diff_3 = partial(run_nsga2_experiment, "do_pca_diff_3", derive_objectives_fn = partial(do_pca_diff_objectives, 3))
+do_pca_diff_2 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_diff_objectives, k = 2))
+do_pca_diff_3 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_diff_objectives, k = 3))
 
 nsga2_sim_names = [ 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3' ]

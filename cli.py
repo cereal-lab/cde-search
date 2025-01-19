@@ -180,14 +180,18 @@ import gp_experiment
 
 @cli.command("objs")
 @click.option("-sid", type = str, required=True)
+@click.option("-n", type = int, required=False, default = 1)
 @click.option("-out", type = str, default = "./m.jsonlist")
-def run_gp_objs(sid: str, out:str):
+def run_gp_objs(sid: str, n: int, out:str):
     sim_name, bench_name, *_ = sid.split(":")
     paths = os.path.dirname(out)
     os.makedirs(paths, exist_ok=True)
     sim = gp_experiment.get_simulation(sim_name)
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark(bench_name)
-    sim(game_name, gold_outputs, func_list, terminal_list, metrics_file = out)
+    for run_id in range(n):
+        game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark(bench_name)
+        _, stats = sim(gold_outputs, func_list, terminal_list)
+        stats.update(sim_name = sim_name, game_name = game_name, run_id = run_id)
+        write_metrics(stats, out)
     pass
 
 if __name__ == '__main__':
