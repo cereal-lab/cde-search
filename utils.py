@@ -36,7 +36,7 @@ def bind_fn(kwargs, fn):
             if new_default != param.default:
                 star_bindings[param.name] = new_default
     if isinstance(fn, partial):
-        new_fn = partial(fn.func, **fn.keywords, **star_bindings)
+        new_fn = partial(fn.func, **{**fn.keywords, **star_bindings})
         # name = fn.func.__name__
     else:
         new_fn = partial(fn, **star_bindings)

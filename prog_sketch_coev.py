@@ -11,7 +11,7 @@
 '''
 
 import numpy as np
-from gp import Node
+from gp import Node, node_copy
 from nsga2 import get_pareto_front_indexes
 # from utils import create_named_function
 from rnd import default_rnd
@@ -191,7 +191,7 @@ def concretize_sketch(sketch: Node, sketch_bindings: Bindings, selected_binding:
     for node in selected_binding:
         nodes_to_replace[node] = program
     new_bindings = Bindings(*(binding for binding in sketch_bindings if binding != selected_binding))
-    new_sketch = sketch.copy(nodes_to_replace)
+    new_sketch = node_copy(sketch, nodes_to_replace)
     return new_sketch, new_bindings    
 
 def all_sketch_init(all_trees_init, generalize_sketch):

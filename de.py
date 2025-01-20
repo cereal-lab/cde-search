@@ -639,10 +639,11 @@ def get_pos_np(test_ids, interactions, dimension_outcomes):
                 break   
     return test_pos_map 
 
-def extract_dims_np(tests: np.ndarray):
+def extract_dims_np(tests: np.ndarray, origin_outcomes = None):
     ''' Generalizes CSE to nonbinary continuous outcomes, fully defined outcomes '''
     # origin = np.where(np.all(tests == 0, axis=1))[0]
-    origin_outcomes = np.min(tests, axis=0)
+    if  origin_outcomes is None:
+        origin_outcomes = np.min(tests, axis=0)
     origin = np.where(np.all(tests == origin_outcomes, axis=1))[0]
     
     test_to_insert = np.where(np.any(tests != origin_outcomes, axis=1))[0]

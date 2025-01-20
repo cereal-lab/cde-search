@@ -4,7 +4,7 @@ from derivedObj import matrix_factorization, xmean_cluster
 from rnd import default_rnd
 from functools import partial
 
-from gp import analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+from gp import BreedingStats, analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
 import utils
 
 def get_pareto_front_indexes(fitnesses: np.ndarray, exclude_indexes: np.array = []) -> np.ndarray:
@@ -97,17 +97,17 @@ def nsga2_loop(archive_size, population_size, max_gens,
     best_ind = None
     while gen < max_gens:
         all_inds = population + archive
-        outputs, fitnesses, _, derived_objectives = eval_fn(all_inds, derive_objs_fn) 
+        outputs, fitnesses, _, derived_objectives = eval_fn(all_inds, derive_objs_fn = derive_objs_fn, ignore_stats_count = len(archive)) 
         new_archive = []
         all_fronts_indicies = np.array([], dtype=int)
-        best_front_indexes = None
+        # best_front_indexes = None
         while len(new_archive) < archive_size:
             new_front_indices = get_pareto_front_indexes(derived_objectives, exclude_indexes = all_fronts_indicies)
             if len(new_front_indices) == 0:
                 break            
             new_front = [all_inds[i] for i in new_front_indices]
-            if best_front_indexes is None:
-                best_front_indexes = new_front_indices
+            # if best_front_indexes is None:
+            #     best_front_indexes = new_front_indices
             if len(new_archive) + len(new_front_indices) <= archive_size:
                 all_fronts_indicies = np.concatenate([all_fronts_indicies, new_front_indices])
                 new_archive += new_front
@@ -119,17 +119,18 @@ def nsga2_loop(archive_size, population_size, max_gens,
                 all_fronts_indicies = np.concatenate([all_fronts_indicies, front_indexes])
                 new_archive += [all_inds[i] for i in front_indexes]
                 break  
-        best_front = [all_inds[i] for i in best_front_indexes]
-        best_front_fitnesses = fitnesses[best_front_indexes]
-        best_front_outcomes = outputs[best_front_indexes]
-        best_ind = analyze_pop_fn(best_front, best_front_outcomes, best_front_fitnesses)
-        if best_ind is not None:
-            break
-        gen += 1
         archive = new_archive
         archive_fitnesses = fitnesses[all_fronts_indicies]
+        archive_outputs = outputs[all_fronts_indicies]
+        # best_front = [all_inds[i] for i in best_front_indexes]
+        # best_front_fitnesses = fitnesses[best_front_indexes]
+        # best_front_outcomes = outputs[best_front_indexes]
+        best_ind = analyze_pop_fn(archive, archive_outputs, archive_fitnesses)
+        if best_ind is not None:
+            break
         population = breed_fn(population_size, archive, archive_fitnesses)
-    return best_ind
+        gen += 1
+    return best_ind, gen
 
 def full_objectives(interactions):
     return interactions, dict()
@@ -198,14 +199,16 @@ def gp_nsga2(gold_outputs, func_list, terminal_list, *,
                         derive_objs_fn = full_objectives, force_fitness_compute = False):
     stats = {}
     syntax_cache = {}
-    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder)
+    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
     shared_context = dict(
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, stats = stats, eval_cache = {})
+        syntax_cache = syntax_cache, stats = stats, eval_cache = {}, breeding_stats = BreedingStats())
     eval_fn = partial(eval_fn, force_fitness_compute = force_fitness_compute)
     evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn)
-    best_ind = nsga2_loop(archive_size, population_size, max_gens, *evol_fns)
+    best_ind, gen = nsga2_loop(archive_size, population_size, max_gens, *evol_fns)
+    stats["gen"] = gen
+    stats["best_found"] = best_ind is not None
     return best_ind, stats
 
 def hypervolume_fitness(interactions, derived_objectives = [], **kwargs):
@@ -249,3 +252,11 @@ do_pca_diff_2 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_diff_objective
 do_pca_diff_3 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_diff_objectives, k = 3))
 
 nsga2_sim_names = [ 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3' ]
+
+if __name__ == '__main__':
+    import gp_benchmarks
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
+    best_prog, stats = do_nsga(gold_outputs, func_list, terminal_list)
+    print(best_prog)
+    print(stats)
+    pass    

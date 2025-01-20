@@ -4,7 +4,7 @@ from functools import partial
 from itertools import cycle
 import numpy as np
 
-from gp import analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+from gp import BreedingStats, analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
 from nsga2 import get_pareto_front_indexes
 from rnd import default_rnd
 import utils
@@ -16,8 +16,9 @@ def pareto_front_loop(archive_size, population_size, max_gens,
     population = init_fn(population_size)
     gen = 0
     best_ind = None
+    ignore_stats_count = 0
     while gen < max_gens:
-        outputs, fitnesses, interactions, *_ = eval_fn(population) 
+        outputs, fitnesses, interactions = eval_fn(population, ignore_stats_count = ignore_stats_count) 
         all_fronts_indexes = np.array([], dtype=int)
         best_front_indexes = None
         while len(all_fronts_indexes) < archive_size:
@@ -39,10 +40,11 @@ def pareto_front_loop(archive_size, population_size, max_gens,
         parents = [population[i] for i in selected_indexes]
         parents_fitnesses = fitnesses[selected_indexes]
         new_population = breed_fn(population_size, parents, parents_fitnesses)
+        ignore_stats_count = len(parents)
         new_population.extend(parents)
-        gen += 1
         population = new_population
-    return best_ind
+        gen += 1
+    return best_ind, gen
 
 class FullTestCoverageIterators():
     def __init__(self):
@@ -59,7 +61,7 @@ def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, 
 
 def select_test_hardest(ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray):
     allowed_test_indexes = np.where(allowed_test_mask)[0]
-    test_stats = np.sum(ints[allowed_program_mask][:, allowed_test_mask], axis = 0) #sum accross columns to see how many programs pass each test    
+    test_stats = np.sum(ints[allowed_program_mask][:, allowed_test_mask], axis = 0).astype(float) #sum accross columns to see how many programs pass each test    
     test_stats[test_stats == 0] = np.inf
     test_id_id = np.argmin(test_stats)    
     test_id = allowed_test_indexes[test_id_id]
@@ -171,14 +173,17 @@ def front_evolve(gold_outputs, func_list, terminal_list, *,
                     select_parents_fn = full_test_coverage_hardest_test_best_program):
     stats = {}
     syntax_cache = {}
-    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder)
+    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
     full_coverage = FullTestCoverageIterators()
     shared_context = dict(
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, stats = stats, eval_cache = {}, full_coverage = full_coverage)
+        syntax_cache = syntax_cache, stats = stats, eval_cache = {}, full_coverage = full_coverage,
+        breeding_stats = BreedingStats())
     evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn)    
-    best_ind = pareto_front_loop(archive_size, max_gens, *evol_fns)
+    best_ind, gen = pareto_front_loop(archive_size, population_size, max_gens, *evol_fns)
+    stats["gen"] = gen
+    stats["best_found"] = best_ind is not None
     return best_ind, stats
 
 cov_ht_bp = partial(front_evolve, select_parents_fn = full_test_coverage_hardest_test_best_program)
@@ -195,6 +200,13 @@ cov_rt_rp = partial(front_evolve, select_parents_fn = full_test_coverage_random_
 
 cov_sim_names = [ 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp', 'cov_rt_rp' ]
 
+if __name__ == '__main__':
+    import gp_benchmarks
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
+    best_prog, stats = cov_ht_bp(gold_outputs, func_list, terminal_list)
+    print(best_prog)
+    print(stats)
+    pass    
 
 # def select_program_totally_best(ints: np.ndarray, allowed_program_mask: np.ndarray, allowed_test_mask: np.ndarray, num_hardest_tests = 2):
 #     # selected_test_id = test_selection(ints, allowed_test_mask)

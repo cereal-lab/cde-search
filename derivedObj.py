@@ -1,6 +1,7 @@
 
 import numpy as np
 import warnings
+from rnd import default_rnd
 
 # def matrix_factorization(tests: list[list[float]], k: int, steps: int, alpha: float, beta: float, epsilon = 0.001) -> tuple[np.ndarray, np.ndarray, float]:
 #     m = len(tests)
@@ -72,7 +73,8 @@ from sklearn.exceptions import ConvergenceWarning
 def matrix_factorization(tests: list[list[float]], k: int) -> tuple[np.ndarray, np.ndarray, float]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category = ConvergenceWarning)
-        model = NMF(n_components=k, init='random', random_state=0)
+        seed = default_rnd.randint(0, 100000)
+        model = NMF(n_components=k, init='random', random_state=seed, max_iter=400)
         W = model.fit_transform(tests)
         H = model.components_
     return W, H, model.reconstruction_err_
@@ -87,7 +89,8 @@ np.warnings = warnings
 
 def xmean_cluster(tests: list[list[float]], kmax: int):
     # initial_centers = kmeans_plusplus_initializer(tests, 2).initialize()
-    xmeans_instance = xmeans(tests, kmax = kmax)
+    seed = default_rnd.randint(0, 100000)
+    xmeans_instance = xmeans(tests, kmax = kmax, random_state = seed)
     xmeans_instance.process()
     clusters = xmeans_instance.get_clusters()
     centers = xmeans_instance.get_centers()
