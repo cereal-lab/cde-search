@@ -29,13 +29,16 @@ def compute_run_stats(file_name: str):
     metrics = [json.loads(l) for l in json_lines]
     stats = {}
     for m in metrics:
-        game = m['game']
-        sim = m['sim']
-        fitness0 = m['fitness0']
+        game = m['game_name']
+        sim = m['sim_name']
+        fitness0 = m['hamming_distance_fitness']
+        best_found = m['best_found']
+        if best_found:
+            assert fitness0[-1] == 0
         game_sim_m = stats.setdefault((game, sim), {})
         conv_count = game_sim_m.setdefault("conv_count", 0) 
         total_count = game_sim_m.setdefault("total_count", 0)
-        game_sim_m["conv_count"] = conv_count + (1 if fitness0[-1] == 0 else 0)
+        game_sim_m["conv_count"] = conv_count + (1 if best_found else 0)
         game_sim_m["total_count"] = total_count + 1
     for (game, sim), m in stats.items():
         m["conv_rate"] = m["conv_count"] / m["total_count"]    
@@ -71,15 +74,18 @@ def compute_run_stats(file_name: str):
     return stats
 
 sim_names = [*gp_sim_names, *nsga2_sim_names, *cov_sim_names, *coevol_sim_names]
+
+# sim_names = ["do_rand", "do_fo", "doc_p", "doc_d"]
 from gp_benchmarks import benchmark_map
 if __name__ == "__main__":
-    print("testing evo runs")
-    cnt = 0
-    for sim_name in sim_names:
-        for b_name in benchmark_map.keys():
-            print(f"'{sim_name}:{b_name}'", file=open("setups.txt", "a"))
-            cnt += 1
-    print(f"total setups: {cnt}")
+    # print("testing evo runs")
+    # cnt = 0
+    # f = open("setups.txt", "w")
+    # for sim_name in sim_names:
+    #     for b_name in benchmark_map.keys():
+    #         print(f"'{sim_name}:{b_name}'", file=f)
+    #         cnt += 1
+    # print(f"total setups: {cnt}")
     # cov_ht_bp(idx = 11)
-    # compute_run_stats("data/metrics/gp-objs-ifs.jsonlist")
+    compute_run_stats("data/test-based-gp/gp-objs-tbgp.jsonlist")
     pass
