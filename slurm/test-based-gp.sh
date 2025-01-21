@@ -1,10 +1,10 @@
 #!/bin/bash 
-#SBATCH --job-name=doc-dof-cse
+#SBATCH --job-name=test-based-gp
 #SBATCH --time=72:00:00
-#SBATCH --output=out/doc-dof-cse.out
+#SBATCH --output=out/test-based-gp.out
 #SBATCH --mem=16G
 #SBATCH --open-mode=append
-#SBATCH --array=0-389
+#SBATCH --array=0-404
 
 games=('gp:cmp6'
         'gp:cmp8'
@@ -395,7 +395,22 @@ games=('gp:cmp6'
         'cov_rt_rp:malcev2'
         'cov_rt_rp:malcev3'
         'cov_rt_rp:malcev4'
-        'cov_rt_rp:malcev5')
+        'cov_rt_rp:malcev5'
+        'coevol_uo:cmp6'
+        'coevol_uo:cmp8'
+        'coevol_uo:maj6'
+        'coevol_uo:mux6'
+        'coevol_uo:par5'
+        'coevol_uo:disc1'
+        'coevol_uo:disc2'
+        'coevol_uo:disc3'
+        'coevol_uo:disc4'
+        'coevol_uo:disc5'
+        'coevol_uo:malcev1'
+        'coevol_uo:malcev2'
+        'coevol_uo:malcev3'
+        'coevol_uo:malcev4'
+        'coevol_uo:malcev5')
 
 game=${games[$SLURM_ARRAY_TASK_ID]}
 
@@ -406,6 +421,6 @@ module load apps/anaconda/5.3.1
 
 source activate cde-search-env
 
-srun python ~/cde-search/cli.py objs -sid "$game" -out "$WORK/cde-search/gp-objs.jsonlist"
+srun python ~/cde-search/cli.py objs -sid "$game" -n 30 -out "$WORK/cde-search/gp-objs.jsonlist"
 
 echo "Done job $SLURM_ARRAY_TASK_ID with game $game"
