@@ -177,6 +177,7 @@ def save_game_space(ctx, gid: str, out:str):
     pass
 
 import gp_experiment
+import time
 
 @cli.command("objs")
 @click.option("-sid", type = str, required=True)
@@ -189,8 +190,11 @@ def run_gp_objs(sid: str, n: int, out:str):
     sim = gp_experiment.get_simulation(sim_name)
     for run_id in range(n):
         game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark(bench_name)
+        start_tm = time.process_time()
         _, stats = sim(gold_outputs, func_list, terminal_list)
-        stats.update(sim_name = sim_name, game_name = game_name, run_id = run_id)
+        end_tm = time.process_time()
+        cpu_time = end_tm - start_tm
+        stats.update(sim_name = sim_name, game_name = game_name, run_id = run_id, cpu_time = round(cpu_time, 2))
         write_metrics(stats, out)
     pass
 

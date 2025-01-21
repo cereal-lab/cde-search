@@ -515,7 +515,7 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
     best_index = fitness_order[0]
     best_fitness = fitnesses[best_index]
     best = population[best_index]
-    stats['best'] = best
+    stats['best'] = str(best)
     is_best = False 
     if main_fitness_fn is None and len(fitness_fns) > 0:
         main_fitness_fn = fitness_fns[0]

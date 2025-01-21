@@ -6,20 +6,20 @@ from gp import gp_sim_names
 import gp
 from nsga2 import nsga2_sim_names
 import nsga2
-from front_coverage import cov_sim_name
+from front_coverage import cov_sim_names
 import front_coverage as cov
 from coevol import coevol_sim_names
 import coevol
 
 def get_simulation(sim_name):
     if sim_name in gp_sim_names:
-        return gp[sim_name]
+        return getattr(gp, sim_name)
     if sim_name in nsga2_sim_names:
-        return nsga2[sim_name]
-    if sim_name in cov_sim_name:
-        return cov[sim_name]
+        return getattr(nsga2, sim_name)
+    if sim_name in cov_sim_names:
+        return getattr(cov, sim_name)
     if sim_name in coevol_sim_names:
-        return coevol[sim_name]
+        return getattr(coevol, sim_name)
     return None
 
 # postprocessing 
@@ -70,11 +70,16 @@ def compute_run_stats(file_name: str):
 
     return stats
 
+sim_names = [*gp_sim_names, *nsga2_sim_names, *cov_sim_names, *coevol_sim_names]
+from gp_benchmarks import benchmark_map
 if __name__ == "__main__":
     print("testing evo runs")
-    # for sim_name in sim_names:
-    #     for b_name in benchmark_map.keys():
-    #         print(f"{sim_name}:{b_name}")
+    cnt = 0
+    for sim_name in sim_names:
+        for b_name in benchmark_map.keys():
+            print(f"'{sim_name}:{b_name}'", file=open("setups.txt", "a"))
+            cnt += 1
+    print(f"total setups: {cnt}")
     # cov_ht_bp(idx = 11)
-    compute_run_stats("data/metrics/gp-objs-ifs.jsonlist")
+    # compute_run_stats("data/metrics/gp-objs-ifs.jsonlist")
     pass

@@ -153,11 +153,6 @@ def is_spanned_pos(test: list[Optional[int]], dimensions: list[list[tuple[list[i
         return is_spanned, all_ands
     return False, None
 
-# def is_spanned_pos_def(test_pos: list[tuple[int, int]], test: list[int], dimensions: list[list[tuple[list[int], list[int]]]]) -> bool:
-#     all_ands = [max(el) for el in zip(*[dimensions[dim_id][point_id - 1][1] for (dim_id, point_id) in test_pos if point_id > 0])]
-#     is_spanned = len(all_ands) > 0 and all(d == t for d, t in zip(all_ands, test))
-#     return is_spanned
-
 def is_spanned_pos_def(test: list[int], dimensions: list[list[tuple[list[int], list[int]]]]) -> bool:
     spanned_dims = []
     for dim in dimensions:  
@@ -480,6 +475,7 @@ def is_spanned_nonb_pos(test: list[Optional[float]], dimensions: list[list[tuple
     return False, []
 
 # NOTE: needs to be fixed spanned points -- check _np version
+# NOTE: this version does not work correctly
 def extract_nonb_dims_approx(tests: list[list[Optional[float]]]):
     ''' Generalizes CSE to nonbinary continuous outcomes '''    
     spanned_set = set()
