@@ -3,7 +3,7 @@
 '''
 from functools import partial
 import numpy as np
-from de import extract_dims_np
+from de import extract_dims_np, extract_dims
 from gp import BreedingStats, analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
 from rnd import default_rnd
 import utils
@@ -18,7 +18,7 @@ def coevol_loop(max_gens, population_sizes, init_fn, select_fns, interract_fn, u
 
         selections = [s(pop) for s, pop in zip(select_fns, populations)] # selecting who should interract from populations
 
-        outputs, fitnesses, interactions = interract_fn(populations, selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
+        outputs, fitnesses, interactions = interract_fn(selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
         # test-based GP we consider - zero-sum game where sum = 1, win = 1 (program solved test), 0
 
         best_ind = analyze_pop_fn(selections[0], outputs, fitnesses, all_populations = selections)
@@ -48,6 +48,7 @@ class NondominantGroups():
         self.selected_group_id = None
         self.group_interactions = None
         self.group_fitnesses = None
+        self.uo_reprs = 0
 
 
 # fitness_cache = {}
@@ -81,25 +82,37 @@ def breeding_group_selection(population, fitnesses, select_fn = partial(tourname
 
 def select_explore_exploit_programs(good_programs, init_fn = init_each, 
                                     breed_fn = partial(subtree_breed, breed_select_fn = breeding_group_selection), 
-                                    explore_size = 0, exploit_size = 1000):
+                                    explore_size = 0, exploit_size = 1000, uo_repr = 2, *, nondominant: NondominantGroups):
     ''' select those programs who previously distinguished tests of underlying objectives and then add new programs to explore'''
     if len(good_programs) == 0: # nobody can breed
         all_programs = init_fn(explore_size + exploit_size)
     else:
         # all_programs = []
-        all_programs = list(good_programs)
+        all_programs = [] #list(good_programs)
         inited_programs = init_fn(explore_size)
         all_programs.extend(inited_programs)
         breed_programs = breed_fn(exploit_size, good_programs, None)
         all_programs.extend(breed_programs)
+
+        #from good programs we only preserve at max uo_repr inds 
+        nondominant.uo_reprs = 0
+        for group in nondominant.groups:
+            if len(group) > uo_repr:
+                group_ids = default_rnd.choice(len(group), uo_repr, replace=False)
+                selected_group = [group[i] for i in group_ids]
+                all_programs.extend([good_programs[i] for i in selected_group])
+                nondominant.uo_reprs += len(group_ids)
+            else:
+                all_programs.extend([good_programs[i] for i in group])
+                nondominant.uo_reprs += len(group)
     return all_programs
 
-def select_explore_exploit_tests(good_tests, fraction = 1, *, gold_outputs):
+def select_explore_exploit_tests(good_tests, rand_fraction = 0, *, gold_outputs):
     ''' selecting tests found to be underlying objectives '''
-    if fraction == 1:
+    if rand_fraction == 1 or (len(good_tests) == 0 and rand_fraction == 0):
         return np.arange(len(gold_outputs))
     
-    to_select_num = int(fraction * len(gold_outputs)) - len(good_tests)
+    to_select_num = int(rand_fraction * len(gold_outputs)) - len(good_tests)
     if to_select_num <= 0:
         return good_tests
     
@@ -108,14 +121,11 @@ def select_explore_exploit_tests(good_tests, fraction = 1, *, gold_outputs):
     selected_new_tests = default_rnd.choice(possible_new_tests, to_select_num, replace=False)
     return np.concatenate([good_tests, selected_new_tests])
 
-def prog_test_interractions(good_inds, populations, eval_fn = cached_eval, *, gold_outputs):
+def prog_test_interractions(populations, eval_fn = cached_eval, *, nondominant: NondominantGroups):
     ''' Test-based interactions, zero-sum game '''
     programs, tests = populations
-    outputs, fitnesses, interactions = eval_fn(programs, ignore_stats_count = len(good_inds[0]))
-    if len(gold_outputs) == len(tests):
-        return outputs, fitnesses, interactions    
-    subset_interactions = interactions[:, tests]
-    return outputs, fitnesses, subset_interactions
+    outputs, fitnesses, interactions = eval_fn(programs, ignore_stats_count = nondominant.uo_reprs)
+    return outputs, fitnesses, interactions    
 
 # def get_discriminating_set(selected_other: np.ndarray, interactions: np.ndarray):
 #     ''' Returns candidates that could distinguish selected individuals based on seen interactions 
@@ -218,7 +228,16 @@ def select_discriminative_tests(tests, prog_interactions: np.ndarray):
     discriminating_tests = [tests[i] for i in discriminating_test_ids]
     return discriminating_tests
 
-def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_all_tests, *, gold_outputs, nondominant: NondominantGroups):
+def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, selection_size = 20):
+    test_stats = np.sum(prog_interactions, axis=0)
+    sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: x[1])
+    filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
+    if selection_size is None:
+        selection_size = int(fraction * prog_interactions.shape[1])
+    res = filtered_test_ids[:selection_size]
+    return res
+
+def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_hardest_tests, *, stats, gold_outputs, nondominant: NondominantGroups):
     """ Finds underlying objectives for programs, samples most discriminating tests (if necessary)
         Extracted coordinate system preserve relation of what individuals could be combined in breeding 
         Each underlying objective could be combined with other one, or spanned point which is at the end but does not fulfill this objective 
@@ -230,7 +249,13 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     """
     programs, tests = populations
 
-    dims, origin, spanned = extract_dims_np(interactions, origin_outcomes=np.zeros_like(interactions[0])) # program underlying objectives
+    selected_interactions = interactions[:, tests]
+
+    dims, origin, spanned = extract_dims_np(selected_interactions, origin_outcomes=np.zeros_like(selected_interactions[0])) # program underlying objectives
+    # pass 
+    # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
+    # pass
+    stats.setdefault('dims', []).append(len(dims))
     dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
     spanned_points = { }
     for test_id, position in spanned.items():
@@ -239,19 +264,25 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     dim_points_coords = frozenset(dim_points.keys())
     spanned_groups = {}    
     preserved_points =  [prog_ids for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
+    span_id_to_covered_dims = {}
     for span_coords, prog_ids in spanned_points.items():
         span_dims = frozenset.intersection(span_coords, dim_points_coords)
         if len(span_dims) == 0:
             continue
-        preserved_points.append(prog_ids)
         span_id = len(preserved_points)
-        for (dim_id, _) in span_dims:
-            spanned_groups.setdefault(span_id, set()).add(dim_id) #dim_id matches group_id in preserved_points
+        preserved_points.append(prog_ids)
+        span_id_to_covered_dims[span_id] = span_dims
+        spanned_groups[span_id] = set(dim_id for (dim_id, _) in span_dims)
+    for span_id1, span_dims1 in span_id_to_covered_dims.items():
+        for span_id2, span_dims2 in span_id_to_covered_dims.items():
+            if (span_id1 != span_id2) and (span_dims1.issubset(span_dims2) or span_dims2.issubset(span_dims1)):
+                spanned_groups[span_id1].add(span_id2)
+    stats.setdefault('spanned', []).append(len(spanned_groups))
     group_interactions = interactions[[p[0] for p in preserved_points]]
     group_fitnesses = len(gold_outputs) - np.sum(group_interactions, axis=1)
     selected_group_ids = set()
     selected_group_ids_list = []
-    for test_id in tests:
+    for test_id in range(len(gold_outputs)):
         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
         if len(filtered_subgroup_ids) == 0:
