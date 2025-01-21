@@ -23,7 +23,8 @@ from params import param_seed1, param_seed2, param_draw_dynamics
 import fcntl
 import time
 import numpy as np
-import doc_dof_cse
+import gp_experiment
+import gp_benchmarks
 
 from utils import write_metrics
 
@@ -175,18 +176,26 @@ def save_game_space(ctx, gid: str, out:str):
         print(game_name + " space saved")
     pass
 
-import doc_dof_cse
+import gp_experiment
+import time
 
 @cli.command("objs")
 @click.option("-sid", type = str, required=True)
+@click.option("-n", type = int, required=False, default = 1)
 @click.option("-out", type = str, default = "./m.jsonlist")
-def run_gp_objs(sid: str, out:str):
+def run_gp_objs(sid: str, n: int, out:str):
     sim_name, bench_name, *_ = sid.split(":")
     paths = os.path.dirname(out)
     os.makedirs(paths, exist_ok=True)
-    sim = getattr(doc_dof_cse, sim_name)
-    bench_id = doc_dof_cse.benchmark_map[bench_name]
-    sim(idx = bench_id, metrics_file = out)
+    sim = gp_experiment.get_simulation(sim_name)
+    for run_id in range(n):
+        game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark(bench_name)
+        start_tm = time.process_time()
+        _, stats = sim(gold_outputs, func_list, terminal_list)
+        end_tm = time.process_time()
+        cpu_time = end_tm - start_tm
+        stats.update(sim_name = sim_name, game_name = game_name, run_id = run_id, cpu_time = round(cpu_time, 2))
+        write_metrics(stats, out)
     pass
 
 if __name__ == '__main__':

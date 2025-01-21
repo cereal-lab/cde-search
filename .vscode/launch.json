@@ -46,7 +46,8 @@
             "console": "integratedTerminal",
             "args": [
                 "objs",
-                "-sid", "cov_ht_bp:cmp6",
+                "-sid", "coevol_uo:cmp6",
+                "-n", "3",
                 "-out", "data/metrics/objs.jsonlist"
             ],
             "justMyCode": true
