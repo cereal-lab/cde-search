@@ -141,7 +141,7 @@ def doc_objectives(interactions):
     return derived_objectives, dict(test_clusters = test_clusters)
 
 def rand_objectives(interactions):
-    rand_ints = default_rnd.random(interactions.shape)
+    rand_ints = default_rnd.randint(2, size = interactions.shape)
     res = doc_objectives(rand_ints)
     return res
 
@@ -150,7 +150,7 @@ def dof_w_objectives(interactions, k, alpha):
         num_columns_to_take = int(alpha * interactions.shape[1])
         random_column_indexes = default_rnd.choice(interactions.shape[1], num_columns_to_take, replace = False)
         interactions = interactions[:, random_column_indexes]
-    W, _, _ = matrix_factorization(interactions.tolist(), k)
+    W, _, _ = matrix_factorization(interactions, k)
     return W, {}
 
 def dof_wh_objectives(interactions, k, alpha):
@@ -158,7 +158,7 @@ def dof_wh_objectives(interactions, k, alpha):
         num_columns_to_take = int(alpha * interactions.shape[1])
         random_column_indexes = default_rnd.choice(interactions.shape[1], num_columns_to_take, replace = False)
         interactions = interactions[:, random_column_indexes]    
-    W, H, _ = matrix_factorization(interactions.tolist(), k)
+    W, H, _ = matrix_factorization(interactions, k)
     objs = np.sum(W[:, :, None] * H, axis = -1)
     return objs, {}
 
@@ -181,7 +181,7 @@ def do_feature_objectives(interactions):
         - the maximal difficulty of the passed test by the program 
     '''
     test_stats = np.sum(interactions, axis = 0)
-    whole_program_weights = interactions * test_stats
+    whole_program_weights = (interactions * test_stats).astype(float)
     whole_program_weights[whole_program_weights == 0] = np.inf
     program_stats = np.sum(interactions, axis = 1)
     program_min_test_difficulty = np.min(whole_program_weights, axis = 1)
@@ -212,12 +212,16 @@ def gp_nsga2(gold_outputs, func_list, terminal_list, *,
     return best_ind, stats
 
 def hypervolume_fitness(interactions, derived_objectives = [], **kwargs):
+    if derived_objectives is None or len(derived_objectives) == 0:
+        return np.zeros(interactions.shape[0], dtype=float)
     return -np.prod(derived_objectives, axis = 1)
 
 def weighted_hypervolume_fitness(interactions, derived_objectives = [], test_clusters = [], **kwargs):
+    if derived_objectives is None or len(derived_objectives) == 0:
+        return np.zeros(interactions.shape[0], dtype=float)
     weights = np.array([np.sum(interactions[:, tc] == 1, axis=1) for tc in test_clusters]).T
     weighted_objs = weights * derived_objectives
-    return np.prod(weighted_objs, axis = 1)
+    return -np.prod(weighted_objs, axis = 1)
 
 
 do_nsga = gp_nsga2
@@ -256,7 +260,7 @@ nsga2_sim_names = [ 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'd
 if __name__ == '__main__':
     import gp_benchmarks
     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = do_nsga(gold_outputs, func_list, terminal_list)
+    best_prog, stats = dof_w_2(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    
