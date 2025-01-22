@@ -566,7 +566,7 @@ def evol_loop(population_size, max_gens, init_fn, breed_fn, eval_fn, analyze_pop
 # NOTE: binding happens by name of these parameters in funcs and after *!
 # Any other parameters should be bound explicitly or defaults should be used
 def koza_evolve(gold_outputs, func_list, terminal_list,
-                population_size = 10, max_gens = 100,
+                population_size = 1000, max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
                 init_fn = init_each, breed_fn = subtree_breed, 
                 eval_fn = gp_eval, analyze_pop_fn = analyze_population):
