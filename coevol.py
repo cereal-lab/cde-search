@@ -4,7 +4,7 @@
 from functools import partial
 import numpy as np
 from de import extract_dims_np, extract_dims
-from gp import BreedingStats, analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
+from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
 from rnd import default_rnd
 import utils
 
@@ -121,7 +121,7 @@ def select_explore_exploit_tests(good_tests, rand_fraction = 0, *, gold_outputs)
     selected_new_tests = default_rnd.choice(possible_new_tests, to_select_num, replace=False)
     return np.concatenate([good_tests, selected_new_tests])
 
-def prog_test_interractions(populations, eval_fn = cached_eval, *, nondominant: NondominantGroups):
+def prog_test_interractions(populations, eval_fn = gp_eval, *, nondominant: NondominantGroups):
     ''' Test-based interactions, zero-sum game '''
     programs, tests = populations
     outputs, fitnesses, interactions = eval_fn(programs, ignore_stats_count = nondominant.uo_reprs)

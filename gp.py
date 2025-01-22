@@ -187,32 +187,12 @@ def _compute_fitnesses(fitness_fns, interactions, population, gold_outputs, deri
     fitnesses = np.array(fitness_list).T  
     return fitnesses   
 
-def eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, ignore_stats_count = 0, *, gold_outputs, fitness_fns, stats):
-    ''' Eager node evaluator '''
-    # NOTE: we do not use here partial evaluation (test_ids) - probably for later 
-    # TODO: dealing with bindings in sketches - for later
-    # TODO: dealing with partial evaluation - interface of node_evaluator should be extended
-    if save_stats:
-        stats.setdefault("num_evals", []).append(len(nodes) - ignore_stats_count)
-    outputs = np.array([node.call() for node in nodes ])
-    interactions = int_fn(gold_outputs, outputs)
-    if derive_objs_fn is not None:
-        derived_objectives, derived_info = derive_objs_fn(interactions)
-    else:
-        derived_objectives = None
-        derived_info = {}
-    fitnesses = _compute_fitnesses(fitness_fns, interactions, nodes, gold_outputs, derived_objectives, derived_info)
-    if derived_objectives is None:
-        return outputs, fitnesses, interactions  
-    return outputs, fitnesses, interactions, derived_objectives, derived_info
-
-def cached_eval(nodes: list[Node], eval_fn = eval, derive_objs_fn = None, save_stats = True, force_fitness_compute = False, ignore_stats_count = 0, *, eval_cache, gold_outputs, fitness_fns, stats):
+def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, ignore_stats_count = 0, *, eval_cache, gold_outputs, fitness_fns, stats):
     ''' Cached node evaluator '''
     # NOTE: derived objectives does not work with cache as they are computed on per given group of nodes
     if len(nodes) == 0:
         raise ValueError("Empty population")
     node_ids_to_eval = [node_id for node_id, node in enumerate(nodes) if node not in eval_cache]
-    fit_size = 0
     int_size = 0
     out_size = 0
     if save_stats:
@@ -221,23 +201,21 @@ def cached_eval(nodes: list[Node], eval_fn = eval, derive_objs_fn = None, save_s
         stats.setdefault("eval_cache_hits", []).append(len(nodes) - len(node_ids_to_eval) - ignore_stats_count)
     if len(node_ids_to_eval) > 0:
         nodes_to_eval = [nodes[node_id] for node_id in node_ids_to_eval]
-        new_outputs, new_fitnesses, new_interactions = eval_fn(nodes_to_eval, save_stats = False)
-        fit_size = new_fitnesses.shape[1]
+        new_outputs = np.array([node.call() for node in nodes_to_eval ])
+        new_interactions = int_fn(gold_outputs, new_outputs)
+        # fit_size = new_fitnesses.shape[1]
         int_size = new_interactions.shape[1]
         out_size = new_outputs.shape[1]
-        for node, new_fitness, new_ints, new_outs in zip(nodes_to_eval, new_fitnesses, new_interactions, new_outputs):
-            eval_cache[node] = (new_fitness, new_ints, new_outs)
+        for node, new_ints, new_outs in zip(nodes_to_eval, new_interactions, new_outputs):
+            eval_cache[node] = (new_ints, new_outs)
     else:
         node = nodes[0]
-        fit_size = len(eval_cache[node][0])
-        int_size = len(eval_cache[node][1])
-        out_size = len(eval_cache[node][2])
-    fitnesses = np.zeros((len(nodes), fit_size), dtype = float)
-    interactions = np.zeros((len(nodes), int_size), dtype=int)
-    outputs = np.zeros((len(nodes), out_size), dtype=float)
+        int_size = len(eval_cache[node][0])
+        out_size = len(eval_cache[node][1])
+    interactions = np.zeros((len(nodes), int_size), dtype = float)
+    outputs = np.zeros((len(nodes), out_size), dtype = float)
     for node_id, node in enumerate(nodes):
-        f, i, o = eval_cache[node]
-        fitnesses[node_id] = f
+        i, o = eval_cache[node]
         interactions[node_id] = i
         outputs[node_id] = o
     if derive_objs_fn is not None:
@@ -245,8 +223,7 @@ def cached_eval(nodes: list[Node], eval_fn = eval, derive_objs_fn = None, save_s
     else:
         derived_objectives = None
         derived_info = {}        
-    if force_fitness_compute:
-        fitnesses = _compute_fitnesses(fitness_fns, interactions, nodes, gold_outputs, derived_objectives, derived_info)
+    fitnesses = _compute_fitnesses(fitness_fns, interactions, nodes, gold_outputs, derived_objectives, derived_info)
     if derived_objectives is not None:
         return outputs, fitnesses, interactions, derived_objectives
     return outputs, fitnesses, interactions
@@ -390,7 +367,7 @@ def _select_node_id(in_node: Node, filter, select_node_leaf_prob = None) -> Opti
 def subtree_mutation(node, select_node_leaf_prob = 0.1, tree_max_depth = 17, repl_fn = replace_positions, 
                      *, func_list, terminal_list, node_builder):
     new_node = grow(grow_depth = 5, func_list = func_list, terminal_list = terminal_list, 
-                    grow_leaf_prob = 0.4, node_builder = node_builder)
+                    grow_leaf_prob = None, node_builder = node_builder)
     new_node_depth = new_node.get_depth()
     # at_depth, at_node = select_node(leaf_prob, node, lambda d, n: (d > 0) and n.is_of_type(new_node), 
     #                                     lambda d, n: (d + new_node_depth) <= max_depth)
@@ -547,9 +524,9 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
         total_good_ch = 0 
         total_bad_ch = 0
         for parents, children in breeding_stats.parent_child_relations:
-            parent_fs = np.array([ eval_cache[n][1] for n in parents ])
-            child_fs = np.array([ eval_cache[n][1] for n in children ])
-            good_ch, bad_ch = count_good_bad_children(parent_fs, child_fs)
+            parent_ints = np.array([ eval_cache[n][0] for n in parents ])
+            child_ints = np.array([ eval_cache[n][0] for n in children ])
+            good_ch, bad_ch = count_good_bad_children(parent_ints, child_ints)
             total_good_ch += good_ch
             total_bad_ch += bad_ch
         if total_good_ch > 0 or total_bad_ch > 0:
@@ -589,10 +566,10 @@ def evol_loop(population_size, max_gens, init_fn, breed_fn, eval_fn, analyze_pop
 # NOTE: binding happens by name of these parameters in funcs and after *!
 # Any other parameters should be bound explicitly or defaults should be used
 def koza_evolve(gold_outputs, func_list, terminal_list,
-                population_size = 1000, max_gens = 100,
+                population_size = 10, max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
                 init_fn = init_each, breed_fn = subtree_breed, 
-                eval_fn = cached_eval, analyze_pop_fn = analyze_population):
+                eval_fn = gp_eval, analyze_pop_fn = analyze_population):
     stats = {}
     syntax_cache = {}
     node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
@@ -614,7 +591,7 @@ gp_sim_names = [ 'gp', 'ifs' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('malcev2')
     best_prog, stats = ifs(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)

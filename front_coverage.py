@@ -4,7 +4,7 @@ from functools import partial
 from itertools import cycle
 import numpy as np
 
-from gp import BreedingStats, analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
 from nsga2 import get_pareto_front_indexes
 from rnd import default_rnd
 import utils
@@ -169,7 +169,7 @@ def front_evolve(gold_outputs, func_list, terminal_list, *,
                     population_size = 1000, max_gens = 100, archive_size = 10,
                     fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
                     init_fn = init_each, breed_fn = partial(subtree_breed, breed_select_fn = full_coverage_selection),
-                    eval_fn = cached_eval, analyze_pop_fn = analyze_population,
+                    eval_fn = gp_eval, analyze_pop_fn = analyze_population,
                     select_parents_fn = full_test_coverage_hardest_test_best_program):
     stats = {}
     syntax_cache = {}

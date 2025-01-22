@@ -4,7 +4,7 @@ from derivedObj import matrix_factorization, xmean_cluster
 from rnd import default_rnd
 from functools import partial
 
-from gp import BreedingStats, analyze_population, cached_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
 import utils
 
 def get_pareto_front_indexes(fitnesses: np.ndarray, exclude_indexes: np.array = []) -> np.ndarray:
@@ -188,15 +188,12 @@ def do_feature_objectives(interactions):
     res = np.stack([program_stats, interactions.shape[0] - program_min_test_difficulty], axis = 1)
     return res, {}
 
-# NOTE: cached_eval does not work with derived objectives 
-# # as deriviation happens on per group basis which change and fitness based on derived objectives would have to be recomputed
-# if there is no fitness that depends on derived objectives - it is fine to use cached_evals
 def gp_nsga2(gold_outputs, func_list, terminal_list, *,
                         population_size = 1000, max_gens = 100, archive_size = 1000,
                         fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
                         init_fn = init_each, breed_fn = subtree_breed, 
-                        eval_fn = cached_eval, analyze_pop_fn = analyze_population,
-                        derive_objs_fn = full_objectives, force_fitness_compute = False):
+                        eval_fn = gp_eval, analyze_pop_fn = analyze_population,
+                        derive_objs_fn = full_objectives):
     stats = {}
     syntax_cache = {}
     node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
@@ -204,7 +201,6 @@ def gp_nsga2(gold_outputs, func_list, terminal_list, *,
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
         syntax_cache = syntax_cache, stats = stats, eval_cache = {}, breeding_stats = BreedingStats())
-    eval_fn = partial(eval_fn, force_fitness_compute = force_fitness_compute)
     evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn)
     best_ind, gen = nsga2_loop(archive_size, population_size, max_gens, *evol_fns)
     stats["gen"] = gen
@@ -230,12 +226,10 @@ do_rand = partial(gp_nsga2, derive_objs_fn = rand_objectives)
 
 doc = partial(gp_nsga2, derive_objs_fn = doc_objectives)
 doc_p = partial(gp_nsga2, derive_objs_fn = doc_objectives, 
-                fitness_fns = [hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
-                force_fitness_compute = True)
+                fitness_fns = [hypervolume_fitness, hamming_distance_fitness, depth_fitness])
 
 doc_d = partial(gp_nsga2, derive_objs_fn = doc_objectives,
-                fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness], 
-                force_fitness_compute = True)
+                fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness])
 
 dof_w_2 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 2, alpha = 1))
 dof_w_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 3, alpha = 1))
