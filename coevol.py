@@ -4,11 +4,11 @@
 from functools import partial
 import numpy as np
 from de import extract_dims_np, extract_dims
-from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
+from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, identity_map, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
 from rnd import default_rnd
 import utils
 
-def coevol_loop(max_gens, population_sizes, init_fn, select_fns, interract_fn, update_fn, analyze_pop_fn):
+def coevol_loop(max_gens, population_sizes, init_fn, map_fns, select_fns, interract_fn, update_fn, analyze_pop_fn):
     """ General coevolution loop """
     # Create initial population
     populations = init_fn(population_sizes) # list of populations that should interract
@@ -17,6 +17,8 @@ def coevol_loop(max_gens, population_sizes, init_fn, select_fns, interract_fn, u
     while gen < max_gens:
 
         selections = [s(pop) for s, pop in zip(select_fns, populations)] # selecting who should interract from populations
+
+        selections = [m(pop) for m, pop in zip(map_fns, selections)]
 
         outputs, fitnesses, interactions = interract_fn(selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
         # test-based GP we consider - zero-sum game where sum = 1, win = 1 (program solved test), 0
@@ -124,7 +126,7 @@ def select_explore_exploit_tests(good_tests, rand_fraction = 0, *, gold_outputs)
 def prog_test_interractions(populations, eval_fn = gp_eval, *, nondominant: NondominantGroups):
     ''' Test-based interactions, zero-sum game '''
     programs, tests = populations
-    outputs, fitnesses, interactions = eval_fn(programs, ignore_stats_count = nondominant.uo_reprs)
+    outputs, fitnesses, interactions = eval_fn(programs)
     return outputs, fitnesses, interactions    
 
 # def get_discriminating_set(selected_other: np.ndarray, interactions: np.ndarray):
@@ -323,7 +325,7 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
 def gp_coevolve2(gold_outputs, func_list, terminal_list,
                  population_sizes = [0, 0], max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = None,
-                init_fn = zero_init, first_select_fn = select_explore_exploit_programs,
+                init_fn = zero_init, map_fn = identity_map, first_select_fn = select_explore_exploit_programs,
                 second_select_fn = select_explore_exploit_tests,
                 interract_fn = prog_test_interractions,
                 update_fn = update_cand_underlying_objectives,
@@ -334,22 +336,30 @@ def gp_coevolve2(gold_outputs, func_list, terminal_list,
     shared_context = dict(
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, eval_cache = {}, stats = stats, nondominant = NondominantGroups(),
+        syntax_cache = syntax_cache, int_cache = {}, out_cache = {}, stats = stats, nondominant = NondominantGroups(),
         breeding_stats = BreedingStats())
-    init_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn = utils.bind_fns(shared_context, init_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn)
-    best_ind, gen = coevol_loop(max_gens, population_sizes, init_fn, [first_select_fn, second_select_fn], interract_fn, update_fn, analyze_pop_fn)
+    init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn = utils.bind_fns(shared_context, init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn)
+    best_ind, gen = coevol_loop(max_gens, population_sizes, init_fn, [ map_fn, identity_map ], [first_select_fn, second_select_fn], interract_fn, update_fn, analyze_pop_fn)
     stats['gen'] = gen
     stats["best_found"] = best_ind is not None
     return best_ind, stats
 
+coevol_uo_5 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 5)))
+coevol_uo_10 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 10)))
+coevol_uo_15 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 15)))
 coevol_uo = gp_coevolve2
+coevol_uo_25 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 25)))
+coevol_uo_30 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 30)))
+coevol_uo_35 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 35)))
+coevol_uo_40 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 40)))
 
-coevol_sim_names = ["coevol_uo"]
+
+coevol_sim_names = ["coevol_uo_5", "coevol_uo_10", "coevol_uo_15", "coevol_uo", "coevol_uo_25", "coevol_uo_30", "coevol_uo_35", "coevol_uo_40"]
 
 if __name__ == '__main__':
     import gp_benchmarks
     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = coevol_uo(gold_outputs, func_list, terminal_list)
+    best_prog, stats = coevol_uo_35(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    

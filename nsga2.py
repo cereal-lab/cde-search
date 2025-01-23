@@ -4,7 +4,7 @@ from derivedObj import matrix_factorization, xmean_cluster
 from rnd import default_rnd
 from functools import partial
 
-from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, identity_map, init_each, simple_node_builder, subtree_breed
 import utils
 
 def get_pareto_front_indexes(fitnesses: np.ndarray, exclude_indexes: np.array = []) -> np.ndarray:
@@ -88,7 +88,7 @@ def get_sparsity(fitnesses: np.ndarray) -> np.ndarray:
 
 
 def nsga2_loop(archive_size, population_size, max_gens, 
-              init_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn):
+              init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn):
     """ Run NSGA-II algorithm. """
     # Create initial population
     population = init_fn(population_size)
@@ -97,7 +97,8 @@ def nsga2_loop(archive_size, population_size, max_gens,
     best_ind = None
     while gen < max_gens:
         all_inds = population + archive
-        outputs, fitnesses, _, derived_objectives = eval_fn(all_inds, derive_objs_fn = derive_objs_fn, ignore_stats_count = len(archive)) 
+        all_inds = map_fn(all_inds)
+        outputs, fitnesses, _, derived_objectives = eval_fn(all_inds, derive_objs_fn = derive_objs_fn) 
         new_archive = []
         all_fronts_indicies = np.array([], dtype=int)
         # best_front_indexes = None
@@ -191,7 +192,7 @@ def do_feature_objectives(interactions):
 def gp_nsga2(gold_outputs, func_list, terminal_list, *,
                         population_size = 1000, max_gens = 100, archive_size = 1000,
                         fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
-                        init_fn = init_each, breed_fn = subtree_breed, 
+                        init_fn = init_each, map_fn = identity_map, breed_fn = subtree_breed, 
                         eval_fn = gp_eval, analyze_pop_fn = analyze_population,
                         derive_objs_fn = full_objectives):
     stats = {}
@@ -200,8 +201,8 @@ def gp_nsga2(gold_outputs, func_list, terminal_list, *,
     shared_context = dict(
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, stats = stats, eval_cache = {}, breeding_stats = BreedingStats())
-    evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn)
+        syntax_cache = syntax_cache, stats = stats, int_cache = {}, out_cache = {}, breeding_stats = BreedingStats())
+    evol_fns = utils.bind_fns(shared_context, init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, derive_objs_fn)
     best_ind, gen = nsga2_loop(archive_size, population_size, max_gens, *evol_fns)
     stats["gen"] = gen
     stats["best_found"] = best_ind is not None

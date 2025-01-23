@@ -4,6 +4,7 @@ import json
 from tabulate import tabulate
 from gp import gp_sim_names
 import gp
+from gp_benchmarks import all_benchmarks
 from nsga2 import nsga2_sim_names
 import nsga2
 from front_coverage import cov_sim_names
@@ -75,17 +76,20 @@ def compute_run_stats(file_name: str):
 
 sim_names = [*gp_sim_names, *nsga2_sim_names, *cov_sim_names, *coevol_sim_names]
 
-# sim_names = ["do_rand", "do_fo", "doc_p", "doc_d"]
+sim_names = coevol_sim_names #["do_rand", "do_fo", "doc_p", "doc_d"]
 from gp_benchmarks import benchmark_map
 if __name__ == "__main__":
-    # print("testing evo runs")
-    # cnt = 0
-    # f = open("setups.txt", "w")
-    # for sim_name in sim_names:
-    #     for b_name in benchmark_map.keys():
-    #         print(f"'{sim_name}:{b_name}'", file=f)
-    #         cnt += 1
-    # print(f"total setups: {cnt}")
+    print("testing evo runs")
+    cnt = 0
+    f = open("setups.txt", "w")
+    for sim_name in sim_names:
+        for b_name in benchmark_map.keys():
+            _, bm = all_benchmarks[benchmark_map[b_name]]
+            gold, _, _ = bm()
+            print(sim_name, b_name, len(gold))
+            print(f"'{sim_name}:{b_name}'", file=f)
+            cnt += 1
+    print(f"total setups: {cnt}")
     # cov_ht_bp(idx = 11)
-    compute_run_stats("data/test-based-gp/gp-objs-tbgp.jsonlist")
+    # compute_run_stats("data/test-based-gp/main-gp-objs.jsonlist")
     pass

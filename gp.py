@@ -19,34 +19,37 @@ class Node():
         self.nodes = None # list of all nodes for direct access
         self.signature = inspect.signature(func)
         self.return_type = self.signature.return_annotation
-    def call(self, *args, node_bindings = {}, node_outcomes: Optional[dict] = None, node_called: Optional[dict] = None, 
-                test_ids: Optional[np.ndarray] = None, **kwargs):
+    def call(self, node_outcomes = {}): #*args, node_outcomes = {}, #**kwargs, node_bindings = {}, node_called: Optional[dict] = None, **kwargs):
         ''' Executes Node tree, 
             @param node_bindings - redirects execution to another subtree (actually getters!!!)
             @param node_outcomes - map, allows to collect the outputs of all nodes into the dict if provided
             @param node_executed - map, tracks loops if passed 
         '''
-        if node_called is not None :
-            if self in node_called: # this could happen only through binding or incorrect build of a tree
-                raise ValueError(f"Execution loop detected. Node {str(self)} was already executed") 
-            else:
-                node_called[self] = True
-        if self in node_bindings and (other_self := node_bindings[self]()) is not None:
-            return other_self.call(*args, node_bindings = node_bindings, 
-                                            node_outcomes = node_outcomes, node_called = node_called, 
-                                            test_ids = test_ids, **kwargs)
+        # NOTE: WARN: be careful not to cache for different node_bindings!!!
+        if self in node_outcomes:
+            return node_outcomes[self]
+        # if node_called is not None :
+        #     if self in node_called: # this could happen only through binding or incorrect build of a tree
+        #         raise ValueError(f"Execution loop detected. Node {str(self)} was already executed") 
+        #     else:
+        #         node_called[self] = True
+        # if self in node_bindings and (other_self := node_bindings[self]()) is not None:
+        #     return other_self.call(*args, node_bindings = node_bindings, 
+        #                                     node_outcomes = node_outcomes, node_called = node_called, 
+        #                                     test_ids = test_ids, **kwargs)
         node_args = []
         for arg in self.args:
-            arg_outcomes = arg.call(*args, node_bindings = node_bindings, 
-                                            node_outcomes = node_outcomes, node_called = node_called, 
-                                            test_ids = test_ids, **kwargs)
+            arg_outcomes = arg.call(node_outcomes = node_outcomes)            
+            # arg_outcomes = arg.call(*args, node_bindings = node_bindings, 
+            #                                 node_outcomes = node_outcomes, node_called = node_called, 
+            #                                 test_ids = test_ids, **kwargs)
             node_args.append(arg_outcomes)
         if len(node_args) == 0: # leaf 
-            new_outcomes = self.func(*args, test_ids = test_ids, **kwargs)
+            # new_outcomes = self.func(*args, test_ids = test_ids, **kwargs)
+            new_outcomes = self.func()
         else:
-            new_outcomes = self.func(*node_args, *args, **kwargs)
-        if node_outcomes is not None:
-            node_outcomes[self] = new_outcomes
+            new_outcomes = self.func(*node_args) #, *args, **kwargs)
+        node_outcomes[self] = new_outcomes
         return new_outcomes
 
     def __str__(self):
@@ -187,37 +190,36 @@ def _compute_fitnesses(fitness_fns, interactions, population, gold_outputs, deri
     fitnesses = np.array(fitness_list).T  
     return fitnesses   
 
-def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, ignore_stats_count = 0, *, eval_cache, gold_outputs, fitness_fns, stats):
+def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, *, out_cache, int_cache, gold_outputs, fitness_fns, stats):
     ''' Cached node evaluator '''
     # NOTE: derived objectives does not work with cache as they are computed on per given group of nodes
     if len(nodes) == 0:
         raise ValueError("Empty population")
-    node_ids_to_eval = [node_id for node_id, node in enumerate(nodes) if node not in eval_cache]
+    node_ids_to_eval = [node_id for node_id, node in enumerate(nodes) if node not in int_cache]
     int_size = 0
     out_size = 0
     if save_stats:
-        stats.setdefault("num_eval_nodes", []).append(len(nodes) - ignore_stats_count)
+        stats.setdefault("num_eval_nodes", []).append(len(nodes))
         stats.setdefault("num_active_evals", []).append(len(node_ids_to_eval))
-        stats.setdefault("eval_cache_hits", []).append(len(nodes) - len(node_ids_to_eval) - ignore_stats_count)
+        stats.setdefault("eval_cache_hits", []).append(len(nodes) - len(node_ids_to_eval))
     if len(node_ids_to_eval) > 0:
         nodes_to_eval = [nodes[node_id] for node_id in node_ids_to_eval]
-        new_outputs = np.array([node.call() for node in nodes_to_eval ])
+        new_outputs = np.array([node.call(node_outcomes=out_cache) for node in nodes_to_eval ])
         new_interactions = int_fn(gold_outputs, new_outputs)
         # fit_size = new_fitnesses.shape[1]
         int_size = new_interactions.shape[1]
         out_size = new_outputs.shape[1]
-        for node, new_ints, new_outs in zip(nodes_to_eval, new_interactions, new_outputs):
-            eval_cache[node] = (new_ints, new_outs)
+        for node, new_ints in zip(nodes_to_eval, new_interactions):
+            int_cache[node] = new_ints
     else:
         node = nodes[0]
-        int_size = len(eval_cache[node][0])
-        out_size = len(eval_cache[node][1])
+        int_size = len(int_cache[node])
+        out_size = len(out_cache[node])
     interactions = np.zeros((len(nodes), int_size), dtype = float)
     outputs = np.zeros((len(nodes), out_size), dtype = float)
     for node_id, node in enumerate(nodes):
-        i, o = eval_cache[node]
-        interactions[node_id] = i
-        outputs[node_id] = o
+        interactions[node_id] = int_cache[node]
+        outputs[node_id] = out_cache[node]
     if derive_objs_fn is not None:
         derived_objectives, derived_info = derive_objs_fn(interactions)
     else:
@@ -505,7 +507,7 @@ def collect_additional_stats(stats, nodes: list[Node], outputs):
     num_uniq_sems = len(sem_counts)
     stats.setdefault('num_uniq_sems', []).append(num_uniq_sems)
 
-def analyze_population(population, outputs, fitnesses, save_stats = True, *, stats, fitness_fns, main_fitness_fn, eval_cache, breeding_stats: BreedingStats, **_):
+def analyze_population(population, outputs, fitnesses, save_stats = True, *, stats, fitness_fns, main_fitness_fn, int_cache, breeding_stats: BreedingStats, **_):
     ''' Get the best program in the population '''
     fitness_order = np.lexsort(fitnesses.T[::-1])
     best_index = fitness_order[0]
@@ -524,8 +526,8 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
         total_good_ch = 0 
         total_bad_ch = 0
         for parents, children in breeding_stats.parent_child_relations:
-            parent_ints = np.array([ eval_cache[n][0] for n in parents ])
-            child_ints = np.array([ eval_cache[n][0] for n in children ])
+            parent_ints = np.array([ int_cache[n] for n in parents ])
+            child_ints = np.array([ int_cache[n] for n in children ])
             good_ch, bad_ch = count_good_bad_children(parent_ints, child_ints)
             total_good_ch += good_ch
             total_bad_ch += bad_ch
@@ -536,12 +538,22 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
         return population[best_index]
     return None
 
-def evol_loop(population_size, max_gens, init_fn, breed_fn, eval_fn, analyze_pop_fn):
+def identity_map(population):
+    return population
+
+def syntax_dedupl_map(population):
+    ''' Removes syntactic duplicates '''
+    pop_set = {n: True for n in population}
+    new_population = list(pop_set.keys())
+    return new_population
+
+def evol_loop(population_size, max_gens, init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn):
     ''' Classic evolution loop '''
     population = init_fn(population_size)
     gen = 0
     best_ind = None
     while gen < max_gens:
+        population = map_fn(population)
         outputs, fitnesses, *_ = eval_fn(population)
         best_ind = analyze_pop_fn(population, outputs, fitnesses) 
         if best_ind is not None:
@@ -561,14 +573,14 @@ def evol_loop(population_size, max_gens, init_fn, breed_fn, eval_fn, analyze_pop
 #           main_fitness_fn (main fitness function)
 #           node_builder (function to build nodes)
 #           syntax_cache (cache for syntax trees)
-#           eval_cache (cache for evaluation results)
+#           int_cache, out_cache (cache for evaluation results)
 #           stats (dictionary for statistics)
 # NOTE: binding happens by name of these parameters in funcs and after *!
 # Any other parameters should be bound explicitly or defaults should be used
 def koza_evolve(gold_outputs, func_list, terminal_list,
                 population_size = 1000, max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
-                init_fn = init_each, breed_fn = subtree_breed, 
+                init_fn = init_each, map_fn = identity_map, breed_fn = subtree_breed, 
                 eval_fn = gp_eval, analyze_pop_fn = analyze_population):
     stats = {}
     syntax_cache = {}
@@ -576,8 +588,8 @@ def koza_evolve(gold_outputs, func_list, terminal_list,
     shared_context = dict(
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, eval_cache = {}, stats = stats, breeding_stats = BreedingStats())
-    evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn)
+        syntax_cache = syntax_cache, int_cache = {}, out_cache = {}, stats = stats, breeding_stats = BreedingStats())
+    evol_fns = utils.bind_fns(shared_context, init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn)
     best_ind, gen = evol_loop(population_size, max_gens, *evol_fns)
     stats["gen"] = gen
     stats["best_found"] = best_ind is not None
@@ -591,8 +603,8 @@ gp_sim_names = [ 'gp', 'ifs' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('malcev2')
-    best_prog, stats = ifs(gold_outputs, func_list, terminal_list)
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
+    best_prog, stats = gp(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    

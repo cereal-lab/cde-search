@@ -4,21 +4,21 @@ from functools import partial
 from itertools import cycle
 import numpy as np
 
-from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, init_each, simple_node_builder, subtree_breed
+from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, identity_map, init_each, simple_node_builder, subtree_breed
 from nsga2 import get_pareto_front_indexes
 from rnd import default_rnd
 import utils
 
 
 def pareto_front_loop(archive_size, population_size, max_gens, 
-              init_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn):
+              init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn):
     # Create initial population
     population = init_fn(population_size)
     gen = 0
     best_ind = None
-    ignore_stats_count = 0
     while gen < max_gens:
-        outputs, fitnesses, interactions = eval_fn(population, ignore_stats_count = ignore_stats_count) 
+        population = map_fn(population)
+        outputs, fitnesses, interactions = eval_fn(population) 
         all_fronts_indexes = np.array([], dtype=int)
         best_front_indexes = None
         while len(all_fronts_indexes) < archive_size:
@@ -40,7 +40,6 @@ def pareto_front_loop(archive_size, population_size, max_gens,
         parents = [population[i] for i in selected_indexes]
         parents_fitnesses = fitnesses[selected_indexes]
         new_population = breed_fn(population_size, parents, parents_fitnesses)
-        ignore_stats_count = len(parents)
         new_population.extend(parents)
         population = new_population
         gen += 1
@@ -54,8 +53,12 @@ class FullTestCoverageIterators():
 def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, *, full_coverage: FullTestCoverageIterators):
     if (next_index := next(full_coverage.selected, None)) is None:
         subgroup_start, subgroup_size = next(full_coverage.subgroups)
-        full_coverage.selected = iter(subgroup_start + default_rnd.choice(subgroup_size, size = min(subgroup_size, coverage_selection_size), replace = False))
+        choices = default_rnd.choice(subgroup_size, size = min(subgroup_size, coverage_selection_size), replace = False)
+        indexes = subgroup_start + choices
+        full_coverage.selected = iter(indexes)
         next_index = next(full_coverage.selected)
+        if len(population) >= 6 and str(population[5]) == "x6":
+            print(f"selected: ss {subgroup_start}, ssize {subgroup_size} choice {choices} indexes {indexes} next {next_index}")
     # best = population[next_index]
     return next_index
 
@@ -168,7 +171,7 @@ full_test_coverage_random_test_rand_program = partial(select_full_test_coverage,
 def front_evolve(gold_outputs, func_list, terminal_list, *,
                     population_size = 1000, max_gens = 100, archive_size = 10,
                     fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
-                    init_fn = init_each, breed_fn = partial(subtree_breed, breed_select_fn = full_coverage_selection),
+                    init_fn = init_each, map_fn = identity_map, breed_fn = partial(subtree_breed, breed_select_fn = full_coverage_selection),
                     eval_fn = gp_eval, analyze_pop_fn = analyze_population,
                     select_parents_fn = full_test_coverage_hardest_test_best_program):
     stats = {}
@@ -178,9 +181,9 @@ def front_evolve(gold_outputs, func_list, terminal_list, *,
     shared_context = dict(
         gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
         fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, stats = stats, eval_cache = {}, full_coverage = full_coverage,
+        syntax_cache = syntax_cache, stats = stats, int_cache = {}, out_cache = {}, full_coverage = full_coverage,
         breeding_stats = BreedingStats())
-    evol_fns = utils.bind_fns(shared_context, init_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn)    
+    evol_fns = utils.bind_fns(shared_context, init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn)    
     best_ind, gen = pareto_front_loop(archive_size, population_size, max_gens, *evol_fns)
     stats["gen"] = gen
     stats["best_found"] = best_ind is not None
@@ -202,8 +205,8 @@ cov_sim_names = [ 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = cov_ht_bp(gold_outputs, func_list, terminal_list)
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp8')
+    best_prog, stats = cov_rt_bp(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    
