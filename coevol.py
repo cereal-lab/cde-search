@@ -3,7 +3,7 @@
 '''
 from functools import partial
 import numpy as np
-from de import extract_dims_np, extract_dims
+from de import extract_dims_np, extract_dims_np_b
 from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, identity_map, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
 from rnd import default_rnd
 import utils
@@ -129,80 +129,6 @@ def prog_test_interractions(populations, eval_fn = gp_eval, *, nondominant: Nond
     outputs, fitnesses, interactions = eval_fn(programs)
     return outputs, fitnesses, interactions    
 
-# def get_discriminating_set(selected_other: np.ndarray, interactions: np.ndarray):
-#     ''' Returns candidates that could distinguish selected individuals based on seen interactions 
-#         selected_other - set of selected rows from interactions 
-#         interactions - matrix of interactions, we pick discriminating columns
-#     '''
-#     test_pairs = [ (selected_other[i], selected_other[j]) for i in range(len(selected_other)) for j in range(i + 1, len(selected_other)) ]
-#     discriminating_lists = {}
-#     for (tid1, tid2) in test_pairs:
-#         test1 = interactions[tid1]
-#         test2 = interactions[tid2]
-#         ps = np.where(np.logical_xor(test1, test2))[0]
-#         for cid in ps:
-#             tid1, tid2 = min(tid1, tid2), max(tid1, tid2)
-#             discriminating_lists.setdefault(cid, set()).add((tid1, tid2))
-#     discriminating_set = set()
-#     while len(discriminating_lists) > 0: 
-#         max_cid = max(discriminating_lists.keys(), key = lambda x: len(discriminating_lists[x]))
-#         max_cid_set = discriminating_lists[max_cid]
-#         discriminating_set.add(max_cid)
-#         del discriminating_lists[max_cid]
-#         to_delete = set()
-#         for cid, cid_set in discriminating_lists.items():
-#             cid_set -= max_cid_set
-#             if len(cid_set) == 0:
-#                 to_delete.add(cid)
-#         for cid in to_delete:
-#             del discriminating_lists[cid]
-#     return discriminating_set
-
-# def update_test_underlying_objectives(populations, interactions, sample_size = 20, spanned_num = 10):
-#     """ Finds underlying objectives tests and discriminating programs """
-#     programs, tests = populations
-#     test_ints = (1 - interactions).T
-#     dims, origin, spanned = extract_dims_np(test_ints)
-#     spanned_ends = { }
-#     for test_id, position in spanned.items():
-#         for dim_id, point_id in position.items():
-#             spanned_ends.setdefault((dim_id, point_id), []).append(test_id)
-#     dim_ends = [ (dim_id, len(d) - 1) for dim_id, d in enumerate(dims) ]
-#     preserved_spanned = set()
-#     for dim_end in dim_ends:
-#         if dim_end in spanned_ends:
-#             preserved_spanned.update(spanned_ends[dim_end])
-#     preserved_spanned = list(preserved_spanned)
-#     if len(preserved_spanned) > spanned_num:
-#         preserved_spanned_ids = default_rnd.choice(len(preserved_spanned), spanned_num, replace=False)
-#         preserved_spanned = [preserved_spanned[i] for i in preserved_spanned_ids]
-#     selected_tests = preserved_spanned
-#     axes = [[[test_id for test_id in point] for point in dim] for dim in dims]
-#     # axes.sort(key = lambda x: x[-1][1])
-#     axe_id = 0
-#     while len(selected_tests) < sample_size and len(axes) > 0:
-#         axis = axes[axe_id]
-#         point = axis[-1]
-#         el_id = default_rnd.randint(0, len(point))
-#         test = point.pop(el_id)
-#         selected_tests.append(test)
-#         if len(point) == 0:
-#             axis.pop()
-#         if len(axis) == 0:
-#             axes.pop(axe_id)
-#             if len(axes) == 0:
-#                 break
-#         else:
-#             axe_id += 1
-#         if axe_id == len(axes):
-#             axe_id = 0
-    
-#     selected_program_ids = get_discriminating_set(selected_tests, test_ints) #computing most distinguishing programs 
-#     selected_program = [programs[i] for i in selected_program_ids]
-
-#     selected_tests_ = [tests[i] for i in selected_tests]
-#     return [selected_program, selected_tests_]
-
 def select_all_tests(tests, cand_interactions):
     return tests
 
@@ -230,15 +156,17 @@ def select_discriminative_tests(tests, prog_interactions: np.ndarray):
     discriminating_tests = [tests[i] for i in discriminating_test_ids]
     return discriminating_tests
 
-def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, selection_size = 20):
+def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, selection_size = 10, *, stats):
     test_stats = np.sum(prog_interactions, axis=0)
     sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: x[1])
     filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
-    if selection_size is None:
-        selection_size = int(fraction * prog_interactions.shape[1])
-    res = filtered_test_ids[:selection_size]
+    fraction_size = max(1, int(fraction * prog_interactions.shape[1]))
+    min_size = min(fraction_size, selection_size)
+    stats.setdefault('obj_size', []).append(min_size)
+    res = filtered_test_ids[:min_size]
     return res
 
+import time 
 def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_hardest_tests, *, stats, gold_outputs, nondominant: NondominantGroups):
     """ Finds underlying objectives for programs, samples most discriminating tests (if necessary)
         Extracted coordinate system preserve relation of what individuals could be combined in breeding 
@@ -253,16 +181,31 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
 
     selected_interactions = interactions[:, tests]
 
-    dims, origin, spanned = extract_dims_np(selected_interactions, origin_outcomes=np.zeros_like(selected_interactions[0])) # program underlying objectives
+    # if weighted_interractions:
+    #     # idea as in ifs - we count number of programs that solve tests
+    #     test_difficulty = np.sum(selected_interactions, axis=0)
+    #     solvable_tests_mask = test_difficulty > 0
+    #     if not(np.all(solvable_tests_mask)):
+    #         selected_interactions = selected_interactions[:, solvable_tests_mask]
+    #         test_difficulty = test_difficulty[solvable_tests_mask]
+    #     test_weight = 1.0 / test_difficulty # 0 --> many programs solve it, 1 --> one program solves it
+    #     selected_interactions = selected_interactions * test_weight
+
+    # TODO: handle case when all tests are difficult!!!
+
+    origin_zero = np.packbits(np.zeros_like(selected_interactions[0], dtype = bool))
+    packed_ints = np.packbits(selected_interactions.astype(bool), axis=1)
+    start_ms = time.process_time()
+    dims, origin, spanned_points = extract_dims_np_b(packed_ints, origin_outcomes=origin_zero) # program underlying objectives
+    end_ms = time.process_time()
+    dims_time = end_ms - start_ms
+    stats.setdefault('dims_time', []).append(dims_time)
+    # print(f"Extract dims time: {dims_time}")
     # pass 
     # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
     # pass
     stats.setdefault('dims', []).append(len(dims))
     dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
-    spanned_points = { }
-    for test_id, position in spanned.items():
-        coords = frozenset(position.items())
-        spanned_points.setdefault(coords, []).append(test_id)
     dim_points_coords = frozenset(dim_points.keys())
     spanned_groups = {}    
     preserved_points =  [prog_ids for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
@@ -344,22 +287,28 @@ def gp_coevolve2(gold_outputs, func_list, terminal_list,
     stats["best_found"] = best_ind is not None
     return best_ind, stats
 
-coevol_uo_5 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 5)))
-coevol_uo_10 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 10)))
-coevol_uo_15 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 15)))
-coevol_uo = gp_coevolve2
-coevol_uo_25 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 25)))
-coevol_uo_30 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 30)))
-coevol_uo_35 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 35)))
-coevol_uo_40 = partial(gp_coevolve2, update_fn = partial(update_cand_underlying_objectives, test_selection_strategy = partial(select_hardest_tests, selection_size = 40)))
+def update_cand_uo_builder(frac_or_size = 10):
+    return partial(update_cand_underlying_objectives, 
+                   test_selection_strategy = partial(select_hardest_tests, fraction = 1.0 / frac_or_size, selection_size = frac_or_size))
+
+coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
+coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
+coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
+coevol_uo_40 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(40))
+coevol_uo_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50))
+coevol_uo_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60))
+coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
+coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
+coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
+coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
 
 
-coevol_sim_names = ["coevol_uo_5", "coevol_uo_10", "coevol_uo_15", "coevol_uo", "coevol_uo_25", "coevol_uo_30", "coevol_uo_35", "coevol_uo_40"]
+coevol_sim_names = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
 
 if __name__ == '__main__':
     import gp_benchmarks
     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = coevol_uo_35(gold_outputs, func_list, terminal_list)
+    best_prog, stats = coevol_uo_10(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    

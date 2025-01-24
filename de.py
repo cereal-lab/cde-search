@@ -637,73 +637,201 @@ def extract_nonb_dims_approx(tests: list[list[Optional[float]]]):
     dims = [[sorted(test_ids) for test_ids, _ in dim] for dim in dimensions] #pick only test sets
     return dims, origin, spanned # here all unknown values are approximated
 
-def get_pos_np(test_ids, interactions, dimension_outcomes):
-    ext_pos = {tid: [] for tid in test_ids}
-    span_pos = {tid: [] for tid in test_ids}
-    # test_pos_map = {tid: [] for tid in test_ids}
-    for dim_id, dim in enumerate(dimension_outcomes):  
-        idxs_to_find = np.array(test_ids)
-        fints = interactions[idxs_to_find]
-        all_indexes = np.arange(idxs_to_find.shape[0])
-        mask = np.ones_like(all_indexes, dtype=bool)
-        incompat = set()
-        for point_id, point in reversed(list(enumerate(dim))):
-            ints = fints[mask]
-            original_idxs = all_indexes[mask]
-            idx_idx = np.where(np.all(ints >= point, axis=1))[0]
-            idxs = original_idxs[idx_idx]
-            for idx in idxs:
-                real_idx = idxs_to_find[idx]
-                if point_id != 0:
-                    span_pos[real_idx].append((dim_id, point_id))
-                if real_idx not in incompat:
-                    ext_pos[real_idx].append((dim_id, point_id))
-            mask[idxs] = False
-            ints = fints[mask]
-            original_idxs = all_indexes[mask]
-            incompat_idx_idx = np.where(np.any(ints > point, axis=1) & np.any(ints < point, axis = 1))[0]
-            incompat_idxs = original_idxs[incompat_idx_idx]
-            for idx in incompat_idxs:
-                incompat.add(idxs_to_find[idx])
-            # mask[incompat_idxs] = False
-            if not(np.any(mask)):
-                break   
-    span_pos = {tid: pos for tid, pos in span_pos.items() if len(pos) > 1}
-    return ext_pos, span_pos 
+# def get_pos_np(test_ids, interactions, dimension_outcomes):
+#     ext_pos = {tid: [] for tid in test_ids}
+#     span_pos = {tid: [] for tid in test_ids}
+#     # test_pos_map = {tid: [] for tid in test_ids}
+#     for dim_id, dim in enumerate(dimension_outcomes):  
+#         idxs_to_find = np.array(test_ids)
+#         fints = interactions[idxs_to_find]
+#         all_indexes = np.arange(idxs_to_find.shape[0])
+#         mask = np.ones_like(all_indexes, dtype=bool)
+#         incompat = set()
+#         for point_id, point in reversed(list(enumerate(dim))):
+#             ints = fints[mask]
+#             original_idxs = all_indexes[mask]
+#             idx_idx = np.where(np.all(ints >= point, axis=1))[0]
+#             idxs = original_idxs[idx_idx]
+#             for idx in idxs:
+#                 real_idx = idxs_to_find[idx]
+#                 if point_id != 0:
+#                     span_pos[real_idx].append((dim_id, point_id))
+#                 if real_idx not in incompat:
+#                     ext_pos[real_idx].append((dim_id, point_id))
+#             mask[idxs] = False
+#             ints = fints[mask]
+#             original_idxs = all_indexes[mask]
+#             incompat_idx_idx = np.where(np.any(ints > point, axis=1) & np.any(ints < point, axis = 1))[0]
+#             incompat_idxs = original_idxs[incompat_idx_idx]
+#             for idx in incompat_idxs:
+#                 incompat.add(idxs_to_find[idx])
+#             # mask[incompat_idxs] = False
+#             if not(np.any(mask)):
+#                 break   
+#     span_pos = {tid: pos for tid, pos in span_pos.items() if len(pos) > 1}
+#     return ext_pos, span_pos 
 
 
-def get_extension_pos(test_ids, interactions, dimension_outcomes):
-    test_pos_map = {tid: [] for tid in test_ids}
-    for dim_id, dim in enumerate(dimension_outcomes):  
-        idxs_to_find = np.array(test_ids)
-        fints = interactions[idxs_to_find]
-        all_indexes = np.arange(idxs_to_find.shape[0])
-        mask = np.ones_like(all_indexes, dtype=bool)
-        for point_id, point in reversed(list(enumerate(dim))):
-            ints = fints[mask]
-            original_idxs = all_indexes[mask]
-            idx_idx = np.where(np.all(ints >= point, axis=1))[0]
-            idxs = original_idxs[idx_idx]
-            for idx in idxs:
-                test_pos_map[idxs_to_find[idx]].append((dim_id, point_id))
-            mask[idxs] = False
-            ints = fints[mask]
-            original_idxs = all_indexes[mask]
-            incompat_idx_idx = np.where(np.any(ints > point, axis=1) & np.any(ints < point, axis = 1))[0]
-            incompat_idxs = original_idxs[incompat_idx_idx]
-            mask[incompat_idxs] = False
-            if not(np.any(mask)):
-                break   
-    return test_pos_map 
+# def get_extension_pos(test_ids, interactions, dimension_outcomes):
+#     test_pos_map = {tid: [] for tid in test_ids}
+#     for dim_id, dim in enumerate(dimension_outcomes):  
+#         idxs_to_find = np.array(test_ids)
+#         fints = interactions[idxs_to_find]
+#         all_indexes = np.arange(idxs_to_find.shape[0])
+#         mask = np.ones_like(all_indexes, dtype=bool)
+#         for point_id, point in reversed(list(enumerate(dim))):
+#             ints = fints[mask]
+#             original_idxs = all_indexes[mask]
+#             idx_idx = np.where(np.all(ints >= point, axis=1))[0]
+#             idxs = original_idxs[idx_idx]
+#             for idx in idxs:
+#                 test_pos_map[idxs_to_find[idx]].append((dim_id, point_id))
+#             mask[idxs] = False
+#             ints = fints[mask]
+#             original_idxs = all_indexes[mask]
+#             incompat_idx_idx = np.where(np.any(ints > point, axis=1) & np.any(ints < point, axis = 1))[0]
+#             incompat_idxs = original_idxs[incompat_idx_idx]
+#             mask[incompat_idxs] = False
+#             if not(np.any(mask)):
+#                 break   
+#     return test_pos_map 
 
-def is_spanned_np(test_interactions, dimension_outcomes):
-    comb = np.zeros_like(test_interactions)
+def get_extension_pos(test_interactions, dimension_outcomes):
+    test_pos = []
     for dim_id, dim in enumerate(dimension_outcomes):  
         for point_id, point in reversed(list(enumerate(dim))):
             if np.all(test_interactions >= point):
-                comb += point
+                test_pos.append((dim_id, point_id))
                 break
-    return np.all(comb >= test_interactions)
+            if np.any(test_interactions > point) & np.any(test_interactions < point):
+                break
+    return test_pos 
+
+def get_extension_pos_b(interactions: np.ndarray, dimension_outcomes: list[list[np.ndarray]]):
+    test_poss = [[] for _ in range(interactions.shape[0])]
+    for dim_id, dim in enumerate(dimension_outcomes):  
+        active_test_ids = np.arange(interactions.shape[0]) #np.ones(interactions.shape[0], dtype=bool)
+        for point_id, point in reversed(list(enumerate(dim))):
+            ints = interactions[active_test_ids]
+            diffs = ints ^ point
+            are_non_dominant = np.any(diffs & point, axis=1) #same cannot be because we took unique first
+            incompat = are_non_dominant & np.any(diffs & ints, axis=1)
+            dominant = ~are_non_dominant
+            compat = ~incompat
+            id_ids = np.nonzero(dominant)[0]
+            for id_id in id_ids:
+                test_poss[active_test_ids[id_id]].append((dim_id, point_id))
+            active_test_ids = active_test_ids[are_non_dominant & compat]
+            if len(active_test_ids) == 0:
+                break
+    return test_poss 
+
+# def get_pos_b2(interactions: np.ndarray, dimension_outcomes: np.ndarray):
+#     int_view = interactions[:, np.newaxis, np.newaxis, :]
+#     dim_view = dimension_outcomes[np.newaxis, :, :, :]
+#     point_dominates = np.any((int_view ^ dim_view) & dim_view, axis = -1)
+#     int_dominates = np.any((int_view ^ dim_view) & int_view, axis = -1)
+#     dominations = int_dominates & ~point_dominates
+#     poss = np.argmax(~dominations, axis = -1)
+#     ext_poss = np.zeros_like(poss, dtype = bool)
+#     # ext_poss[poss == dim_sizes[np.newaxis, :, :]] = True
+#     return poss - 1
+
+# D1 = np.array([[[0,0,0,0], [0,1,0,0], [0,1,0,1], [1,1,1,1]], 
+#                [[0,0,0,0], [0,0,1,0], [1,1,1,1], [1,1,1,1]], 
+#                [[0,0,0,0], [1,0,0,1], [1,1,1,1], [1,1,1,1]]], dtype=bool)
+
+# poss = np.array([[1,1,0,1], [1,0,1,1], [0,0,1,1]], dtype = bool)
+
+# get_pos_b2(poss, D1)
+
+# def is_spanned_np(test_interactions, dimension_outcomes):
+#     comb = np.zeros_like(test_interactions)
+#     for dim_id, dim in enumerate(dimension_outcomes):  
+#         for point_id, point in reversed(list(enumerate(dim))):
+#             if np.all(test_interactions >= point):
+#                 comb += point
+#                 break
+#     return np.all(comb >= test_interactions)
+
+def get_span_pos(test_interactions: np.ndarray, dimension_outcomes: list[list[np.ndarray]], delta = 0):
+    covered_objs = np.zeros_like(test_interactions, dtype=bool)
+    # where_not_origin = ~covered_objs
+    spanned_dims = {}
+    for dim_id, dim in enumerate(dimension_outcomes):  
+        for point_id, point in reversed(list(enumerate(dim))):
+            if point_id != 0 and np.all(test_interactions >= point):
+                covered_objs[point == test_interactions] = True
+                spanned_dims[dim_id] = point_id - delta
+                break
+    is_spanned = np.all(covered_objs)
+    if is_spanned:
+        return frozenset(spanned_dims.items())
+    return None
+
+def get_span_pos_b(test_interactions: np.ndarray, dimension_outcomes: list[list[np.ndarray]], delta = 0):
+    covered_objs = np.zeros_like(test_interactions)
+    # where_not_origin = ~covered_objs
+    spanned_dims = {}
+    for dim_id, dim in enumerate(dimension_outcomes):  
+        for point_id, point in reversed(list(enumerate(dim))):
+            if point_id == 0:
+                continue
+            diffs = test_interactions ^ point
+            dominant = ~np.any(diffs & point) #same cannot be because we took unique first
+            if dominant:
+                covered_objs = covered_objs | (point & test_interactions)
+                spanned_dims[dim_id] = point_id - delta
+                break
+    is_spanned = np.all(covered_objs == test_interactions)
+    if is_spanned:
+        return frozenset(spanned_dims.items())
+    return None
+
+def get_span_pos_b2(test_interactions: np.ndarray, dimension_outcomes: list[list[np.ndarray]], delta = 0):
+    covered_objs = np.zeros_like(test_interactions)
+    # where_not_origin = ~covered_objs
+    spanned_dims = {}
+    for dim_id, dim in enumerate(dimension_outcomes):  
+        for point_id, point in reversed(list(enumerate(dim))):
+            if point_id == 0:
+                continue
+            diffs = test_interactions ^ point
+            dominant = ~np.any(diffs & point) #same cannot be because we took unique first
+            if dominant:
+                covered_objs = covered_objs | (point & test_interactions)
+                spanned_dims[dim_id] = point_id - delta
+                break
+    is_spanned = np.all(covered_objs == test_interactions)
+    if is_spanned:
+        return frozenset(spanned_dims.items())
+    return None
+
+# def get_span_pos(interactions: np.ndarray, dimension_outcomes: list[np.ndarray]):
+#     ''' test_interactions - positions to detect in coordinate system 
+#                             shape: (n_samples, n_interactions)
+#         dimension_outcomes - current coordinate system of shape: list of dims of (n_points, n_interactions)
+#     '''
+#     covered_objs = np.zeros_like(test_interactions, dtype=bool)
+#     covered_objs[test_interactions == 0] = True
+#     where_ones = test_interactions == 1
+#     spanned_dims = {}
+#     for dim_id, dim in enumerate(dimension_outcomes):  
+#         for point_id, point in reversed(list(enumerate(dim))):
+#             if np.all(test_interactions >= point) and np.any(point == 1):
+#                 covered_objs[(point == 1) & where_ones] = True
+#                 spanned_dims[dim_id] = point_id
+#                 break
+#     is_spanned = np.all(covered_objs)
+#     if is_spanned:
+#         return frozenset(spanned_dims)
+#     return None
+
+# x = np.argmax(np.arange(10) > 6)
+
+# span_pos = get_span_pos(np.array([0,1,1]), [[np.array([1,0,0])],[np.array([0,1,0])],[np.array([0,0,1])]])
+# # span_pos = get_span_pos(np.array([[0,1,1],[1,1,1],[1,1,0]]), [[np.array([1,0,0])],[np.array([0,1,0])],[np.array([0,0,1])]])
+# pass 
 
 def extract_dims_np(tests: np.ndarray, origin_outcomes = None):
     ''' Generalizes CSE to nonbinary continuous outcomes, fully defined outcomes '''
@@ -726,10 +854,10 @@ def extract_dims_np(tests: np.ndarray, origin_outcomes = None):
     global_test_pos_map = {}
     tests_to_update = test_to_insert
     while len(test_to_insert) > 0:
-        if len(tests_to_update) > 0:
-            new_test_pos_map = get_extension_pos(tests_to_update, unique_tests, dimension_outcomes)
-            global_test_pos_map.update(new_test_pos_map)
-        test_pos_map = {tid: pos for tid, pos in global_test_pos_map.items() if tid in test_to_insert}
+        for test_id in tests_to_update:
+            test_pos = get_extension_pos(unique_tests[test_id], dimension_outcomes)
+            global_test_pos_map[test_id] = test_pos
+        test_pos_map = {tid: global_test_pos_map[tid] for tid in test_to_insert }
         # span_pos_map = {tid: pos for tid, pos in global_span_pos_map.items() if tid in test_to_insert}
         # test_pos_map = get_extension_pos(test_to_insert, unique_tests, dimension_outcomes)
 
@@ -744,7 +872,7 @@ def extract_dims_np(tests: np.ndarray, origin_outcomes = None):
         min_test_id = None
         while len(test_pos_map) > 0: 
             min_test_id = next((test_id for test_id, test_pos in test_pos_map.items() if len(test_pos) == 0), None)
-            if is_spanned_np(unique_tests[min_test_id], dimension_outcomes):
+            if (min_test_id is not None) and (get_span_pos(unique_tests[min_test_id], dimension_outcomes) is not None):
                 spanned_tests.append(min_test_id)
                 del test_pos_map[min_test_id]
             else:
@@ -759,13 +887,13 @@ def extract_dims_np(tests: np.ndarray, origin_outcomes = None):
         if min_test_id is not None:
             dimension_outcomes.append([origin_outcomes, unique_tests[min_test_id]])
             test_to_insert = test_to_insert[test_to_insert != min_test_id]
-            tests_to_update = test_to_insert.copy()
+            tests_to_update = test_to_insert #.copy()
             continue
 
         spanned_tests = []
         while len(test_pos_map) > 0:
             min_test_id, min_test_pos = min(test_pos_map.items(), key=lambda x: (len(x[1]), (0 if len(x[1]) == 0 else min(pos_id for _, pos_id in x[1])), one_counts[x[0]]))
-            if is_spanned_np(unique_tests[min_test_id], dimension_outcomes):
+            if get_span_pos(unique_tests[min_test_id], dimension_outcomes) is not None:
                 spanned_tests.append(min_test_id)
                 del test_pos_map[min_test_id]
             else:
@@ -786,29 +914,146 @@ def extract_dims_np(tests: np.ndarray, origin_outcomes = None):
             test_pos = test_pos_map[test_id]
             if any(dim_id == min_dim_id for dim_id, point_id in test_pos):
                 tests_to_update.append(test_id)
-        tests_to_update = np.array(tests_to_update)
+        # tests_to_update = np.array(tests_to_update)
 
-    dims = []
-    point_ids = set(range(len(tests)))
-    for tid in origin:
-        point_ids.remove(tid)
+    dims = []    
+    unplaced_test_mask = np.ones(len(tests), dtype=bool) #set(range(len(tests)))
+    unplaced_test_mask[origin] = False
+    # for tid in origin:
+    #     unplaced_test_ids.remove(tid)
     for dim in dimension_outcomes:
         one_dim = []
         dims.append(one_dim)
         for point in dim[1:]:
             point_tests = np.where(np.all(tests == point, axis=1))[0]
             one_dim.append(point_tests)
-            for tid in point_tests:
-                point_ids.remove(tid)
+            unplaced_test_mask[point_tests] = False
+            # for tid in point_tests:
+            #     unplaced_test_ids.remove(tid)
 
     spanned = {}
-    if len(point_ids) > 0:
-        spanned_ids = np.array(list(point_ids))
-        _, spanned_pos = get_pos_np(spanned_ids, tests, dimension_outcomes)
-        for test_id, dim_points in spanned_pos.items():
-            for dim_id, point_id in dim_points:
-                if np.any(dimension_outcomes[dim_id][point_id] == tests[test_id]):
-                    spanned.setdefault(test_id, {})[dim_id] = point_id - 1          
+    unplaced_test_ids = np.where(unplaced_test_mask)[0]
+    for test_id in unplaced_test_ids:
+        test_interactions = tests[test_id]
+        spanned_pos = get_span_pos(test_interactions, dimension_outcomes, delta = 1) #delta 1, as 0 point is origin
+        assert spanned_pos is not None, f'Spanned point has None position for test {test_id}, {test_interactions}'
+        spanned.setdefault(spanned_pos, []).append(test_id)
+    return dims, origin, spanned # here all unknown values are approximated
+
+# import numpy as np
+
+# zo = np.random.randint(0, 2, size=(10, 32), dtype=bool)
+# zo = np.vstack([np.zeros(32, dtype=bool), zo])
+# z = np.packbits(zo, axis=1)
+# np.unpackbits(z).reshape(zo.shape)
+# np.unpackbits(z, axis=1)
+# zoo = np.bitwise_and.reduce(z, axis=0)
+
+def extract_dims_np_b(tests: np.ndarray, origin_outcomes = None):
+    ''' Version of extract_dims_np on binary interactions 0/1 - bit arrays  '''
+    # origin = np.where(np.all(tests == 0, axis=1))[0]
+    if  origin_outcomes is None:
+        origin_outcomes = np.packbits(np.logical_and.reduce(tests, axis=0))
+    origin = np.where(np.all(tests == origin_outcomes, axis=1))[0]
+    
+    unique_tests = np.unique(tests[np.any(tests != origin_outcomes, axis=1)], axis=0, return_index=False) 
+
+    # spanned_set = set()
+    # dimensions = [] # tests on axes 
+    dimension_outcomes = []
+    test_to_insert = np.arange(unique_tests.shape[0])
+
+    unique_tests_unpacked = np.unpackbits(unique_tests, axis=1)
+
+    one_counts = np.sum(unique_tests_unpacked, axis=1)    
+    
+    global_test_pos_map = {}
+    tests_to_update = test_to_insert
+    while len(test_to_insert) > 0:
+        test_poss = get_extension_pos_b(unique_tests[tests_to_update], dimension_outcomes)
+        for test_id, test_pos in zip(tests_to_update, test_poss):
+            global_test_pos_map[test_id] = test_pos
+        test_pos_map = {tid: global_test_pos_map[tid] for tid in test_to_insert }
+        # span_pos_map = {tid: pos for tid, pos in global_span_pos_map.items() if tid in test_to_insert}
+        # test_pos_map = get_extension_pos(test_to_insert, unique_tests, dimension_outcomes)
+
+        # pos_conflict_counts = {}
+        # for poss in test_pos_map.values():
+        #     for pos in poss:
+        #         pos_conflict_counts[pos] = pos_conflict_counts.get(pos, 0) + 1
+        
+        # test_conflict_counts = {test_id: 0 if len(test_pos) == 0 else np.mean([pos_conflict_counts[pos] for pos in test_pos]) for test_id, test_pos in test_pos_map.items()}
+
+        spanned_tests = []
+        min_test_id = None
+        while len(test_pos_map) > 0: 
+            min_test_id = next((test_id for test_id, test_pos in test_pos_map.items() if len(test_pos) == 0), None)
+            if (min_test_id is not None) and (get_span_pos_b(unique_tests[min_test_id], dimension_outcomes) is not None):
+                spanned_tests.append(min_test_id)
+                del test_pos_map[min_test_id]
+            else:
+                break
+
+        if len(spanned_tests) > 0:
+            test_to_insert = test_to_insert[~np.isin(test_to_insert, spanned_tests)]
+
+        if len(test_pos_map) == 0:
+            break
+
+        if min_test_id is not None:
+            dimension_outcomes.append([origin_outcomes, unique_tests[min_test_id]])
+            test_to_insert = test_to_insert[test_to_insert != min_test_id]
+            tests_to_update = test_to_insert #.copy()
+            continue
+
+        spanned_tests = []
+        while len(test_pos_map) > 0:
+            min_test_id, min_test_pos = min(test_pos_map.items(), key=lambda x: (len(x[1]), (0 if len(x[1]) == 0 else min(pos_id for _, pos_id in x[1])), one_counts[x[0]]))
+            if get_span_pos_b(unique_tests[min_test_id], dimension_outcomes) is not None:
+                spanned_tests.append(min_test_id)
+                del test_pos_map[min_test_id]
+            else:
+                break
+
+        if len(spanned_tests) > 0:
+            test_to_insert = test_to_insert[~np.isin(test_to_insert, spanned_tests)]
+
+        if len(test_pos_map) == 0:
+            break
+                                    
+        min_dim_id, min_pos_id = min(min_test_pos, key=lambda x: x[1])
+        dim = dimension_outcomes[min_dim_id]
+        dimension_outcomes[min_dim_id] = [*dim[:min_pos_id+1], unique_tests[min_test_id], *dim[min_pos_id+1:]]
+        test_to_insert = test_to_insert[test_to_insert != min_test_id]
+        tests_to_update = [] 
+        for test_id in test_to_insert:
+            test_pos = test_pos_map[test_id]
+            if any(dim_id == min_dim_id for dim_id, point_id in test_pos):
+                tests_to_update.append(test_id)
+        # tests_to_update = np.array(tests_to_update)
+
+    dims = []    
+    unplaced_test_mask = np.ones(len(tests), dtype=bool) #set(range(len(tests)))
+    unplaced_test_mask[origin] = False
+    # for tid in origin:
+    #     unplaced_test_ids.remove(tid)
+    for dim in dimension_outcomes:
+        one_dim = []
+        dims.append(one_dim)
+        for point in dim[1:]:
+            point_tests = np.where(np.all(tests == point, axis=1))[0]
+            one_dim.append(point_tests)
+            unplaced_test_mask[point_tests] = False
+            # for tid in point_tests:
+            #     unplaced_test_ids.remove(tid)
+
+    spanned = {}
+    unplaced_test_ids = np.where(unplaced_test_mask)[0]
+    for test_id in unplaced_test_ids:
+        test_interactions = tests[test_id]
+        spanned_pos = get_span_pos_b(test_interactions, dimension_outcomes, delta = 1) #delta 1, as 0 point is origin
+        assert spanned_pos is not None, f'Spanned point has None position for test {test_id}, {test_interactions}'
+        spanned.setdefault(spanned_pos, []).append(test_id)
     return dims, origin, spanned # here all unknown values are approximated
 
 # TODO: organize archive variables as state accessible to populations - probably encapsulate into Archive instance 
@@ -1092,100 +1337,21 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, d
     layers = [[el2 for el in layer for el2 in [el, *duplicates.get(el, [])]] for layer in layers]
     return layers, discarded
 
-def derive_cse_objectives(interactions):
-    res = extract_dims_np(interactions)
-    return res, {}
-
-# NOTE: running CSE is quevalent to running NSGA2 with full interaction matrix - consider pareto front == underlying objectives + spanned points
-# def run_cse(archive_size, population_size, max_generations, 
-#               initialization, breed, evaluate, get_metrics):
-#     """ Run Coordinate System Evolution algorithm as a driver of evolution 
-#         Compared to simulations in populations, this is simplest form and no sparse values. 
-#         It is one population evolution. Contrast to NSGA-II    
-#     """
-#     # Create initial population
-#     population = [initialization() for _ in range(population_size)]
-#     archive = [] # archive of underlying objectives
-#     stats = []
-#     generation = 0
-#     while True:
-#         all_inds = population + archive
-#         _, interactions, _, (dims, _, spanned) = evaluate(all_inds, derive_objectives = derive_cse_objectives)
-#         # all_fitnesses = np.array(fitnesses + archive_fitenesses)
-#         spanned_objectives = [(spanned_id, [dim_id for dim_id, point_id in spanned_coords.items() if point_id == (len(dims[dim_id]) - 1)], 
-#                                     np.sum(interactions[spanned_id], -all_inds[spanned_id].get_depth()))
-#                                 for spanned_id, spanned_coords in spanned.items()]
-#         index_archive = []
-#         present_objectives = set()
-#         while len(spanned_objectives) > 0 and len(index_archive) < archive_size:
-#             spanned_objectives.sort(key = lambda x: (len(x[1]), x[2], x[3]), reverse=True)
-#             spanned_id, spanned_dims, spanned_sum, spanned_depth = spanned_objectives.pop(0)
-#             index_archive.append(spanned_id)
-#             present_objectives.update(spanned_dims)
-#             spanned_objectives = [ (a, [dim_id for dim_id in b if dim_id not in present_objectives], c) for a, b, c in spanned_objectives]
-#             spanned_objectives = [el for el in spanned_objectives if len(el[1]) > 0]
-
-#         mentioned_dims = {}
-#         for i in index_archive:
-#             for dim_id in spanned[i]:
-#                 mentioned_dims[dim_id] = mentioned_dims.get(dim_id, 0) + 1        
-
-#         for dim_id, dim in sorted(list(enumerate(dims)), key = lambda x: mentioned_dims.get(x[1], 0)):
-#             if dim_id in present_objectives:
-#                 continue
-#             point = list(dim[-1])
-#             point.sort(key = lambda i: all_inds[i].get_depth())
-#             index_archive.append(point[0])
-#             if len(index_archive) >= archive_size:
-#                 break
-#         archive = [all_inds[i] for i in index_archive]
-#         best_found, metrics = get_metrics(archive)
-#         stats.append(metrics)
-#         if best_found or (generation >= max_generations):
-#             break
-#         generation += 1
-#         population = breed(archive)
-#     return stats
-
-
-# TODO: 
-# 1. Read dynamic optimization vs coevolution, IEA etc 
-# 2. Stochastic multiobjective optimization - what would be simplest algo 
-# 3. Item discrimination 
-
-# def get_eq_groups(unequiv_sets: dict[int, list[int]]) -> list[set[int]]:
-#     ''' unequal_test_sets - Foreach test_id has set of unequal by objective tests 
-#         Returns minimal set of equivalence groups.
-#     '''
-#     eq_groups = [] 
-#     for tid, uneq_set in unequiv_sets.items():
-#         found_eq_sets = []
-#         for eq_set in eq_groups:
-#             if set.isdisjoint(eq_set, uneq_set):
-#                 found_eq_sets.append(eq_set)
-#         if len(found_eq_sets) == 0:
-#             eq_groups.append(set([tid]))
-#         elif len(found_eq_sets) == 1:
-#             found_eq_sets[0].add(tid)
-#         else: #possible spanned point, several equiv_groups 
-            
-#     return eq_groups
-
 if __name__ == "__main__":
     
-    # tests = np.array([
-    #     [9,1,9],
-    #     [9,2,9],
-    #     [1,2,2],
-    #     [1,2,3],
-    #     [2,9,1],
-    #     [3,9,2],
-    #     [9,9,9],
-    #     [1,1,1],
-    #     [1,2,2],
-    #     [9,2,3],
-    # ])
-    # res = extract_dims_np(tests)
+    tests = np.array([
+        [9,1,9],
+        [9,2,9],
+        [1,2,2],
+        [1,2,3],
+        [2,9,1],
+        [3,9,2],
+        [9,9,9],
+        [1,1,1],
+        [1,2,2],
+        [9,2,3],
+    ])
+    res = extract_dims_np(tests)
     # dims4, orig4, span4 = extract_nonb_dims_approx(tests)
     pass
     #testing of de module functions 
@@ -1201,7 +1367,8 @@ if __name__ == "__main__":
     ]
     dims3, orig3, span3 = extract_dims_approx(tests)
     dims4, orig4, span4 = extract_nonb_dims_approx(tests)
-    dims5, orig5, span5 = extract_dims_np(np.array(tests ))
+    tests_np = np.array(tests, dtype=bool)
+    dims5, orig5, span5 = extract_dims_np_b(np.packbits(tests_np, axis=1))
     pass
 
     tests = [[1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
@@ -1225,16 +1392,19 @@ if __name__ == "__main__":
 [0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1],
 [1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1]] 
 
-    tests = np.fromfile("test1.bin", dtype=np.int64).reshape((166,10))
+    # tests = np.fromfile("test1.bin", dtype=np.int64).reshape((166,10))
     # kx = [30, 84, 119, 133, 137, 159, 149, 34, 165, 75, 106, 85, 161, 36, 62, 67, 153, 154, 10, 53, 69, 82, 157, 18, 39, 98, 92, 51, 160, 63, 26, 56, 131, 13, 31]
     # tests = tests[kx]
-    tests = [list(t) for t in tests]
+    # tests = [list(t) for t in tests]
 
     dims1, o1, s1 = extract_dims(tests)
     dims2, o2, s2 = extract_dims_fix(tests)
     dims3, o3, s3 = extract_dims_approx(tests)
     dims4, o4, s4 = extract_nonb_dims_approx(tests)
-    dims5, o5, s5 = extract_dims_np(np.array(tests), origin_outcomes=np.zeros_like(tests[0]))
+    z0 = np.packbits(np.zeros_like(tests[0], dtype=bool))
+    t0 = np.packbits(np.array(tests), axis=1)
+    dims5, o5, s5 = extract_dims_np_b(t0, origin_outcomes=z0)
+    pass
     test2 = [[1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1],
         [0, 1, None, None, None, None, None, None, 0, 0, 0],
         [1, 1, None, None, None, None, None, None, 1, 1, 1],
