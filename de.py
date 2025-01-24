@@ -1032,6 +1032,17 @@ def extract_dims_np_b(tests: np.ndarray, origin_outcomes = None):
                 tests_to_update.append(test_id)
         # tests_to_update = np.array(tests_to_update)
 
+    # assert that all dim points are not spanned???
+    # for dim_id, dim in enumerate(dimension_outcomes):
+    #     for point_id, point in reversed(list(enumerate(dim))):
+    #         if point_id == 0:
+    #             continue
+    #         new_dims = [*dimension_outcomes[:dim_id], dimension_outcomes[dim_id][:point_id], *dimension_outcomes[dim_id + 1:]]
+    #         new_dims = [dim for dim in new_dims if len(dim) > 1]
+    #         span_pos = get_span_pos_b(point, new_dims)
+    #         if span_pos is not None:
+    #             print("Span point in dimension", dim_id, point_id, point, span_pos)
+
     dims = []    
     unplaced_test_mask = np.ones(len(tests), dtype=bool) #set(range(len(tests)))
     unplaced_test_mask[origin] = False

@@ -289,7 +289,7 @@ def gp_coevolve2(gold_outputs, func_list, terminal_list,
 
 def update_cand_uo_builder(frac_or_size = 10):
     return partial(update_cand_underlying_objectives, 
-                   test_selection_strategy = partial(select_hardest_tests, fraction = 1.0 / frac_or_size, selection_size = frac_or_size))
+                   test_selection_strategy = partial(select_hardest_tests, fraction = frac_or_size / 100.0, selection_size = frac_or_size))
 
 coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
 coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
@@ -307,8 +307,8 @@ coevol_sim_names = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_4
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = coevol_uo_10(gold_outputs, func_list, terminal_list)
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp8')
+    best_prog, stats = coevol_uo_100(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    
