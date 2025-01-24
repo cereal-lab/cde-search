@@ -53,7 +53,10 @@ class FullTestCoverageIterators():
 def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, *, full_coverage: FullTestCoverageIterators):
     if (next_index := next(full_coverage.selected, None)) is None:
         subgroup_start, subgroup_size = next(full_coverage.subgroups)
-        choices = default_rnd.choice(subgroup_size, size = min(subgroup_size, coverage_selection_size), replace = False)
+        if subgroup_size < coverage_selection_size:
+            choices = default_rnd.choice(subgroup_size, size = coverage_selection_size, replace = True)
+        else:
+            choices = default_rnd.choice(subgroup_size, size = coverage_selection_size, replace = False)
         indexes = subgroup_start + choices
         full_coverage.selected = iter(indexes)
         next_index = next(full_coverage.selected)
@@ -143,6 +146,8 @@ def select_full_test_coverage(front_selection_size, interactions, test_program_s
                 break
             allowed_test_mask = np.copy(allowed_test_mask_all)
             groups.append(cur_counter)
+            if cur_counter == 1 and best_program_id is None:
+                allowed_program_mask = np.any(ints, axis = 1) #reset program mask to allow same programs but for different allowed_test_mask_all
             cur_counter = 0
             # NOTE: at this point it makes sense to form coverage groups.
     if cur_counter > 0:
@@ -170,7 +175,7 @@ full_test_coverage_random_test_rand_program = partial(select_full_test_coverage,
 
 
 def front_evolve(gold_outputs, func_list, terminal_list, *,
-                    population_size = 1000, max_gens = 100, archive_size = 10,
+                    population_size = 1000, max_gens = 100, archive_size = 100,
                     fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
                     init_fn = init_each, map_fn = identity_map, breed_fn = partial(subtree_breed, breed_select_fn = full_coverage_selection),
                     eval_fn = gp_eval, analyze_pop_fn = analyze_population,

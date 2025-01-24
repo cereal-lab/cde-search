@@ -119,16 +119,23 @@ class BreedingStats():
         self.parent_child_relations = []
 
 def count_good_bad_children(parents: np.ndarray, children: np.ndarray):
+    parent_wins = np.sum(parents, axis = 1)
+    children_wins = np.sum(children, axis = 1)
+    comparison_result = parent_wins[:, np.newaxis] < children_wins[np.newaxis, :]
+    num_best_children = np.sum(np.all(comparison_result, axis = 0))
+    num_good_children = np.sum(np.any(comparison_result, axis = 0))
+
     domination_matrix = np.all(parents[:, None] <= parents, axis=2) & np.any(parents[:, None] < parents, axis=2)
     indexes = np.where(~np.any(domination_matrix, axis=1))[0]
     parents_front = parents[indexes]
     parent_vs_child_domination_of_child = np.all(parents_front[:, None] <= children, axis = 2) & np.any(parents_front[:, None] < children, axis = 2)
-    num_best_children = np.sum(np.all(parent_vs_child_domination_of_child, axis = 0))
+    num_dom_best_children = np.sum(np.all(parent_vs_child_domination_of_child, axis = 0))
     any_domination_of_child = np.any(parent_vs_child_domination_of_child, axis = 0)
-    num_good_children = np.sum(any_domination_of_child)
-    num_bad_children = np.sum(~any_domination_of_child)
-    num_dominated_parents = np.sum(np.any(parent_vs_child_domination_of_child, axis = 1))
-    return (num_best_children, num_good_children, num_bad_children, num_dominated_parents)
+    num_dom_good_children = np.sum(any_domination_of_child)
+    num_bad_children = np.sum(np.any(np.all(parents_front[:, None] >= children, axis = 2), axis = 0))
+    # num_dominated_parents = np.sum(np.any(parent_vs_child_domination_of_child, axis = 1))
+
+    return (num_best_children, num_good_children, num_dom_best_children, num_dom_good_children, num_bad_children)
 
 # parents = np.array([[0,0,1,1,0,1], [1,0,0,1,0,0], [0,1,0,0,0,0]])
 # children = np.array([[1,0,1,1,0,1], [0,0,0,0,0,0], [0,1,0,0,0,0], [1,1,1,1,1,1]])
@@ -532,21 +539,24 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
         collect_additional_stats(stats, population, outputs)
         total_best_ch = 0
         total_good_ch = 0 
+        total_best_dom_ch = 0
+        total_good_dom_ch = 0
         total_bad_ch = 0
-        total_dom_p = 0
         for parents, children in breeding_stats.parent_child_relations:
             parent_ints = np.array([ int_cache[n] for n in parents ])
             child_ints = np.array([ int_cache[n] for n in children ])
-            best_ch, good_ch, bad_ch, dom_p = count_good_bad_children(parent_ints, child_ints)
+            best_ch, good_ch, best_dom_ch, good_dom_ch, bad_ch = count_good_bad_children(parent_ints, child_ints)
             total_best_ch += best_ch
             total_good_ch += good_ch
+            total_best_dom_ch += best_dom_ch
+            total_good_dom_ch += good_dom_ch
             total_bad_ch += bad_ch
-            total_dom_p += dom_p
         # if total_good_ch > 0 or total_bad_ch > 0:
         stats.setdefault('best_children', []).append(total_best_ch)
         stats.setdefault('good_children', []).append(total_good_ch)
+        stats.setdefault('best_dom_children', []).append(total_best_dom_ch)
+        stats.setdefault('good_dom_children', []).append(total_good_dom_ch)
         stats.setdefault('bad_children', []).append(total_bad_ch)
-        stats.setdefault('dominated_parents', []).append(total_dom_p)
     if is_best:
         return population[best_index]
     return None
