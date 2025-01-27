@@ -138,7 +138,9 @@ def full_objectives(interactions):
 
 def doc_objectives(interactions):
     test_clusters, centers = xmean_cluster(interactions.T.tolist(), 4)
+    # derived_objectives = np.column_stack([np.mean(interactions[:, tc], axis = 1) for tc in test_clusters])
     derived_objectives = np.array(centers).T
+    # NOTE: centroid === to np.mean above.
     return derived_objectives, dict(test_clusters = test_clusters)
 
 def rand_objectives(interactions):
@@ -162,6 +164,11 @@ def dof_wh_objectives(interactions, k, alpha):
     W, H, _ = matrix_factorization(interactions, k)
     objs = np.sum(W[:, :, None] * H, axis = -1)
     return objs, {}
+
+# import numpy as np
+# W = np.array([[0.96, 1.51], [0.39, 1.84], [0.86, 0.38]])
+# H = np.array([[2.16, 1.2, 0.72, 0.72], [0.05, 0.35, 0.9, 0.9]])
+# np.sum(W[:, :, None] * H, axis = -1)
 
 def do_pca_abs_objectives(interactions, k):
     from sklearn.decomposition import PCA

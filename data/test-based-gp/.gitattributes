@@ -1,0 +1,5 @@
+all.jsonlist filter=lfs diff=lfs merge=lfs -text
+coevol.jsonlist filter=lfs diff=lfs merge=lfs -text
+front-cov.jsonlist filter=lfs diff=lfs merge=lfs -text
+nsga2.jsonlist filter=lfs diff=lfs merge=lfs -text
+tbgp.jsonlist filter=lfs diff=lfs merge=lfs -text
