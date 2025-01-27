@@ -1,6 +1,7 @@
 ''' Reimplements interaction game defined in games.py run_game in more functional way 
     Used in epxerimentation with test-based GP
 '''
+from collections import defaultdict
 from functools import partial
 import numpy as np
 from de import extract_dims_np, extract_dims_np_b
@@ -264,7 +265,155 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     selected_programs = [programs[i] for i in selected_ids]
     selected_tests = test_selection_strategy(tests, nondominant.group_interactions )
     return [selected_programs, selected_tests]
+
+def update_cand_underlying_objectives2(populations, interactions, test_selection_strategy = select_hardest_tests, *, stats, gold_outputs, nondominant: NondominantGroups):
+    """ See update_cand_underlying_objectives, applies CSE two times, one on original interactions, second on spanned points """
+    programs, tests = populations
+
+    selected_interactions = interactions[:, tests]
+
+    # if weighted_interractions:
+    #     # idea as in ifs - we count number of programs that solve tests
+    #     test_difficulty = np.sum(selected_interactions, axis=0)
+    #     solvable_tests_mask = test_difficulty > 0
+    #     if not(np.all(solvable_tests_mask)):
+    #         selected_interactions = selected_interactions[:, solvable_tests_mask]
+    #         test_difficulty = test_difficulty[solvable_tests_mask]
+    #     test_weight = 1.0 / test_difficulty # 0 --> many programs solve it, 1 --> one program solves it
+    #     selected_interactions = selected_interactions * test_weight
+
+    # TODO: handle case when all tests are difficult!!!
+
+    def filter_spanned_points(spanned_points, dim_points_coords):
+        filtered_spanned_points = {}
+        all_spanned_dims = set()
+        for span_coords, prog_ids in spanned_points.items():
+            span_dims = frozenset.intersection(span_coords, dim_points_coords)
+            if len(span_dims) == 0:
+                continue
+            filtered_spanned_points[span_coords] = prog_ids
+            all_spanned_dims.update(span_dims)
+        return filtered_spanned_points, all_spanned_dims
     
+    origin_zero = np.packbits(np.zeros_like(selected_interactions[0], dtype = bool))
+    packed_ints = np.packbits(selected_interactions.astype(bool), axis=1)
+    start_ms = time.process_time()
+    dims, origin, spanned_points = extract_dims_np_b(packed_ints, origin_outcomes=origin_zero) # program underlying objectives
+
+    dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
+    dim_points_coords = frozenset(dim_points.keys())
+
+    filtered_spanned_points, all_spanned_dims = filter_spanned_points(spanned_points, dim_points_coords)
+
+    filtered_dims = {k: v for k, v in dim_points.items() if k not in all_spanned_dims }
+
+    filtered_spanned_points_int_ids = [ v[0] for v in filtered_spanned_points.values() ]
+    filtered_spanned_points_ints = packed_ints[filtered_spanned_points_int_ids]
+    remap_coord = {v[0]: k for k, v in filtered_spanned_points.items()}
+    remap_group = {v[0]: v for k, v in filtered_spanned_points.items()}
+    dims2, _, spanned_points2 = extract_dims_np_b(filtered_spanned_points_ints, origin_outcomes=origin_zero) # program underlying objectives    
+
+    end_ms = time.process_time()
+    dims_time = end_ms - start_ms
+    stats.setdefault('dims_time', []).append(dims_time)    
+    
+    dim_points2 = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims2) }
+    dim_points_coords2 = frozenset(dim_points2.keys())
+
+    filtered_spanned_points2, all_spanned_dims2 = filter_spanned_points(spanned_points2, dim_points_coords2)
+
+    filtered_dims2 = {remap_coord[filtered_spanned_points_int_ids[v[0]]]:remap_group[filtered_spanned_points_int_ids[v[0]]] for k, v in dim_points2.items() if k not in all_spanned_dims2 }
+
+    spanned_points_remapped2 = {remap_coord[filtered_spanned_points_int_ids[v[0]]]:remap_group[filtered_spanned_points_int_ids[v[0]]] for k, v in filtered_spanned_points2.items()}
+
+    left_spanned_points = {**filtered_dims2, **spanned_points_remapped2}
+
+    stats.setdefault('dims', []).append(len(dims))
+    stats.setdefault('dims2', []).append(len(dims2))
+    stats.setdefault('spanned', []).append(len(filtered_spanned_points))
+    stats.setdefault('spanned2', []).append(len(filtered_spanned_points2))
+
+    preserved_points =  []
+    preserved_points_dims = [] 
+    
+    for coors, prog_ids in filtered_dims.items():
+        preserved_points.append(prog_ids)
+        preserved_points_dims.append(frozenset([coors]))
+
+    for coords, prog_ids in left_spanned_points.items():
+        preserved_points.append(prog_ids)
+        preserved_points_dims.append(coords)
+
+    excluded_breed_groups = defaultdict(set)
+
+    # spanned_groups = {}    
+    # preserved_points =  [prog_ids for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
+    # span_id_to_covered_dims = {}
+
+    # print(f"Extract dims time: {dims_time}")
+    # pass 
+    # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
+    # pass
+    # dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
+    # dim_points_coords = frozenset(dim_points.keys())
+    # spanned_groups = {}    
+    # preserved_points =  [prog_ids for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
+    # span_id_to_covered_dims = {}
+    # for span_coords, prog_ids in left_spanned_points.items():
+    #     preserved_points.append(prog_ids)
+        # span_id_to_covered_dims[span_id] = span_dims
+        # spanned_groups[span_id] = set(dim_id for (dim_id, _) in span_dims)
+    for point_id1 in range(len(preserved_points_dims)):
+        point_dims1 = preserved_points_dims[point_id1]
+        excluded_breed_groups[point_id1].add(point_id1)
+        for point_id2 in range(point_id1 + 1, len(preserved_points_dims)):
+            point_dims2 = preserved_points_dims[point_id2]
+            if not frozenset.isdisjoint(point_dims1, point_dims2):
+                excluded_breed_groups[point_id1].add(point_id2)
+                excluded_breed_groups[point_id2].add(point_id1)
+    # stats.setdefault('spanned', []).append(len(spanned_groups))
+    group_interactions = interactions[[p[0] for p in preserved_points]]
+    group_fitnesses = len(gold_outputs) - np.sum(group_interactions, axis=1)
+    selected_group_ids = set()
+    selected_group_ids_list = []
+    for test_id in range(len(gold_outputs)):
+        subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
+        filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
+        if len(filtered_subgroup_ids) == 0:
+            continue
+        selected_group_id = min(filtered_subgroup_ids, key = lambda x: group_fitnesses[x])
+        selected_group_ids.add(selected_group_id)
+        selected_group_ids_list.append(selected_group_id)
+
+    selected_groups = []
+    selected_group_remap = {}
+    for i in selected_group_ids_list:
+        pp = preserved_points[i]
+        selected_group_remap[i] = len(selected_groups)
+        selected_groups.append(pp)
+    selected_spanned_groups = {}
+    for group_id, excluded_groups in excluded_breed_groups.items():
+        if group_id in selected_group_ids:
+            new_excluded_groups = set(selected_group_remap[eg] for eg in excluded_groups if eg in selected_group_ids)
+            if len(new_excluded_groups) > 0:
+                selected_spanned_groups[selected_group_remap[group_id]] = new_excluded_groups
+
+    selected_ids = [i for p in selected_groups for i in p]
+    prog_id_remap = {old_id:new_id for new_id, old_id in enumerate(selected_ids)}
+    selected_groups_remapped = [[prog_id_remap[i] for i in p] for p in selected_groups]
+    # ind_groups = {prog_id: group_id for group_id, prog_ids in enumerate(preserved_points) for prog_id in prog_ids}
+
+    nondominant.groups = selected_groups_remapped
+    # nondominant.ind_groups = ind_groups
+    nondominant.spanned_groups = selected_spanned_groups
+    nondominant.selected_group_id = None
+    nondominant.group_interactions = group_interactions[selected_group_ids_list]
+    nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
+
+    selected_programs = [programs[i] for i in selected_ids]
+    selected_tests = test_selection_strategy(tests, nondominant.group_interactions )
+    return [selected_programs, selected_tests]
+
 def gp_coevolve2(gold_outputs, func_list, terminal_list,
                  population_sizes = [0, 0], max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = None,
@@ -287,8 +436,8 @@ def gp_coevolve2(gold_outputs, func_list, terminal_list,
     stats["best_found"] = best_ind is not None
     return best_ind, stats
 
-def update_cand_uo_builder(frac_or_size = 10):
-    return partial(update_cand_underlying_objectives, 
+def update_cand_uo_builder(frac_or_size = 10, main_fn = update_cand_underlying_objectives):
+    return partial(main_fn, 
                    test_selection_strategy = partial(select_hardest_tests, fraction = frac_or_size / 100.0, selection_size = frac_or_size))
 
 coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
@@ -303,12 +452,26 @@ coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
 coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
 
 
-coevol_sim_names = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+coevol_uo2_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_40 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(40, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90, main_fn=update_cand_underlying_objectives2))
+coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
+
+
+coevol_sim_names1 = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
+coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
 
 if __name__ == '__main__':
     import gp_benchmarks
     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = coevol_uo_100(gold_outputs, func_list, terminal_list)
+    best_prog, stats = coevol_uo2_40(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    
