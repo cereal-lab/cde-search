@@ -6,7 +6,7 @@
 #SBATCH --open-mode=append
 #SBATCH --array=0-269
 
-WORK=/data/dvitel/cde-search
+WORK=/data/dvitel/
 
 games=('do_rand:cmp6'
         'do_rand:cmp8'

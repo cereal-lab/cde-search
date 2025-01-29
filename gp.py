@@ -257,7 +257,7 @@ def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_c
     else:
         avail_f_num = fitnesses.shape[1]
         f_range = range(skip_first, avail_f_num - skip_last)
-        selected_fitnesses = fitnesses[selected_ids, f_range]
+        selected_fitnesses = fitnesses[selected_ids, :][:, f_range]
     best_id_id = fitness_comp_fn(selected_fitnesses)
     best_id = selected_ids[best_id_id]
     # best = population[best_id]
@@ -625,7 +625,7 @@ gp_sim_names = [ 'gp', 'ifs' ]
 if __name__ == '__main__':
     import gp_benchmarks
     game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('disc3')
-    best_prog, stats = gp(gold_outputs, func_list, terminal_list)
+    best_prog, stats = ifs(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    
