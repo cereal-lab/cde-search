@@ -245,24 +245,22 @@ def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn 
     return outputs, fitnesses, interactions
 
 def pick_min(selected_fitnesses):
-    best_id_id, best_fitness = min([(fid, tuple(ft)) for fid, ft in enumerate(selected_fitnesses)], key = lambda x: x[1])
+    best_id_id, best_fitness = min([(fid, (ft if len(selected_fitnesses.shape) == 1 else tuple(ft))) for fid, ft in enumerate(selected_fitnesses)], key = lambda x: x[1])
     return best_id_id
 
-def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7):
+def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, 
+                         skip_first = 0, skip_last = 1 ):
     ''' Select parents using tournament selection '''
     selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True)
-    selected_fitnesses = fitnesses[selected_ids]
+    if skip_first == 0 and skip_last == 0:
+        selected_fitnesses = fitnesses[selected_ids]
+    else:
+        avail_f_num = fitnesses.shape[1]
+        f_range = range(skip_first, avail_f_num - skip_last)
+        selected_fitnesses = fitnesses[selected_ids, f_range]
     best_id_id = fitness_comp_fn(selected_fitnesses)
     best_id = selected_ids[best_id_id]
     # best = population[best_id]
-    return best_id
-
-def tournament_selection_scalar(population: list[Any], fitnesses: np.ndarray, fitness_index = 0, fitness_comp_fn = pick_min, tournament_selection_size = 7):
-    ''' Select parents using tournament selection '''
-    selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True)
-    selected_fitnesses = fitnesses[selected_ids, fitness_index]
-    best_id_id = fitness_comp_fn(selected_fitnesses)
-    best_id = selected_ids[best_id_id]
     return best_id
 
 def random_selection(population: list[Any], fitnesses: np.ndarray):
@@ -626,8 +624,8 @@ gp_sim_names = [ 'gp', 'ifs' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = ifs(gold_outputs, func_list, terminal_list)
+    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('disc3')
+    best_prog, stats = gp(gold_outputs, func_list, terminal_list)
     print(best_prog)
     print(stats)
     pass    
