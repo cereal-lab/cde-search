@@ -6,6 +6,8 @@
 #SBATCH --open-mode=append
 #SBATCH --array=0-29
 
+WORK=/data/dvitel/cde-search
+
 games=('gp:cmp6'
         'gp:cmp8'
         'gp:maj6'
