@@ -285,7 +285,9 @@ def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn 
         int_size = new_interactions.shape[1]
         out_size = new_outputs.shape[1]
         for node, new_ints in zip(nodes_to_eval, new_interactions):
-            runtime_context.int_cache[node] = new_ints.numpy()
+            if torch.is_tensor(new_ints):
+                new_ints = new_ints.numpy()
+            runtime_context.int_cache[node] = new_ints
     else:
         node = nodes[0]
         int_size = len(runtime_context.int_cache[node])
@@ -814,8 +816,8 @@ gp_sim_names = [ 'gp', 'ifs', 'gp_0', 'ifs_0' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    problem_builder = gp_benchmarks.get_benchmark('koza_1')
-    best_prog, stats = gp_a(problem_builder)
+    problem_builder = gp_benchmarks.get_benchmark('cmp8')
+    best_prog, stats = gp(problem_builder)
     print(best_prog)
     print(stats)
     pass    
