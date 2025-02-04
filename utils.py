@@ -1,35 +1,57 @@
 
+from dataclasses import dataclass
 import fcntl
 from functools import partial
 import inspect
 import json
-import types
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 
-def f(x, y, z, *, d = 42):
-    return x + y + z + d
+@dataclass 
+class AnnotatedFunc:
+    func: Callable
+    name: Callable[[], str]
+    category: str #used for count constraints
+    context: Optional[Any] = None
+    def __call__(self, *args, **kwds):
+        return self.func(*args, **kwds)
 
-f1 = partial(f, z = 100, d = 43)
-f2 = partial(f1, z = 101)
-inspect.signature(f1)
-inspect.signature(f)
+# def f(x, y, z, *, d = 42):
+#     return x + y + z + d
 
-def create_named_function(name, func):
-    ''' Create a function with a specific __name__ at runtime. '''
-    func.__name__ = name
-    return func
-    # new_func = types.FunctionType(func.__code__, func.__globals__, name, func.__defaults__, func.__closure__)
-    # new_func.__dict__.update(func.__dict__)
-    # return new_func
+# f1 = partial(f, z = 100, d = 43)
+# f2 = partial(f1, z = 101)
+# inspect.signature(f1)
+# inspect.signature(f)
+
+def new_func(func, name = None, category = None, context = None):
+    return AnnotatedFunc(func = func, name = ((lambda : func.__name__) if name is None else (lambda : name)),
+                            category = category or func.__name__, context = context)
+
+def create_simple_func_builder(fn, category = None):
+    category = category or fn.__name__
+    builder = new_func((lambda **_: new_func(fn, category=category)), f"{fn.__name__}_builder", category=category)
+    return builder
+
+def create_free_vars(inputs, prefix = "x"):
+    free_var_fns = []
+    bindings = {}
+    for i in range(len(inputs)):
+        name = f"{prefix}{i}"
+        x = lambda name = name, free_vars = {}: free_vars[name]
+        x.__name__ = name
+        bindings[name] = inputs[i]
+        free_var_fns.append(x)
+    free_var_fn_builders = [create_simple_func_builder(t_fn) for t_fn in free_var_fns]
+    return free_var_fn_builders, bindings
 
 def bind_fn(kwargs, fn):
     ''' For a given callable fn, goes through its parameters and applies bindings from kwargs to parameters after *.
         If any of the parameters of fn is also callable, recursively applies bindings to it. '''
     signature = inspect.signature(fn)
     star_bindings = {param.name: kwargs[param.name] for param in signature.parameters.values() 
-                if param.kind == param.KEYWORD_ONLY and param.default is inspect.Parameter.empty and param.name in kwargs}
+                if param.kind == param.KEYWORD_ONLY and param.name in kwargs}
     for param in signature.parameters.values():
         if param.default is not inspect.Parameter.empty and callable(param.default): 
             new_default = bind_fn(kwargs, param.default)

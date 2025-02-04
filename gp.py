@@ -1,8 +1,11 @@
 ''' Module for classic genetic programming. '''
+from dataclasses import dataclass
 import inspect
 from functools import partial
-from itertools import product
-from typing import Any, Optional
+from itertools import chain, product
+from typing import Any, Callable, Optional
+
+import torch
 import utils
 
 import numpy as np
@@ -11,54 +14,23 @@ import utils
 
 class Node():
     ''' Node class for tree representation. Immutable!! '''
-    def __init__(self, func, args = []):
-        self.func = func # symbol to identify and also can be called 
+    def __init__(self, func_meta: utils.AnnotatedFunc, args = []):
+        self.func = func_meta.func # symbol to identify and also can be called 
+        self.func_meta = func_meta
         self.args = args # List of Nodes 
         self.str = None
         self.depth = None
         self.nodes = None # list of all nodes for direct access
-        self.signature = inspect.signature(func)
+        self.signature = inspect.signature(self.func)
         self.return_type = self.signature.return_annotation
-    def call(self, node_outcomes = {}): #*args, node_outcomes = {}, #**kwargs, node_bindings = {}, node_called: Optional[dict] = None, **kwargs):
-        ''' Executes Node tree, 
-            @param node_bindings - redirects execution to another subtree (actually getters!!!)
-            @param node_outcomes - map, allows to collect the outputs of all nodes into the dict if provided
-            @param node_executed - map, tracks loops if passed 
-        '''
-        # NOTE: WARN: be careful not to cache for different node_bindings!!!
-        if self in node_outcomes:
-            return node_outcomes[self]
-        # if node_called is not None :
-        #     if self in node_called: # this could happen only through binding or incorrect build of a tree
-        #         raise ValueError(f"Execution loop detected. Node {str(self)} was already executed") 
-        #     else:
-        #         node_called[self] = True
-        # if self in node_bindings and (other_self := node_bindings[self]()) is not None:
-        #     return other_self.call(*args, node_bindings = node_bindings, 
-        #                                     node_outcomes = node_outcomes, node_called = node_called, 
-        #                                     test_ids = test_ids, **kwargs)
-        node_args = []
-        for arg in self.args:
-            arg_outcomes = arg.call(node_outcomes = node_outcomes)            
-            # arg_outcomes = arg.call(*args, node_bindings = node_bindings, 
-            #                                 node_outcomes = node_outcomes, node_called = node_called, 
-            #                                 test_ids = test_ids, **kwargs)
-            node_args.append(arg_outcomes)
-        if len(node_args) == 0: # leaf 
-            # new_outcomes = self.func(*args, test_ids = test_ids, **kwargs)
-            new_outcomes = self.func()
-        else:
-            new_outcomes = self.func(*node_args) #, *args, **kwargs)
-        node_outcomes[self] = new_outcomes
-        return new_outcomes
 
     def __str__(self):
         if self.str is None:
             if len(self.args) == 0:
-                self.str = self.func.__name__
+                self.str = self.func_meta.name()
             else:
                 node_args = ", ".join(arg.__str__() for arg in self.args)
-                self.str = self.func.__name__ + "(" + node_args + ")"
+                self.str = self.func_meta.name() + "(" + node_args + ")"
         return self.str
     def __repr__(self):
         return self.__str__()
@@ -80,32 +52,98 @@ class Node():
         return self.nodes
     def get_node(self, i):
         nodes = self.get_nodes()
-        return nodes[i]
+        return nodes[i]        
 
-# TODO: make this comparison less strict
-# def have_compatible_types(func1, func2):
-#     sig1 = inspect.signature(func1)
-#     sig2 = inspect.signature(func2)
-    
-#     params1 = [(param.annotation, param.default) for param in sig1.parameters.values()]
-#     return1 = sig1.return_annotation
-#     params2 = [(param.annotation, param.default) for param in sig2.parameters.values()]
-#     return2 = sig2.return_annotation
-    
-#     return params1 == params2 and return1 == return2
-def simple_node_builder(func, args):
-    return Node(func, args)
+Outputs = list[Any] | np.ndarray | torch.Tensor
+Vectors = np.ndarray | torch.Tensor
 
-def cached_node_builder(func, args, save_stats = True, *, syntax_cache, node_builder, stats):
+@dataclass 
+class RuntimeContext:
+    stats: dict[str, Any]
+    int_cache: dict[Node, np.ndarray]
+    out_cache: dict[Node, Outputs]
+    counts_cache: dict[Node, dict[str, int]]
+    syntax_cache: dict[(Callable, list[Node]), Node]
+    parent_child_relations: list[tuple[list[Node], list[Node]]]
+    counts_constraints: Optional[dict[str, int]]
+    free_vars: dict[str, Any] #bindings of free variables
+    gold_outputs: Outputs
+    fitness_fns: list[Callable]
+    main_fitness_fn: Callable
+    select_fitness_ids: Optional[list[int]]
+    func_list: list[utils.AnnotatedFunc]
+    terminal_list: list[utils.AnnotatedFunc]
+    node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node]
+    tree_contexts: dict[Node, dict[str, Any]]
+    def update(self, **kwargs):        
+        for k, v in kwargs.items():
+            assert hasattr(self, k), f'Runtime context does not have property {k}'
+            setattr(self, k, v)
+
+def call(tree: Node, free_vars: dict[str, Outputs], node_outcomes: Optional[dict[Node, Outputs]] = None) -> Outputs: #*args, node_outcomes = {}, #**kwargs, node_bindings = {}, node_called: Optional[dict] = None, **kwargs):
+    ''' Executes Node tree, 
+        @param free_vars - free var bindings
+        @param node_outcomes - map, allows to collect the outputs of all nodes into the dict if provided
+        @param node_bindings - redirects execution to another subtree (actually getters!!!)
+        @param node_executed - map, tracks loops if passed 
+    '''
+    # NOTE: WARN: be careful not to cache for different node_bindings!!!
+    if node_outcomes is not None and tree in node_outcomes:
+        return node_outcomes[tree]
+    node_args = []
+    for arg in tree.args:
+        arg_outcomes = call(arg, free_vars, node_outcomes = node_outcomes)            
+        node_args.append(arg_outcomes)
+    if len(node_args) == 0: # leaf 
+        # new_outcomes = self.func.func(*args, test_ids = test_ids, **kwargs)
+        new_outcomes = tree.func(free_vars = free_vars)
+    else:
+        new_outcomes = tree.func(*node_args, free_vars = free_vars) #, *args, **kwargs)
+    if node_outcomes is not None:
+        node_outcomes[tree] = new_outcomes
+    return new_outcomes
+
+def get_func_counts(node: Node, counts_constraints: Optional[dict[str, int]], counts_cache: dict[Node, dict[str, int]]):
+    if counts_constraints is None:
+        return {}
+    if node not in counts_cache:
+        res = {}
+        for arg in node.args:
+            arg_counts = get_func_counts(arg, counts_constraints, counts_cache)
+            for k, v in arg_counts.items():
+                res[k] = res.get(k, 0) + v
+        if node.func_meta.category in counts_constraints:
+            res[node.func_meta.category] = res.get(node.func_meta.category, 0) + 1
+        counts_cache[node] = res
+    return counts_cache[node]
+
+def are_counts_constraints_satisfied(node: Node, counts_constraints: Optional[dict[str, int]], counts_cache: dict[Node, dict[str, int]]):
+    if counts_constraints is None:
+        return True 
+    node_counts = get_func_counts(node, counts_constraints, counts_cache)
+    return all(v >= node_counts.get(k, 0) for k, v in counts_constraints.items())
+
+def are_counts_constraints_satisfied_together(node1: Node, node2: Node, counts_constraints: Optional[dict[str, int]], counts_cache: dict[Node, dict[str, int]]):
+    if counts_constraints is None:
+        return True 
+    node_counts1 = get_func_counts(node1, counts_constraints, counts_cache)
+    node_counts2 = get_func_counts(node2, counts_constraints, counts_cache)
+    return all(v >= (node_counts1.get(k, 0) + node_counts2.get(k, 0)) for k, v in counts_constraints.items())
+
+def default_node_builder(func: utils.AnnotatedFunc, args, syntax_cache = {}, stats = {}):
     ''' Builds the node with node_builder, but first checks cache '''
     # NOTE: trees are always built from bottom to up, so we can use existing Node objects as key elements
-    key = (func.__name__, *args)
+    key = (func.func, *args)
     if key not in syntax_cache:
-        new_node = node_builder(func, args)
+        new_node = Node(func, args)
         syntax_cache[key] = new_node
-    else:
+    elif stats is not None:
         stats["syntax_cache_hits"] = stats.get("syntax_cache_hits", 0) + 1
     return syntax_cache[key]
+
+# def cached_node_builder_init(stats):
+#     syntax_cache = {}
+#     return dict(node_builder = partial(default_node_builder, syntax_cache = syntax_cache, stats = stats), syntax_cache = syntax_cache)
 
 # import numpy as np 
 
@@ -113,10 +151,6 @@ def cached_node_builder(func, args, save_stats = True, *, syntax_cache, node_bui
 # a2 = np.array([[1, 1, 1], [1, 0, 1], [0, 0, 0]])
 # np.all(a1[:, None] >= a2, axis = 2)
 # np.sum(np.any(np.all(a1[:, None] <= a2, axis = 2) & np.any(a1[:, None] < a2), axis = 0))
-
-class BreedingStats():
-    def __init__(self):
-        self.parent_child_relations = []
 
 def count_good_bad_children(parents: np.ndarray, children: np.ndarray):
     parent_wins = np.sum(parents, axis = 1)
@@ -159,7 +193,7 @@ def replace_syntax(node: Node, replacements: dict[Node, Node], *, node_builder):
     if node in replacements:
         return replacements[node]
     new_args = [replace_syntax(arg, replacements, node_builder = node_builder) for arg in node.args]
-    return node_builder(node.func, new_args)
+    return node_builder(node.func_meta, new_args)
 
 def replace_pos_syntax(node: Node, replacements: dict[int, Node], *, node_builder):
     new_replacements = {} 
@@ -183,7 +217,7 @@ def node_copy(node: Node, replacements: dict[int, Node], idx = 0, *, node_builde
         new_args.append(new_arg)    
     if res is None:
         if replaced:
-            res = node_builder(node.func, new_args)
+            res = node_builder(node.func_meta, new_args)
         else:
             res = node
     return new_idx, res, replaced
@@ -192,171 +226,270 @@ def replace_positions(node: Node, replacements: dict[int, Node], *, node_builder
     _, res, _ = node_copy(node, replacements, idx = 0, node_builder = node_builder)
     return res
     
-def test_based_interactions(gold_outputs: np.ndarray, program_outputs: np.ndarray):
+def test_based_interactions(gold_outputs: np.ndarray, program_outputs: np.ndarray) -> np.ndarray:
     return (program_outputs == gold_outputs).astype(int)
+
+def dist_test_based_interactions(gold_outputs: torch.Tensor, program_outputs: torch.Tensor) -> torch.Tensor:
+    return 1.0 / (1.0 + torch.abs(gold_outputs - program_outputs))
+    # Also use explonent and RELU - exponent goes to 0 faster
+
+def np_fitness_prep(fitness_list):
+    return np.array(fitness_list).T
+
+def torch_fitness_prep(fitness_list):
+    return torch.stack(fitness_list).t()
     
-def _compute_fitnesses(fitness_fns, interactions, population, gold_outputs, derived_objectives = [], derived_info = {}):
+def _compute_fitnesses(fitness_fns, interactions, outputs, population, gold_outputs, derived_objectives = [], derived_info = {}, fitness_prep = np_fitness_prep):
     fitness_list = []
     for fitness_fn in fitness_fns:
-        fitness = fitness_fn(interactions, population = population, gold_outputs = gold_outputs, 
+        fitness = fitness_fn(interactions, outputs, population = population, gold_outputs = gold_outputs, 
                                 derived_objectives = derived_objectives, **derived_info)
         fitness_list.append(fitness) 
-    fitnesses = np.array(fitness_list).T  
+    fitnesses = fitness_prep(fitness_list)
     return fitnesses   
 
-def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, *, out_cache, int_cache, gold_outputs, fitness_fns, stats):
+def default_eval_node(node: Node, free_vars, gold_outputs, out_cache: dict[Node, Any]) -> np.ndarray:
+    outputs = call(node, free_vars, node_outcomes=out_cache)
+    # if torch.is_tensor(outputs):
+    #     outputs = outputs.detach().numpy()
+    return outputs
+
+def np_output_prep(output_list):
+    return np.array(output_list)
+
+def torch_output_prep(output_list):
+    return torch.stack(output_list)
+
+def gp_eval(nodes: list[Node], int_fn = test_based_interactions, derive_objs_fn = None, save_stats = True, 
+            eval_node = default_eval_node, output_prep = np_output_prep, fitness_prep = np_fitness_prep, *, runtime_context: RuntimeContext):
     ''' Cached node evaluator '''
     # NOTE: derived objectives does not work with cache as they are computed on per given group of nodes
     if len(nodes) == 0:
         raise ValueError("Empty population")
-    node_ids_to_eval = [node_id for node_id, node in enumerate(nodes) if node not in int_cache]
+    node_ids_to_eval = [node_id for node_id, node in enumerate(nodes) if node not in runtime_context.int_cache]
     int_size = 0
     out_size = 0
     if save_stats:
-        stats.setdefault("num_eval_nodes", []).append(len(nodes))
-        stats.setdefault("num_active_evals", []).append(len(node_ids_to_eval))
-        stats.setdefault("eval_cache_hits", []).append(len(nodes) - len(node_ids_to_eval))
+        runtime_context.stats.setdefault("num_eval_nodes", []).append(len(nodes))
+        runtime_context.stats.setdefault("num_active_evals", []).append(len(node_ids_to_eval))
+        runtime_context.stats.setdefault("eval_cache_hits", []).append(len(nodes) - len(node_ids_to_eval))
     if len(node_ids_to_eval) > 0:
         nodes_to_eval = [nodes[node_id] for node_id in node_ids_to_eval]
-        new_outputs = np.array([node.call(node_outcomes=out_cache) for node in nodes_to_eval ])
-        new_interactions = int_fn(gold_outputs, new_outputs)
+        new_outputs = []
+        for node in nodes_to_eval:
+            node_outputs = eval_node(node, runtime_context.free_vars, runtime_context.gold_outputs, runtime_context.out_cache)
+            new_outputs.append(node_outputs)
+        new_outputs = output_prep(new_outputs)
+        new_interactions = int_fn(runtime_context.gold_outputs, new_outputs)
         # fit_size = new_fitnesses.shape[1]
         int_size = new_interactions.shape[1]
         out_size = new_outputs.shape[1]
         for node, new_ints in zip(nodes_to_eval, new_interactions):
-            int_cache[node] = new_ints
+            runtime_context.int_cache[node] = new_ints.numpy()
     else:
         node = nodes[0]
-        int_size = len(int_cache[node])
-        out_size = len(out_cache[node])
+        int_size = len(runtime_context.int_cache[node])
+        out_size = len(runtime_context.out_cache[node])
     interactions = np.zeros((len(nodes), int_size), dtype = float)
     outputs = np.zeros((len(nodes), out_size), dtype = float)
     for node_id, node in enumerate(nodes):
-        interactions[node_id] = int_cache[node]
-        outputs[node_id] = out_cache[node]
+        interactions[node_id] = runtime_context.int_cache[node]
+        outputs[node_id] = runtime_context.out_cache[node]
     if derive_objs_fn is not None:
         derived_objectives, derived_info = derive_objs_fn(interactions)
     else:
         derived_objectives = None
         derived_info = {}        
-    fitnesses = _compute_fitnesses(fitness_fns, interactions, nodes, gold_outputs, derived_objectives, derived_info)
+    fitnesses = _compute_fitnesses(runtime_context.fitness_fns, interactions, outputs, 
+                                   nodes, runtime_context.gold_outputs, derived_objectives, derived_info, fitness_prep = fitness_prep)
     if derived_objectives is not None:
         return outputs, fitnesses, interactions, derived_objectives
     return outputs, fitnesses, interactions
 
-def pick_min(selected_fitnesses):
+def pick_min(selected_fitnesses: np.ndarray):
     best_id_id, best_fitness = min([(fid, (ft if len(selected_fitnesses.shape) == 1 else tuple(ft))) for fid, ft in enumerate(selected_fitnesses)], key = lambda x: x[1])
     return best_id_id
 
-def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, 
-                         skip_first = 0, skip_last = 1 ):
+def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
     ''' Select parents using tournament selection '''
     selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True)
-    if skip_first == 0 and skip_last == 0:
-        selected_fitnesses = fitnesses[selected_ids]
-    else:
-        avail_f_num = fitnesses.shape[1]
-        f_range = range(skip_first, avail_f_num - skip_last)
-        selected_fitnesses = fitnesses[selected_ids, :][:, f_range]
+    selected_fitnesses = fitnesses[selected_ids]
     best_id_id = fitness_comp_fn(selected_fitnesses)
     best_id = selected_ids[best_id_id]
     # best = population[best_id]
     return best_id
 
-def random_selection(population: list[Any], fitnesses: np.ndarray):
+def random_selection(population: list[Any], fitnesses: np.ndarray, *, runtime_context: RuntimeContext):
     ''' Select parents using random selection '''
     rand_id = default_rnd.choice(len(population))
     # selected = population[rand_id]
     return rand_id
 
-def grow(grow_depth = 5, grow_leaf_prob = None, *, func_list, terminal_list, node_builder):
+def grow(grow_depth = 5, grow_leaf_prob: Optional[float] = None, *, 
+         counts_constraints: Optional[dict[str, int]] = None, 
+         func_list: list[utils.AnnotatedFunc], terminal_list: list[utils.AnnotatedFunc], 
+         node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node]) -> Optional[Node]:
     ''' Grow a tree with a given depth '''
-    if grow_depth == 0:
-        terminal_index = default_rnd.choice(len(terminal_list))
-        terminal = terminal_list[terminal_index]
-        return node_builder(terminal, [])
+    if counts_constraints is None:
+        allowed_funcs = func_list
+        allowed_terminals = terminal_list
     else:
-        if grow_leaf_prob is None:
-            func_index = default_rnd.choice(len(func_list + terminal_list))
-            func = func_list[func_index] if func_index < len(func_list) else terminal_list[func_index - len(func_list)]
-        else:
-            if default_rnd.rand() < grow_leaf_prob:
-                terminal_index = default_rnd.choice(len(terminal_list))
-                func = terminal_list[terminal_index]
+        allowed_funcs = [f for f in func_list if (f.category not in counts_constraints) or (counts_constraints[f.category] > 0)]
+        allowed_terminals = [t for t in terminal_list if (t.category not in counts_constraints) or (counts_constraints[t.category] > 0)]
+    args = []
+    if (grow_depth == 0) or len(allowed_funcs) == 0:
+        if len(allowed_terminals) == 0:
+            return None 
+        terminal_index = default_rnd.choice(len(allowed_terminals))
+        func_builder = allowed_terminals[terminal_index]
+        func = func_builder()
+        if counts_constraints is not None and func_builder.category in counts_constraints:
+            counts_constraints[func_builder.category] -= 1        
+    else:
+        disallowed_symbols = set() #already attempted with None results
+        while True: # backtrack in case if counts_constraints were noto satisfied - attempting other symbol - or return none
+            allowed_funcs = [f for f in allowed_funcs if f.category not in disallowed_symbols]
+            allowed_terminals = [t for t in allowed_terminals if t.category not in disallowed_symbols]
+            if len(allowed_funcs) == 0 and len(allowed_terminals) == 0:
+                return None
+            if grow_leaf_prob is None:
+                func_index = default_rnd.choice(len(allowed_funcs) + len(allowed_terminals))
+                func_builder = allowed_funcs[func_index] if func_index < len(allowed_funcs) else allowed_terminals[func_index - len(allowed_funcs)]
+            elif (len(allowed_terminals) > 0) and (default_rnd.rand() < grow_leaf_prob):
+                terminal_index = default_rnd.choice(len(allowed_terminals))
+                func_builder = allowed_terminals[terminal_index]
             else:
-                func_index = default_rnd.choice(len(func_list))
-                func = func_list[func_index]
-        args = []
-        for _, p in inspect.signature(func).parameters.items():
-            if p.default is not inspect.Parameter.empty:
-                continue
-            node = grow(grow_depth = grow_depth - 1, grow_leaf_prob = grow_leaf_prob, 
-                        func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
-            args.append(node)
-        return node_builder(func, args)
+                func_index = default_rnd.choice(len(allowed_funcs))
+                func_builder = allowed_funcs[func_index]
+            new_counts_constraints = None if counts_constraints is None else dict(counts_constraints)
+            if new_counts_constraints is not None and func_builder.category in new_counts_constraints:
+                new_counts_constraints[func_builder.category] -= 1            
+            func = func_builder()
+            for _, p in inspect.signature(func.func).parameters.items():
+                if p.default is not inspect.Parameter.empty or p.kind == p.KEYWORD_ONLY or p.kind == p.VAR_KEYWORD:
+                    continue
+                node = grow(grow_depth = grow_depth - 1, grow_leaf_prob = grow_leaf_prob, counts_constraints = new_counts_constraints,
+                            func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
+                args.append(node)
+                if node is None:
+                    break
+            if len(args) > 0 and args[-1] is None:
+                disallowed_symbols.add(func_builder.category)
+                continue 
+            if counts_constraints is not None:
+                counts_constraints.update(new_counts_constraints)
+            break
+    return node_builder(func, args)
 
-def full(full_depth = 5, *, func_list, terminal_list, node_builder):
+def full(full_depth = 5, *, 
+         counts_constraints: Optional[dict[str, int]] = None, 
+         func_list: list[utils.AnnotatedFunc], terminal_list: list[utils.AnnotatedFunc], 
+         node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node]) -> Optional[Node]:
     ''' Grow a tree with a given depth '''
-    if full_depth == 0:
-        terminal_id = default_rnd.choice(len(terminal_list))
-        terminal = terminal_list[terminal_id]
-        return node_builder(terminal, [])
+    if counts_constraints is None:
+        allowed_funcs = func_list
+        allowed_terminals = terminal_list
     else:
-        func_id = default_rnd.choice(len(func_list))
-        func = func_list[func_id]
-        args = []
-        for _, p in inspect.signature(func).parameters.items():
-            if p.default is not inspect.Parameter.empty:
-                continue
-            node = full(full_depth=full_depth - 1, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
-            args.append(node)
-        return node_builder(func, args)
+        allowed_funcs = [f for f in func_list if (f.category not in counts_constraints) or (counts_constraints[f.category] > 0)]
+        allowed_terminals = [t for t in terminal_list if (t.category not in counts_constraints) or (counts_constraints[t.category] > 0)]    
+    args = []
+    if full_depth == 0 or len(allowed_funcs) == 0:
+        if len(allowed_terminals) == 0:
+            return None         
+        terminal_id = default_rnd.choice(len(allowed_terminals))
+        func_builder = terminal_list[terminal_id]
+        func = func_builder()
+        if counts_constraints is not None and func_builder.category in counts_constraints:
+            counts_constraints[func_builder.category] -= 1          
+    else:
+        disallowed_symbols = set() #already attempted with None results
+        while True: # backtrack in case if counts_constraints were noto satisfied - attempting other symbol - or return none
+            allowed_funcs = [f for f in allowed_funcs if f.category not in disallowed_symbols]
+            if len(allowed_funcs) == 0:
+                return None
+            func_id = default_rnd.choice(len(allowed_funcs))
+            func_builder = func_list[func_id]
+            new_counts_constraints = None if counts_constraints is None else dict(counts_constraints)
+            if new_counts_constraints is not None and func_builder.category in new_counts_constraints:
+                new_counts_constraints[func_builder.category] -= 1
+            func = func_builder()
+            for _, p in inspect.signature(func.func).parameters.items():
+                if p.default is not inspect.Parameter.empty or p.kind == p.KEYWORD_ONLY or p.kind == p.VAR_KEYWORD:
+                    continue
+                node = full(full_depth=full_depth - 1, counts_constraints = new_counts_constraints, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
+                args.append(node)
+                if node is None:
+                    break 
+            if len(args) > 0 and args[-1] is None:
+                disallowed_symbols.add(func)
+                continue  
+            if counts_constraints is not None:
+                counts_constraints.update(new_counts_constraints)       
+            break  
+    return node_builder(func, args)
 
-def ramped_half_and_half(rhh_min_depth = 1, rhh_max_depth = 5, rhh_grow_prob = 0.5, *, func_list, terminal_list, node_builder):
+def ramped_half_and_half(rhh_min_depth = 1, rhh_max_depth = 5, rhh_grow_prob = 0.5, *, 
+         counts_constraints: Optional[dict[str, int]] = None, 
+         func_list: list[utils.AnnotatedFunc], terminal_list: list[utils.AnnotatedFunc], 
+         node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node]) -> Optional[Node]:                         
     ''' Generate a population of half full and half grow trees '''
     depth = default_rnd.randint(rhh_min_depth, rhh_max_depth+1)
     if default_rnd.rand() < rhh_grow_prob:
-        return grow(grow_depth = depth, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
+        return grow(grow_depth = depth, counts_constraints = counts_constraints, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
     else:
-        return full(full_depth = depth, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
+        return full(full_depth = depth, counts_constraints = counts_constraints, func_list = func_list, terminal_list = terminal_list, node_builder = node_builder)
     
-def init_each(size, init_fn = ramped_half_and_half):
-    return [init_fn() for _ in range(size)]    
-    
-def init_all(size, depth = 3, *, func_list, terminal_list, node_builder):
+def init_each(size: int, init_fn = ramped_half_and_half, *, runtime_context: RuntimeContext):
+    res = []
+    for _ in range(size):
+        node = init_fn(counts_constraints = (None if runtime_context.counts_constraints is None else dict(runtime_context.counts_constraints)), 
+                    func_list = runtime_context.func_list, 
+                    terminal_list = runtime_context.terminal_list,
+                    node_builder = runtime_context.node_builder)
+        if node is not None:
+            res.append(node)
+    return res
+
+def init_all(size: int, depth = 3, *, runtime_context: RuntimeContext):
     ''' Generate all possible trees till given depth 
         Very expensive for large depth
     '''    
+    # counts_constraints = None, counts_cache, func_list, terminal_list, node_builder
     zero_depth = []
-    for terminal in terminal_list:
-        zero_depth.append(node_builder(terminal, []))
-        size -= 1
-        if size <= 0:
-            return zero_depth
+    for terminal_builder in runtime_context.terminal_list:
+        node = runtime_context.node_builder(terminal_builder(), [])
+        if are_counts_constraints_satisfied(node, runtime_context.counts_constraints, runtime_context.counts_cache):
+            zero_depth.append(node)
+            size -= 1
+            if size <= 0:
+                return [x for x, _ in zero_depth]
     trees_by_depth = [zero_depth]
     for _ in range(1, depth + 1):
         depth_trees = []
-        for func in func_list:
+        for func_builder in runtime_context.func_list:
             args = []
-            for _, p in inspect.signature(func).parameters.items():
-                if p.default is not inspect.Parameter.empty:
+            func = func_builder()
+            for _, p in inspect.signature(func.func).parameters.items():
+                if p.default is not inspect.Parameter.empty or p.kind == p.KEYWORD_ONLY or p.kind == p.VAR_KEYWORD:
                     continue
                 args.append(trees_by_depth[-1])
             for a in product(*args):
-                depth_trees.append(node_builder(func, a))
-                size -= 1
-                if size <= 0:
-                    trees_by_depth.append(depth_trees)
-                    return [t for trees in trees_by_depth for t in trees]
+                node = runtime_context.node_builder(func, a)
+                if are_counts_constraints_satisfied(node, runtime_context.counts_constraints, runtime_context.counts_cache):
+                    depth_trees.append(node)
+                    size -= 1
+                    if size <= 0:
+                        trees_by_depth.append(depth_trees)
+                        return [t for trees in trees_by_depth for t, _ in trees]
         trees_by_depth.append(depth_trees)
-    all_trees = [t for trees in trees_by_depth for t in trees]
+    all_trees = [t for trees in trees_by_depth for t, _ in trees]
     return all_trees
     
 def _select_node_id(in_node: Node, filter, select_node_leaf_prob = None) -> Optional[Node]:
     if select_node_leaf_prob is None: 
-        places = [i for i, (at_d, n) in enumerate(in_node.get_nodes()) if filter(at_d, n) ]
+        places = [(n, i, at_d) for i, (at_d, n) in enumerate(in_node.get_nodes()) if filter(at_d, n) ]
         if len(places) == 0:
-            return None 
+            return None, None, None
         selected_idx = default_rnd.choice(len(places))
         selected = places[selected_idx]
     else:
@@ -365,11 +498,11 @@ def _select_node_id(in_node: Node, filter, select_node_leaf_prob = None) -> Opti
         for i, (at_d, n) in enumerate(in_node.get_nodes()):
             if filter(at_d, n):
                 if n.is_leaf():
-                    leaves.append(i)
+                    leaves.append((n, i, at_d))
                 else:
-                    nonleaves.append(i)
+                    nonleaves.append((n, i, at_d))
         if len(nonleaves) == 0 and len(leaves) == 0:
-            return None
+            return None, None, None
         if (default_rnd.rand() < select_node_leaf_prob and len(leaves) > 0) or len(nonleaves) == 0:
             selected_idx = default_rnd.choice(len(leaves))
             selected = leaves[selected_idx]
@@ -378,25 +511,36 @@ def _select_node_id(in_node: Node, filter, select_node_leaf_prob = None) -> Opti
             selected = nonleaves[selected_idx]
     return selected
 
-def subtree_mutation(node, select_node_leaf_prob = 0.1, tree_max_depth = 17, repl_fn = replace_positions, 
-                     *, func_list, terminal_list, node_builder):
-    new_node = grow(grow_depth = 5, func_list = func_list, terminal_list = terminal_list, 
-                    grow_leaf_prob = None, node_builder = node_builder)
-    new_node_depth = new_node.get_depth()
+# NOTE: first we do select and then gen muation tree
+# TODO: later add to grow and full type constraints on return type
+# IDEA: dropout in GP, frozen tree positions which cannot be mutated or crossovered - for later
+def subtree_mutation(node, select_node_leaf_prob = 0.1, tree_max_depth = 17, repl_fn = replace_positions, *, runtime_context: RuntimeContext):
+    position, position_id, position_depth = _select_node_id(node, lambda d, n: True, select_node_leaf_prob = select_node_leaf_prob)
+    if position is None:
+        return node    
+    position_func_counts = get_func_counts(position, runtime_context.counts_constraints, runtime_context.counts_cache)
+    grow_depth = min(5, tree_max_depth - position_depth)
+    if runtime_context.counts_constraints is None:
+        grow_counts_constraints = None
+    else:
+        grow_counts_constraints = {}
+        for k, v in runtime_context.counts_constraints.items():
+            grow_counts_constraints[k] = v - position_func_counts.get(k, 0)
+    new_node = grow(grow_depth = grow_depth, func_list = runtime_context.func_list, terminal_list = runtime_context.terminal_list, 
+                    counts_constraints = grow_counts_constraints, grow_leaf_prob = None, node_builder = runtime_context.node_builder)
+    # new_node_depth = new_node.get_depth()
     # at_depth, at_node = select_node(leaf_prob, node, lambda d, n: (d > 0) and n.is_of_type(new_node), 
     #                                     lambda d, n: (d + new_node_depth) <= max_depth)
-    node_id = _select_node_id(node, lambda d, n: n.is_of_type(new_node) and ((d + new_node_depth) <= tree_max_depth),
-                                        select_node_leaf_prob = select_node_leaf_prob)
-    if node_id is None:
+    if new_node is None:
         return node
-    res = repl_fn(node, {node_id: new_node}, node_builder = node_builder)
+    res = repl_fn(node, {position_id: new_node}, node_builder = runtime_context.node_builder)
     return res
 
 def no_mutation(node):
     return node
-    
+        
 def subtree_crossover(parent1: Node, parent2: Node, select_node_leaf_prob = 0.1, tree_max_depth = 17, 
-                      repl_fn = replace_positions, *, node_builder):
+                      repl_fn = replace_positions, *, runtime_context: RuntimeContext):
     ''' Crossover two trees '''
     # NOTE: we can crossover root nodes
     # if parent1.get_depth() == 0 or parent2.get_depth() == 0:
@@ -404,13 +548,14 @@ def subtree_crossover(parent1: Node, parent2: Node, select_node_leaf_prob = 0.1,
     parent1, parent2 = sorted([parent1, parent2], key = lambda x: x.get_depth())
     # for _ in range(3):
     # at1_at_depth, at1 = select_node(leaf_prob, parent1, lambda d, n: (d > 0), lambda d, n: True)
-    at1_id = _select_node_id(parent1, lambda d, n: True, select_node_leaf_prob=select_node_leaf_prob)
+    at1, at1_id, at1_at_depth = _select_node_id(parent1, lambda d, n: True, select_node_leaf_prob=select_node_leaf_prob)
     if at1_id is None:
         return parent1, parent2
-    at1_at_depth, at1 = parent1.get_node(at1_id)
+    # at1_at_depth, at1 = parent1.get_node(at1_id)
     at1_depth = at1.get_depth()
-    at2_id = _select_node_id(parent2, 
-                        lambda d, n: n.is_of_type(at1) and at1.is_of_type(n) and ((n.get_depth() + at1_at_depth) <= tree_max_depth) and (at1_at_depth > 0 or d > 0) and ((d + at1_depth) <= tree_max_depth), 
+    at2, at2_id, at2_at_depth = _select_node_id(parent2, 
+                        lambda d, n: n.is_of_type(at1) and at1.is_of_type(n) and ((n.get_depth() + at1_at_depth) <= tree_max_depth) and (at1_at_depth > 0 or d > 0) and ((d + at1_depth) <= tree_max_depth) \
+                                            and are_counts_constraints_satisfied_together(n, at1, runtime_context.counts_constraints, runtime_context.counts_cache), 
                         select_node_leaf_prob=select_node_leaf_prob)
     # at2_depth, at2
     # at2_depth, at2 = select_node(leaf_prob, parent2, 
@@ -421,47 +566,63 @@ def subtree_crossover(parent1: Node, parent2: Node, select_node_leaf_prob = 0.1,
         # continue # try another pos
         return parent1, parent2 
         # return parent1, parent2
-    at2_at_depth, at2 = parent2.get_node(at2_id)
-    child1 = repl_fn(parent1, {at1_id: at2}, node_builder = node_builder)
-    child2 = repl_fn(parent2, {at2_id: at1}, node_builder = node_builder)
+    child1 = repl_fn(parent1, {at1_id: at2}, node_builder = runtime_context.node_builder)
+    child2 = repl_fn(parent2, {at2_id: at1}, node_builder = runtime_context.node_builder)
     return child1, child2       
 
 def subtree_breed(size, population, fitnesses,
                     breed_select_fn = tournament_selection, mutation_fn = subtree_mutation, crossover_fn = subtree_crossover,
-                    mutation_rate = 0.1, crossover_rate = 0.9, *, breeding_stats: BreedingStats):
+                    mutation_rate = 0.1, crossover_rate = 0.9, *, runtime_context: RuntimeContext):
     new_population = []
-    breeding_stats.parent_child_relations = []
+    runtime_context.parent_child_relations = []
+    if runtime_context.select_fitness_ids is not None and fitnesses is not None:
+        fitnesses = fitnesses[:, runtime_context.select_fitness_ids]
     while len(new_population) < size:
         # Select parents for the next generation
-        parent1_id = breed_select_fn(population, fitnesses)
-        parent2_id = breed_select_fn(population, fitnesses)
+        parent1_id = breed_select_fn(population, fitnesses, runtime_context = runtime_context)
+        parent2_id = breed_select_fn(population, fitnesses, runtime_context = runtime_context)
         parent1 = population[parent1_id]
         parent2 = population[parent2_id]
         if default_rnd.rand() < mutation_rate:
-            child1 = mutation_fn(parent1)
+            child1 = mutation_fn(parent1, runtime_context = runtime_context)
         else:
             child1 = parent1
         if default_rnd.rand() < mutation_rate:
-            child2 = mutation_fn(parent2)
+            child2 = mutation_fn(parent2, runtime_context = runtime_context)
         else:
             child2 = parent2
         if default_rnd.rand() < crossover_rate:
-            child1, child2 = crossover_fn(child1, child2)   
-        breeding_stats.parent_child_relations.append(([parent1, parent2], [child1, child2]))
+            child1, child2 = crossover_fn(child1, child2, runtime_context = runtime_context)   
+        runtime_context.parent_child_relations.append(([parent1, parent2], [child1, child2]))
         new_population.extend([child1, child2])
     return new_population
     
-def depth_fitness(interactions, population = [], **_):
+def depth_fitness(interactions, outputs, population = [], **_):
     return [p.get_depth() for p in population]
 
-def hamming_distance_fitness(interactions, **_):
+def hamming_distance_fitness(interactions, outputs, **_):
     return np.sum(1 - interactions, axis = 1)
 
-def ifs_fitness(interactions, **_):
+from torch.nn.functional import mse_loss
+def mse_fitness(interaction, outputs, *, gold_outputs, **_):
+    losses = []
+    for output in outputs:
+        loss = mse_loss(torch.tensor(output), gold_outputs)
+        losses.append(loss.item())
+    res =  np.array(losses)
+    res[np.isnan(res)] = np.inf
+    return res
+
+def ifs_fitness(interactions, outputs, **_):
     counts = (np.sum(interactions, axis = 0) * interactions).astype(float)
     counts[counts > 0] = 1.0 / counts[counts > 0]
     ifs = np.sum(counts, axis=1)
     return -ifs
+
+# TODO: age fitness: group of fitness functions 
+# aging could be simulated differently 
+# most interesting case for us is aging of semantics with number of attempted breedings in coevol
+# default aging could consider only syntactic tree and number of  generations it exists in lexicographic tournament selection
 
 # def ifs_fitness_fn(interactions, **kwargs):
 #     counts = np.sum((interactions[:, None] == interactions) & (interactions == 1), axis = 0).astype(float)
@@ -489,7 +650,7 @@ def ifs_fitness(interactions, **_):
 
 # ifs_fitness(0, np.array([[1, 0, 1, 1], [0, 1, 0, 1], [1, 1, 1, 1], [0, 1, 1, 1]]))
 
-def collect_additional_stats(stats, nodes: list[Node], outputs):
+def collect_additional_stats(stats: dict[str, Any], nodes: list[Node], outputs):
     syntax_counts = {}
     sem_counts = {}
     sem_repr_counts = {}
@@ -519,19 +680,28 @@ def collect_additional_stats(stats, nodes: list[Node], outputs):
     num_uniq_sems = len(sem_counts)
     stats.setdefault('num_uniq_sems', []).append(num_uniq_sems)
 
-def analyze_population(population, outputs, fitnesses, save_stats = True, *, stats, fitness_fns, main_fitness_fn, int_cache, breeding_stats: BreedingStats, **_):
+def exact_best(fitness_value):
+    return fitness_value == 0
+
+def approx_best(fitness_value, epsilon = 1e-6):
+    return fitness_value < epsilon
+
+def analyze_population(population, outputs, fitnesses, save_stats = True, best_cond = exact_best, *, runtime_context: RuntimeContext, **_):
     ''' Get the best program in the population '''
+    stats = runtime_context.stats
     fitness_order = np.lexsort(fitnesses.T[::-1])
     best_index = fitness_order[0]
     best_fitness = fitnesses[best_index]
     best = population[best_index]
     stats['best'] = str(best)
     is_best = False 
-    if main_fitness_fn is None and len(fitness_fns) > 0:
-        main_fitness_fn = fitness_fns[0]
-    for fitness_idx, fitness_fn in enumerate(fitness_fns):
+    if (runtime_context.main_fitness_fn is None) and (len(runtime_context.fitness_fns) > 0):
+        main_fitness_fn = runtime_context.fitness_fns[0]
+    else:
+        main_fitness_fn = runtime_context.main_fitness_fn
+    for fitness_idx, fitness_fn in enumerate(runtime_context.fitness_fns):
         if fitness_fn == main_fitness_fn:
-            is_best = best_fitness[fitness_idx] == 0
+            is_best = best_cond(best_fitness[fitness_idx])
         stats.setdefault(fitness_fn.__name__, []).append(best_fitness[fitness_idx])
     if save_stats:
         collect_additional_stats(stats, population, outputs)
@@ -540,9 +710,9 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
         total_best_dom_ch = 0
         total_good_dom_ch = 0
         total_bad_ch = 0
-        for parents, children in breeding_stats.parent_child_relations:
-            parent_ints = np.array([ int_cache[n] for n in parents ])
-            child_ints = np.array([ int_cache[n] for n in children ])
+        for parents, children in runtime_context.parent_child_relations:
+            parent_ints = np.array([ runtime_context.int_cache[n] for n in parents ])
+            child_ints = np.array([ runtime_context.int_cache[n] for n in children ])
             best_ch, good_ch, best_dom_ch, good_dom_ch, bad_ch = count_good_bad_children(parent_ints, child_ints)
             total_best_ch += best_ch
             total_good_ch += good_ch
@@ -559,10 +729,10 @@ def analyze_population(population, outputs, fitnesses, save_stats = True, *, sta
         return population[best_index]
     return None
 
-def identity_map(population):
+def identity_map(population, **_):
     return population
 
-def syntax_dedupl_map(population):
+def syntax_dedupl_map(population, **_):
     ''' Removes syntactic duplicates '''
     pop_set = {n: True for n in population}
     new_population = list(pop_set.keys())
@@ -576,13 +746,29 @@ def evol_loop(population_size, max_gens, init_fn, map_fn, breed_fn, eval_fn, ana
     while gen < max_gens:
         population = map_fn(population)
         outputs, fitnesses, *_ = eval_fn(population)
-        best_ind = analyze_pop_fn(population, outputs, fitnesses) 
+        best_ind = analyze_pop_fn(population, outputs, fitnesses)
         if best_ind is not None:
             break        
         population = breed_fn(population_size, population, fitnesses)  
         gen += 1
     
     return best_ind, gen
+
+def create_runtime_context(fitness_fns, main_fitness_fn = None, select_fitness_ids = None, context_class = RuntimeContext, **kwargs):
+    stats = {}
+    syntax_cache = {}
+    node_builder = partial(default_node_builder, syntax_cache = syntax_cache, stats = stats)
+    runtime_context = context_class(stats = stats, int_cache = {}, out_cache = {}, 
+                                         counts_cache = {}, syntax_cache = syntax_cache, parent_child_relations = [],                                         
+                                         fitness_fns=fitness_fns, main_fitness_fn = main_fitness_fn,
+                                         select_fitness_ids = select_fitness_ids, node_builder = node_builder,
+                                         tree_contexts={},
+                                         # next set by problem
+                                         free_vars={}, gold_outputs=[], counts_constraints=None, 
+                                         func_list=[], terminal_list=[], **kwargs)
+    return runtime_context
+
+
 
 # NOTE: fitness function should not have any shared structure bound, but given by eval_fn method
 #       it means, that there is no binding of these structures at pipeline design time
@@ -598,34 +784,38 @@ def evol_loop(population_size, max_gens, init_fn, map_fn, breed_fn, eval_fn, ana
 #           stats (dictionary for statistics)
 # NOTE: binding happens by name of these parameters in funcs and after *!
 # Any other parameters should be bound explicitly or defaults should be used
-def koza_evolve(gold_outputs, func_list, terminal_list,
+def koza_evolve(problem_init, *,
                 population_size = 1000, max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
+                select_fitness_ids = None,
                 init_fn = init_each, map_fn = identity_map, breed_fn = subtree_breed, 
-                eval_fn = gp_eval, analyze_pop_fn = analyze_population):
-    stats = {}
-    syntax_cache = {}
-    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
-    shared_context = dict(
-        gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
-        fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, int_cache = {}, out_cache = {}, stats = stats, breeding_stats = BreedingStats())
-    evol_fns = utils.bind_fns(shared_context, init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn)
-    best_ind, gen = evol_loop(population_size, max_gens, *evol_fns)
-    stats["gen"] = gen
-    stats["best_found"] = best_ind is not None
-    return best_ind, stats
+                eval_fn = gp_eval, analyze_pop_fn = analyze_population): 
+    runtime_context = create_runtime_context(fitness_fns, main_fitness_fn, select_fitness_ids)
+    problem_init(runtime_context = runtime_context)
+    evo_funcs = [init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn]
+    evo_funcs_bound = [partial(fn, runtime_context = runtime_context) for fn in evo_funcs]
+    best_ind, gen = evol_loop(population_size, max_gens, *evo_funcs_bound)
+    runtime_context.stats["gen"] = gen 
+    runtime_context.stats["best_found"] = best_ind is not None
+    return best_ind, runtime_context.stats
 
 gp = koza_evolve
+gp_0 = partial(koza_evolve, select_fitness_ids = [0])
 
 ifs = partial(koza_evolve, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness])
+ifs_0 = partial(ifs, select_fitness_ids = [0, 1])
 
-gp_sim_names = [ 'gp', 'ifs' ]
+gp_a = partial(koza_evolve, fitness_fns = [mse_fitness, depth_fitness], main_fitness_fn = mse_fitness,
+                            eval_fn = partial(gp_eval, int_fn = dist_test_based_interactions, 
+                                              output_prep = torch_output_prep),
+                            analyze_pop_fn = partial(analyze_population, best_cond = approx_best))
+
+gp_sim_names = [ 'gp', 'ifs', 'gp_0', 'ifs_0' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('disc3')
-    best_prog, stats = ifs(gold_outputs, func_list, terminal_list)
+    problem_builder = gp_benchmarks.get_benchmark('koza_1')
+    best_prog, stats = gp_a(problem_builder)
     print(best_prog)
     print(stats)
     pass    

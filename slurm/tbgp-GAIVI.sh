@@ -43,8 +43,6 @@ game=${games[$SLURM_ARRAY_TASK_ID]}
 
 echo "Starting job $SLURM_ARRAY_TASK_ID with setup $game"
 
-conda activate cde-search-env
-
-srun python ~/cde-search/cli.py objs -sid "$game" -n 30 -out "$WORK/cde-search/tbgp-2.jsonlist"
+srun bash -c "source activate cde-search-env && python ~/cde-search/cli.py objs -sid \"$game\" -n 30 -out \"$WORK/cde-search/tbgp-2.jsonlist\""
 
 echo "Done job $SLURM_ARRAY_TASK_ID with game $game"

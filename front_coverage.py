@@ -1,10 +1,11 @@
 
 
+from dataclasses import dataclass
 from functools import partial
 from itertools import cycle
 import numpy as np
 
-from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, identity_map, init_each, simple_node_builder, subtree_breed
+from gp import RuntimeContext, analyze_population, create_runtime_context, gp_eval, depth_fitness, hamming_distance_fitness, identity_map, init_each, subtree_breed
 from nsga2 import get_pareto_front_indexes
 from rnd import default_rnd
 import utils
@@ -50,16 +51,20 @@ class FullTestCoverageIterators():
         self.subgroups = iter([])
         self.selected = iter([])
 
-def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, *, full_coverage: FullTestCoverageIterators):
-    if (next_index := next(full_coverage.selected, None)) is None:
-        subgroup_start, subgroup_size = next(full_coverage.subgroups)
+@dataclass 
+class FrontCovRuntimeContext(RuntimeContext):
+    full_coverage: FullTestCoverageIterators
+
+def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, *, runtime_context: FrontCovRuntimeContext):
+    if (next_index := next(runtime_context.full_coverage.selected, None)) is None:
+        subgroup_start, subgroup_size = next(runtime_context.full_coverage.subgroups)
         if subgroup_size < coverage_selection_size:
             choices = default_rnd.choice(subgroup_size, size = coverage_selection_size, replace = True)
         else:
             choices = default_rnd.choice(subgroup_size, size = coverage_selection_size, replace = False)
         indexes = subgroup_start + choices
-        full_coverage.selected = iter(indexes)
-        next_index = next(full_coverage.selected)
+        runtime_context.full_coverage.selected = iter(indexes)
+        next_index = next(runtime_context.full_coverage.selected)
         # if len(population) >= 6 and str(population[5]) == "x6":
         #     print(f"selected: ss {subgroup_start}, ssize {subgroup_size} choice {choices} indexes {indexes} next {next_index}")
     # best = population[next_index]
@@ -115,7 +120,7 @@ def select_program_random(ints: np.ndarray, allowed_program_mask: np.ndarray, al
     allowed_test_mask[solved_test_ids_by_best] = False
     return best_program_id, selected_test_id
 
-def select_full_test_coverage(front_selection_size, interactions, test_program_selection = select_program_best_by_test, *, full_coverage: FullTestCoverageIterators):
+def select_full_test_coverage(front_selection_size, interactions, test_program_selection = select_program_best_by_test, *, runtime_context: FrontCovRuntimeContext):
     ''' There are different ways to have full test coverage    
     Does the selection of test metter?
     Hypothesis 1. selects hardest test and then best program that solves it 
@@ -157,8 +162,8 @@ def select_full_test_coverage(front_selection_size, interactions, test_program_s
     if len(groups) == 0:
         groups.append(len(selected))
     indexes = list(zip([0, *np.cumsum(groups).tolist()], groups))
-    full_coverage.selected = iter([])
-    full_coverage.subgroups = cycle(indexes)
+    runtime_context.full_coverage.selected = iter([])
+    runtime_context.full_coverage.subgroups = cycle(indexes)
     return np.array(selected)
 
 full_test_coverage_hardest_test_best_program = partial(select_full_test_coverage, test_program_selection = partial(select_program_best_by_test, test_selection = select_test_hardest)) 
@@ -174,26 +179,21 @@ full_test_coverage_easiest_test_rand_program = partial(select_full_test_coverage
 full_test_coverage_random_test_rand_program = partial(select_full_test_coverage, test_program_selection = partial(select_program_random, test_selection = select_test_random))
 
 
-def front_evolve(gold_outputs, func_list, terminal_list, *,
+def front_evolve(problem_init, *,
                     population_size = 1000, max_gens = 100, archive_size = 100,
                     fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = hamming_distance_fitness,
-                    init_fn = init_each, map_fn = identity_map, breed_fn = partial(subtree_breed, breed_select_fn = full_coverage_selection),
-                    eval_fn = gp_eval, analyze_pop_fn = analyze_population,
+                    select_fitness_ids = None, init_fn = init_each, map_fn = identity_map, breed_fn = partial(subtree_breed, breed_select_fn = full_coverage_selection),
+                    eval_fn = gp_eval, analyze_pop_fn = analyze_population, 
                     select_parents_fn = full_test_coverage_hardest_test_best_program):
-    stats = {}
-    syntax_cache = {}
-    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
-    full_coverage = FullTestCoverageIterators()
-    shared_context = dict(
-        gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
-        fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, stats = stats, int_cache = {}, out_cache = {}, full_coverage = full_coverage,
-        breeding_stats = BreedingStats())
-    evol_fns = utils.bind_fns(shared_context, init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn)    
-    best_ind, gen = pareto_front_loop(archive_size, population_size, max_gens, *evol_fns)
-    stats["gen"] = gen
-    stats["best_found"] = best_ind is not None
-    return best_ind, stats
+    runtime_context = create_runtime_context(fitness_fns, main_fitness_fn, select_fitness_ids, 
+                                                context_class=FrontCovRuntimeContext, full_coverage = FullTestCoverageIterators())
+    problem_init(runtime_context = runtime_context)
+    evo_funcs = [init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn]
+    evo_funcs_bound = [partial(fn, runtime_context = runtime_context) for fn in evo_funcs]
+    best_ind, gen = pareto_front_loop(archive_size, population_size, max_gens, *evo_funcs_bound)
+    runtime_context.stats["gen"] = gen
+    runtime_context.stats["best_found"] = best_ind is not None
+    return best_ind, runtime_context.stats
 
 cov_ht_bp = partial(front_evolve, select_parents_fn = full_test_coverage_hardest_test_best_program)
 
@@ -211,8 +211,8 @@ cov_sim_names = [ 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = cov_rt_bp(gold_outputs, func_list, terminal_list)
+    problem_builder = gp_benchmarks.get_benchmark('cmp6')
+    best_prog, stats = cov_rt_bp(problem_builder)
     print(best_prog)
     print(stats)
     pass    

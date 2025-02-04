@@ -1,91 +1,62 @@
 ''' Continuous algebraic domain '''
 
+from itertools import product
 from typing import Optional
 import numpy as np
 from rnd import default_rnd
 
-from utils import create_named_function
-
-def f_add(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def f_add(x: np.ndarray, y: np.ndarray, **_) -> np.ndarray:
     return x + y
 
-def f_sub(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def f_sub(x: np.ndarray, y: np.ndarray, **_) -> np.ndarray:
     return x - y
 
-def f_mul(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def f_mul(x: np.ndarray, y: np.ndarray, **_) -> np.ndarray:
     return x * y
 
 # NOTE: we do not apply sanitization - resuls could have inf or nan - should be handled  
-def f_div(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def f_div(x: np.ndarray, y: np.ndarray, **_) -> np.ndarray:
     return x / y
 
-def f_neg(x: np.ndarray) -> np.ndarray:
+def f_neg(x: np.ndarray, **_) -> np.ndarray:
     return -x
 
 # NOTE: we do not apply sanitization - resuls could have inf or nan - should be handled  
-def f_inv(x: np.ndarray) -> np.ndarray:
+def f_inv(x: np.ndarray, **_) -> np.ndarray:
     return 1 / x
 
-def f_cos(x: np.ndarray) -> np.ndarray:
+def f_cos(x: np.ndarray, **_) -> np.ndarray:
     return np.cos(x)
 
-def f_sin(x: np.ndarray) -> np.ndarray:
+def f_sin(x: np.ndarray, **_) -> np.ndarray:
     return np.sin(x)
 
-def f_square(x: np.ndarray) -> np.ndarray:
+def f_square(x: np.ndarray, **_) -> np.ndarray:
     return x ** 2
     
-def f_cube(x: np.ndarray) -> np.ndarray:
+def f_cube(x: np.ndarray, **_) -> np.ndarray:
     return x ** 3
 
-def f_exp(x: np.ndarray) -> np.ndarray:
+def f_exp(x: np.ndarray, **_) -> np.ndarray:
     return np.exp(x)
 
 # NOTE: we do not apply sanitization - resuls could have inf or nan - should be handled  
-def f_log(x: np.ndarray) -> np.ndarray:
+def f_log(x: np.ndarray, **_) -> np.ndarray:
     return np.log(x)
 
 # additional less used 
-def f_neg_exp(x: np.ndarray) -> np.ndarray:
+def f_neg_exp(x: np.ndarray, **_) -> np.ndarray:
     return np.exp(-x)
 
 # NOTE: we do not apply sanitization 
-def f_sqrt(x: np.ndarray) -> np.ndarray:
+def f_sqrt(x: np.ndarray, **_) -> np.ndarray:
     return np.sqrt(x)
 
-def f_tanh(x: np.ndarray) -> np.ndarray:
+def f_tanh(x: np.ndarray, **_) -> np.ndarray:
     return np.tanh(x)
 
-def f_tan(x: np.ndarray) -> np.ndarray:
+def f_tan(x: np.ndarray, **_) -> np.ndarray:
     return np.tan(x)
-
-# ERCs
-# Only limited number of constants are allowed
-
-def build_constants(max_num_constants: int):
-    const_fns = []
-    constants = default_rnd.uniform(low=0.0, high=1.0, size=max_num_constants)
-    # consts = np.tile(constants[:, np.newaxis], (1, len(gold_outputs)))
-    # NOTE: constants will be broadcasted further
-    for i in range(max_num_constants):
-        def c(i=i, constants = constants) -> np.ndarray:
-            return constants[i]
-        const_fns.append(create_named_function(f"c{i}", c))
-    return const_fns, constants
-
-
-def build_free_vars(test_inputs: np.ndarray):
-    ''' test_inputs shape is (test_id, free_var values) '''
-    free_vars = []
-    test_inputs_T = test_inputs.T
-    for i in range(len(test_inputs_T)):
-        def x(i=i, test_inputs_T = test_inputs_T, test_ids: Optional[np.ndarray] = None) -> np.ndarray:
-            if test_ids is not None:
-                return test_inputs_T[i][test_ids]
-            return test_inputs_T[i]
-        free_vars.append(create_named_function(f"x{i}", x))
-    return free_vars
-
 
 # benchmarks
 
@@ -255,35 +226,40 @@ def vladislavleva_8(x:np.ndarray, y:np.ndarray) -> np.ndarray:
 #         self.test_sampling = test_sampling
 
 def rand_sampling(num_samples, free_var_ranges: np.ndarray, gold_fn):
-    free_var_ranges = np.array(free_var_ranges)
-    mins = free_var_ranges[:, 0]
-    maxs = free_var_ranges[:, 1]
+    mins = np.array([mi for mi, _ in free_var_ranges])
+    maxs = np.array([ma for _, ma in free_var_ranges])
     dist = maxs - mins
-    inputs = mins + dist * default_rnd.rand(free_var_ranges.shape[0], num_samples)
+    inputs = [x for x in mins[:, np.newaxis] + dist[:, torch.newaxis] * default_rnd.rand(len(free_var_ranges), num_samples)]
     outputs = gold_fn(*inputs)
     return inputs, outputs
 
-def interval_samling(num_samples_or_steps, free_var_ranges: np.ndarray, gold_fn, deltas: Optional[np.ndarray] = None, rand_deltas = False):
-    mins = free_var_ranges[:, 0]
-    maxs = free_var_ranges[:, 1]
-    dist = maxs - mins
-    if type(num_samples_or_steps) == int:
-        step = dist / num_samples_or_steps
+# rand_sampling(100, [[0.0, 1.0], [0.0, 1.0]], lambda x, y: torch.sin(x) + torch.cos(y))
+
+def interval_samling(step, free_var_ranges: list[list[int]], gold_fn, deltas: Optional[list[int]] = None, rand_deltas = False):
+    mins = np.array([mi for mi, _ in free_var_ranges])
+    maxs = np.array([ma for _, ma in free_var_ranges])
+    if type(step) == list:
+        assert len(step) == len(free_var_ranges)
     else:
-        step = np.array(num_samples_or_steps)
+        step = [step] * len(free_var_ranges)
+    step = np.array(step)
+    if deltas is not None:
+        deltas = np.array(deltas)
     if rand_deltas:
         if deltas is None:
             deltas = step * default_rnd.rand(free_var_ranges.shape[0])
         else:
             deltas = deltas * default_rnd.rand(free_var_ranges.shape[0])
-    if deltas is None:
-        deltas = np.zeros_like(mins)
-    mins = mins + deltas
-    inputs = np.array([np.arange(mi, ma, s) for mi, ma, s in zip(mins, maxs, step)])
+    if deltas is not None:
+        # deltas = torch.zeros_like(mins)
+        mins += deltas
+    
+    mesh = list(product(*(np.arange(mi.item(), ma.item(), s.item()).tolist() for mi, ma, s in zip(mins, maxs, step))))
+    inputs = [x for x in np.array(mesh).T]
     outputs = gold_fn(*inputs)
     return inputs, outputs
 
-# interval_samling(10, np.array([[0, 1], [0, 1]]), lambda x, y: np.sin(x) + np.cos(y), deltas=np.array([0.05, 0.01]))
+# interval_samling(0.1, np.array([[0.0, 1.0], [0.0, 1.0]]), lambda x, y: torch.sin(x) + torch.cos(y), deltas=[0.05, 0.01])
 
 # https://en.wikipedia.org/wiki/Chebyshev_nodes
 def chebyshev_sampling(num_samples, free_var_ranges: np.ndarray, gold_fn, rand_deltas = False):
@@ -312,23 +288,23 @@ benchmarks = {
                                             None),
     "koza_3":           (koza_3,            ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_1":         (nguyen_1           ([[-1.0, 1.0]], 20, rand_sampling),
+    "nguyen_1":         (nguyen_1,          ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_2":         (nguyen_2           ([[-1.0, 1.0]], 20, rand_sampling),
+    "nguyen_2":         (nguyen_2,          ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_3":         (nguyen_3           ([[-1.0, 1.0]], 20, rand_sampling),
+    "nguyen_3":         (nguyen_3,          ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_4":         (nguyen_4           ([[-1.0, 1.0]], 20, rand_sampling),
+    "nguyen_4":         (nguyen_4,          ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_5":         (nguyen_5           ([[-1.0, 1.0]], 20, rand_sampling),
+    "nguyen_5":         (nguyen_5,          ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_6":         (nguyen_6           ([[-1.0, 1.0]], 20, rand_sampling),
+    "nguyen_6":         (nguyen_6,          ([[-1.0, 1.0]], 20, rand_sampling),
                                             None),
-    "nguyen_7":         (nguyen_7           ([[0.0, 2.0]], 20, rand_sampling),
+    "nguyen_7":         (nguyen_7,          ([[0.0, 2.0]], 20, rand_sampling),
                                             None),
-    "nguyen_8":         (nguyen_8           ([[0.0, 4.0]], 20, rand_sampling),
+    "nguyen_8":         (nguyen_8,          ([[0.0, 4.0]], 20, rand_sampling),
                                             None),
-    "nguyen_9":         (nguyen_9           ([[0.0, 1.0], [0.0, 1.0]], 100, rand_sampling),
+    "nguyen_9":         (nguyen_9,          ([[0.0, 1.0], [0.0, 1.0]], 100, rand_sampling),
                                             None),
     "nguyen_10":        (nguyen_10,         ([[0.0, 1.0], [0.0, 1.0]], 100, rand_sampling),
                                             None),
@@ -354,17 +330,17 @@ benchmarks = {
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
     "korns_9":          (korns_9,           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
-    "korns_10":         (korns_10           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
+    "korns_10":         (korns_10,          ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
-    "korns_11":         (korns_11           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
+    "korns_11":         (korns_11,          ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
-    "korns_12":         (korns_12           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
+    "korns_12":         (korns_12,          ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
-    "korns_13":         (korns_13           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
+    "korns_13":         (korns_13,          ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
-    "korns_14":         (korns_14           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
+    "korns_14":         (korns_14,          ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
-    "korns_15":         (korns_15           ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
+    "korns_15":         (korns_15,          ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling),
                                             ([[-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0], [-50.0, 50.0]], 10000, rand_sampling)),
     "keijzer_1":        (keijzer_1,         ([[-1.0, 1.0]], 0.1, interval_samling),
                                             ([[-1.0, 1.0]], 0.001, interval_samling)),

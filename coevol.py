@@ -2,10 +2,11 @@
     Used in epxerimentation with test-based GP
 '''
 from collections import defaultdict
+from dataclasses import dataclass
 from functools import partial
 import numpy as np
-from de import extract_dims_np, extract_dims_np_b
-from gp import BreedingStats, analyze_population, gp_eval, cached_node_builder, depth_fitness, hamming_distance_fitness, identity_map, init_each, random_selection, simple_node_builder, subtree_breed, tournament_selection
+from de import extract_dims_np_b
+from gp import RuntimeContext, analyze_population, create_runtime_context, gp_eval, depth_fitness, hamming_distance_fitness, identity_map, init_each, subtree_breed, tournament_selection
 from rnd import default_rnd
 import utils
 
@@ -39,7 +40,7 @@ def coevol_loop(max_gens, population_sizes, init_fn, map_fns, select_fns, interr
 #     tests = default_rnd.choice(test_pool_size, num_tests, replace=False)
 #     return [programs, tests]
 
-def zero_init(population_sizes, num_pops = 2):
+def zero_init(population_sizes, num_pops = 2, *, runtime_context: RuntimeContext):
     return [[] for _ in range(num_pops)]
 
 class NondominantGroups():
@@ -53,6 +54,9 @@ class NondominantGroups():
         self.group_fitnesses = None
         self.uo_reprs = 0
 
+@dataclass
+class CoevolRuntimeContext(RuntimeContext):
+    nondominant: NondominantGroups
 
 # fitness_cache = {}
 # current_good_programs = []
@@ -61,7 +65,8 @@ class NondominantGroups():
 
 # previously_selected = None
 
-def breeding_group_selection(population, fitnesses, select_fn = partial(tournament_selection, tournament_selection_size = 3), *, nondominant: NondominantGroups):
+def breeding_group_selection(population, fitnesses, select_fn = partial(tournament_selection, tournament_selection_size = 3), *, runtime_context: CoevolRuntimeContext):
+    nondominant = runtime_context.nondominant
     if nondominant.selected_group_id is not None:
         exclude_groups = nondominant.spanned_groups.get(nondominant.selected_group_id, set())
         exclude_groups.add(nondominant.selected_group_id)
@@ -70,13 +75,13 @@ def breeding_group_selection(population, fitnesses, select_fn = partial(tourname
             selected_one_id = default_rnd.choice(len(population))
             nondominant.selected_group_id = None
             return selected_one_id
-        selected_group_id = select_fn(candidate_groups, nondominant.group_fitnesses[candidate_groups])
+        selected_group_id = select_fn(candidate_groups, nondominant.group_fitnesses[candidate_groups], runtime_context=runtime_context)
         selected_group = nondominant.groups[candidate_groups[selected_group_id]]
         selected_program_id_id = default_rnd.choice(len(selected_group))
         selected_program_id = selected_group[selected_program_id_id]
         nondominant.selected_group_id = None 
         return selected_program_id
-    selected_group_id = select_fn(nondominant.groups, nondominant.group_fitnesses)
+    selected_group_id = select_fn(nondominant.groups, nondominant.group_fitnesses, runtime_context=runtime_context)
     prog_ids = nondominant.groups[selected_group_id]
     prog_id_id = default_rnd.choice(len(prog_ids))
     prog_id = prog_ids[prog_id_id]
@@ -85,49 +90,49 @@ def breeding_group_selection(population, fitnesses, select_fn = partial(tourname
 
 def select_explore_exploit_programs(good_programs, init_fn = init_each, 
                                     breed_fn = partial(subtree_breed, breed_select_fn = breeding_group_selection), 
-                                    explore_size = 0, exploit_size = 1000, uo_repr = 2, *, nondominant: NondominantGroups):
+                                    explore_size = 0, exploit_size = 1000, uo_repr = 2, *, runtime_context: CoevolRuntimeContext):
     ''' select those programs who previously distinguished tests of underlying objectives and then add new programs to explore'''
     if len(good_programs) == 0: # nobody can breed
-        all_programs = init_fn(explore_size + exploit_size)
+        all_programs = init_fn(explore_size + exploit_size, runtime_context = runtime_context)
     else:
         # all_programs = []
         all_programs = [] #list(good_programs)
-        inited_programs = init_fn(explore_size)
+        inited_programs = init_fn(explore_size, runtime_context = runtime_context)
         all_programs.extend(inited_programs)
-        breed_programs = breed_fn(exploit_size, good_programs, None)
+        breed_programs = breed_fn(exploit_size, good_programs, None, runtime_context=runtime_context)
         all_programs.extend(breed_programs)
 
         #from good programs we only preserve at max uo_repr inds 
-        nondominant.uo_reprs = 0
-        for group in nondominant.groups:
+        runtime_context.nondominant.uo_reprs = 0
+        for group in runtime_context.nondominant.groups:
             if len(group) > uo_repr:
                 group_ids = default_rnd.choice(len(group), uo_repr, replace=False)
                 selected_group = [group[i] for i in group_ids]
                 all_programs.extend([good_programs[i] for i in selected_group])
-                nondominant.uo_reprs += len(group_ids)
+                runtime_context.nondominant.uo_reprs += len(group_ids)
             else:
                 all_programs.extend([good_programs[i] for i in group])
-                nondominant.uo_reprs += len(group)
+                runtime_context.nondominant.uo_reprs += len(group)
     return all_programs
 
-def select_explore_exploit_tests(good_tests, rand_fraction = 0, *, gold_outputs):
+def select_explore_exploit_tests(good_tests, rand_fraction = 0, *, runtime_context: RuntimeContext):
     ''' selecting tests found to be underlying objectives '''
     if rand_fraction == 1 or (len(good_tests) == 0 and rand_fraction == 0):
-        return np.arange(len(gold_outputs))
+        return np.arange(len(runtime_context.gold_outputs))
     
-    to_select_num = int(rand_fraction * len(gold_outputs)) - len(good_tests)
+    to_select_num = int(rand_fraction * len(runtime_context.gold_outputs)) - len(good_tests)
     if to_select_num <= 0:
         return good_tests
     
     good_test_set = set(good_tests)
-    possible_new_tests = [i for i in range(len(gold_outputs)) if i not in good_test_set]
+    possible_new_tests = [i for i in range(len(runtime_context.gold_outputs)) if i not in good_test_set]
     selected_new_tests = default_rnd.choice(possible_new_tests, to_select_num, replace=False)
     return np.concatenate([good_tests, selected_new_tests])
 
-def prog_test_interractions(populations, eval_fn = gp_eval, *, nondominant: NondominantGroups):
+def prog_test_interractions(populations, eval_fn = gp_eval, *, runtime_context: RuntimeContext):
     ''' Test-based interactions, zero-sum game '''
     programs, tests = populations
-    outputs, fitnesses, interactions = eval_fn(programs)
+    outputs, fitnesses, interactions = eval_fn(programs, runtime_context = runtime_context)
     return outputs, fitnesses, interactions    
 
 def select_all_tests(tests, cand_interactions):
@@ -157,18 +162,18 @@ def select_discriminative_tests(tests, prog_interactions: np.ndarray):
     discriminating_tests = [tests[i] for i in discriminating_test_ids]
     return discriminating_tests
 
-def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, selection_size = 10, *, stats):
+def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, selection_size = 10, *, runtime_context: RuntimeContext):
     test_stats = np.sum(prog_interactions, axis=0)
     sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: x[1])
     filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
     fraction_size = max(1, int(fraction * prog_interactions.shape[1]))
     min_size = min(fraction_size, selection_size)
-    stats.setdefault('obj_size', []).append(min_size)
+    runtime_context.stats.setdefault('obj_size', []).append(min_size)
     res = filtered_test_ids[:min_size]
     return res
 
 import time 
-def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_hardest_tests, *, stats, gold_outputs, nondominant: NondominantGroups):
+def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_hardest_tests, *, runtime_context: CoevolRuntimeContext):
     """ Finds underlying objectives for programs, samples most discriminating tests (if necessary)
         Extracted coordinate system preserve relation of what individuals could be combined in breeding 
         Each underlying objective could be combined with other one, or spanned point which is at the end but does not fulfill this objective 
@@ -200,12 +205,12 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     dims, origin, spanned_points = extract_dims_np_b(packed_ints, origin_outcomes=origin_zero) # program underlying objectives
     end_ms = time.process_time()
     dims_time = end_ms - start_ms
-    stats.setdefault('dims_time', []).append(dims_time)
+    runtime_context.stats.setdefault('dims_time', []).append(dims_time)
     # print(f"Extract dims time: {dims_time}")
     # pass 
     # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
     # pass
-    stats.setdefault('dims', []).append(len(dims))
+    runtime_context.stats.setdefault('dims', []).append(len(dims))
     dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
     dim_points_coords = frozenset(dim_points.keys())
     spanned_groups = {}    
@@ -223,12 +228,12 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
         for span_id2, span_dims2 in span_id_to_covered_dims.items():
             if (span_id1 != span_id2) and (span_dims1.issubset(span_dims2) or span_dims2.issubset(span_dims1)):
                 spanned_groups[span_id1].add(span_id2)
-    stats.setdefault('spanned', []).append(len(spanned_groups))
+    runtime_context.stats.setdefault('spanned', []).append(len(spanned_groups))
     group_interactions = interactions[[p[0] for p in preserved_points]]
-    group_fitnesses = len(gold_outputs) - np.sum(group_interactions, axis=1)
+    group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
     selected_group_ids = set()
     selected_group_ids_list = []
-    for test_id in range(len(gold_outputs)):
+    for test_id in range(len(runtime_context.gold_outputs)):
         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
         if len(filtered_subgroup_ids) == 0:
@@ -255,18 +260,18 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     selected_groups_remapped = [[prog_id_remap[i] for i in p] for p in selected_groups]
     # ind_groups = {prog_id: group_id for group_id, prog_ids in enumerate(preserved_points) for prog_id in prog_ids}
 
-    nondominant.groups = selected_groups_remapped
+    runtime_context.nondominant.groups = selected_groups_remapped
     # nondominant.ind_groups = ind_groups
-    nondominant.spanned_groups = selected_spanned_groups
-    nondominant.selected_group_id = None
-    nondominant.group_interactions = group_interactions[selected_group_ids_list]
-    nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
+    runtime_context.nondominant.spanned_groups = selected_spanned_groups
+    runtime_context.nondominant.selected_group_id = None
+    runtime_context.nondominant.group_interactions = group_interactions[selected_group_ids_list]
+    runtime_context.nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
 
     selected_programs = [programs[i] for i in selected_ids]
-    selected_tests = test_selection_strategy(tests, nondominant.group_interactions )
+    selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions, runtime_context = runtime_context)
     return [selected_programs, selected_tests]
 
-def update_cand_underlying_objectives2(populations, interactions, test_selection_strategy = select_hardest_tests, *, stats, gold_outputs, nondominant: NondominantGroups):
+def update_cand_underlying_objectives2(populations, interactions, test_selection_strategy = select_hardest_tests, *, runtime_context: CoevolRuntimeContext):
     """ See update_cand_underlying_objectives, applies CSE two times, one on original interactions, second on spanned points """
     programs, tests = populations
 
@@ -315,7 +320,7 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
 
     end_ms = time.process_time()
     dims_time = end_ms - start_ms
-    stats.setdefault('dims_time', []).append(dims_time)    
+    runtime_context.stats.setdefault('dims_time', []).append(dims_time)    
     
     dim_points2 = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims2) }
     dim_points_coords2 = frozenset(dim_points2.keys())
@@ -328,10 +333,10 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
 
     left_spanned_points = {**filtered_dims2, **spanned_points_remapped2}
 
-    stats.setdefault('dims', []).append(len(dims))
-    stats.setdefault('dims2', []).append(len(dims2))
-    stats.setdefault('spanned', []).append(len(filtered_spanned_points))
-    stats.setdefault('spanned2', []).append(len(filtered_spanned_points2))
+    runtime_context.stats.setdefault('dims', []).append(len(dims))
+    runtime_context.stats.setdefault('dims2', []).append(len(dims2))
+    runtime_context.stats.setdefault('spanned', []).append(len(filtered_spanned_points))
+    runtime_context.stats.setdefault('spanned2', []).append(len(filtered_spanned_points2))
 
     preserved_points =  []
     preserved_points_dims = [] 
@@ -373,10 +378,10 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
                 excluded_breed_groups[point_id2].add(point_id1)
     # stats.setdefault('spanned', []).append(len(spanned_groups))
     group_interactions = interactions[[p[0] for p in preserved_points]]
-    group_fitnesses = len(gold_outputs) - np.sum(group_interactions, axis=1)
+    group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
     selected_group_ids = set()
     selected_group_ids_list = []
-    for test_id in range(len(gold_outputs)):
+    for test_id in range(len(runtime_context.gold_outputs)):
         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
         if len(filtered_subgroup_ids) == 0:
@@ -403,75 +408,73 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
     selected_groups_remapped = [[prog_id_remap[i] for i in p] for p in selected_groups]
     # ind_groups = {prog_id: group_id for group_id, prog_ids in enumerate(preserved_points) for prog_id in prog_ids}
 
-    nondominant.groups = selected_groups_remapped
+    runtime_context.nondominant.groups = selected_groups_remapped
     # nondominant.ind_groups = ind_groups
-    nondominant.spanned_groups = selected_spanned_groups
-    nondominant.selected_group_id = None
-    nondominant.group_interactions = group_interactions[selected_group_ids_list]
-    nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
+    runtime_context.nondominant.spanned_groups = selected_spanned_groups
+    runtime_context.nondominant.selected_group_id = None
+    runtime_context.nondominant.group_interactions = group_interactions[selected_group_ids_list]
+    runtime_context.nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
 
     selected_programs = [programs[i] for i in selected_ids]
-    selected_tests = test_selection_strategy(tests, nondominant.group_interactions )
+    selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions )
     return [selected_programs, selected_tests]
 
-def gp_coevolve2(gold_outputs, func_list, terminal_list,
+def gp_coevolve2(problem_init, *,
                  population_sizes = [0, 0], max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = None,
-                init_fn = zero_init, map_fn = identity_map, first_select_fn = select_explore_exploit_programs,
+                select_fitness_ids = None, init_fn = zero_init, map_fn = identity_map, 
+                first_select_fn = select_explore_exploit_programs,
                 second_select_fn = select_explore_exploit_tests,
                 interract_fn = prog_test_interractions,
                 update_fn = update_cand_underlying_objectives,
                 analyze_pop_fn = analyze_population):
-    stats = {}
-    syntax_cache = {}
-    node_builder = partial(cached_node_builder, syntax_cache = syntax_cache, node_builder = simple_node_builder, stats = stats)
-    shared_context = dict(
-        gold_outputs = gold_outputs, func_list = func_list, terminal_list = terminal_list,
-        fitness_fns = fitness_fns, main_fitness_fn = main_fitness_fn, node_builder = node_builder,
-        syntax_cache = syntax_cache, int_cache = {}, out_cache = {}, stats = stats, nondominant = NondominantGroups(),
-        breeding_stats = BreedingStats())
-    init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn = utils.bind_fns(shared_context, init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn)
+    runtime_context = create_runtime_context(fitness_fns, main_fitness_fn, select_fitness_ids, context_class=CoevolRuntimeContext,
+                                             nondominant = NondominantGroups())
+    problem_init(runtime_context = runtime_context)
+    evo_funcs = [init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn]
+    init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn = [partial(fn, runtime_context = runtime_context) for fn in evo_funcs]
     best_ind, gen = coevol_loop(max_gens, population_sizes, init_fn, [ map_fn, identity_map ], [first_select_fn, second_select_fn], interract_fn, update_fn, analyze_pop_fn)
-    stats['gen'] = gen
-    stats["best_found"] = best_ind is not None
-    return best_ind, stats
+    runtime_context.stats['gen'] = gen
+    runtime_context.stats["best_found"] = best_ind is not None
+    return best_ind, runtime_context.stats
 
 def update_cand_uo_builder(frac_or_size = 10, main_fn = update_cand_underlying_objectives):
     return partial(main_fn, 
                    test_selection_strategy = partial(select_hardest_tests, fraction = frac_or_size / 100.0, selection_size = frac_or_size))
 
-coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
-coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
-coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
+# coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
+# coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
+# coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
 coevol_uo_40 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(40))
-coevol_uo_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50))
-coevol_uo_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60))
-coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
-coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
-coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
-coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
+# coevol_uo_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50))
+# coevol_uo_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60))
+# coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
+# coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
+# coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
+# coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
 
 
-coevol_uo2_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_40 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(40, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_40 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(40, main_fn=update_cand_underlying_objectives2))
 coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90, main_fn=update_cand_underlying_objectives2))
-coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90, main_fn=update_cand_underlying_objectives2))
+# coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
 
 
-coevol_sim_names1 = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
-coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
-coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
+# coevol_sim_names1 = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+# coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
+# coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
+coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    game_name, (gold_outputs, func_list, terminal_list) = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = coevol_uo2_40(gold_outputs, func_list, terminal_list)
+    problem_builder = gp_benchmarks.get_benchmark('cmp8')
+    best_prog, stats = coevol_uo_40(problem_builder)
     print(best_prog)
     print(stats)
     pass    
