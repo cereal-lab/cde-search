@@ -75,6 +75,8 @@ class RuntimeContext:
     terminal_list: list[utils.AnnotatedFunc]
     node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node]
     tree_contexts: dict[Node, dict[str, Any]]
+    aging_stats: Optional[dict[Any, int]] = None #either syntax or semantics with opt position --> number of times in breeding
+    aging_type: Optional[str] = None # none, syntax, semantics, syntax_w_position, semantics_w_position
     def update(self, **kwargs):        
         for k, v in kwargs.items():
             assert hasattr(self, k), f'Runtime context does not have property {k}'
@@ -130,7 +132,7 @@ def are_counts_constraints_satisfied_together(node1: Node, node2: Node, counts_c
     node_counts2 = get_func_counts(node2, counts_constraints, counts_cache)
     return all(v >= (node_counts1.get(k, 0) + node_counts2.get(k, 0)) for k, v in counts_constraints.items())
 
-def default_node_builder(func: utils.AnnotatedFunc, args, syntax_cache = {}, stats = {}):
+def default_node_builder(func: utils.AnnotatedFunc, args, *, syntax_cache, stats):
     ''' Builds the node with node_builder, but first checks cache '''
     # NOTE: trees are always built from bottom to up, so we can use existing Node objects as key elements
     key = (func.func, *args)
@@ -315,6 +317,30 @@ def pick_min(selected_fitnesses: np.ndarray):
 def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
     ''' Select parents using tournament selection '''
     selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True)
+    selected_fitnesses = fitnesses[selected_ids]
+    best_id_id = fitness_comp_fn(selected_fitnesses)
+    best_id = selected_ids[best_id_id]
+    # best = population[best_id]
+    return best_id
+
+def tournament_selection_with_syntax_againg(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
+    ''' Select parents using tournament selection '''
+    breed_counts = np.array([runtime_context.aging_stats.get(p, 0) for p in population], dtype=float)
+    breed_weights = 1. / (1. + breed_counts)
+    select_proba = breed_weights / np.sum(breed_weights)
+    selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True, p = select_proba)
+    selected_fitnesses = fitnesses[selected_ids]
+    best_id_id = fitness_comp_fn(selected_fitnesses)
+    best_id = selected_ids[best_id_id]
+    # best = population[best_id]
+    return best_id
+
+def tournament_selection_with_semantic_againg(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
+    ''' Select parents using tournament selection '''
+    breed_counts = np.array([runtime_context.aging_stats.get(runtime_context.int_cache.get(p, None), 0) for p in population], dtype=float)
+    breed_weights = 1. / (1. + breed_counts)
+    select_proba = breed_weights / np.sum(breed_weights)
+    selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True, p = select_proba)
     selected_fitnesses = fitnesses[selected_ids]
     best_id_id = fitness_comp_fn(selected_fitnesses)
     best_id = selected_ids[best_id_id]
@@ -579,6 +605,8 @@ def subtree_breed(size, population, fitnesses,
     runtime_context.parent_child_relations = []
     if runtime_context.select_fitness_ids is not None and fitnesses is not None:
         fitnesses = fitnesses[:, runtime_context.select_fitness_ids]
+    is_aging_enabled = (runtime_context.aging_type is not None) and (runtime_context.aging_type != '')
+    all_parents = []
     while len(new_population) < size:
         # Select parents for the next generation
         parent1_id = breed_select_fn(population, fitnesses, runtime_context = runtime_context)
@@ -596,7 +624,15 @@ def subtree_breed(size, population, fitnesses,
         if default_rnd.rand() < crossover_rate:
             child1, child2 = crossover_fn(child1, child2, runtime_context = runtime_context)   
         runtime_context.parent_child_relations.append(([parent1, parent2], [child1, child2]))
+        if is_aging_enabled:
+            all_parents.extend((parent1, parent2))
         new_population.extend([child1, child2])
+    for parent in all_parents:
+        if runtime_context.aging_type == 'syntax':
+            runtime_context.aging_stats[parent] = runtime_context.aging_stats.get(parent, 0) + 1 
+        elif runtime_context.aging_type == 'semantics':
+            parent_ints = tuple(runtime_context.int_cache[parent])
+            runtime_context.aging_stats[parent_ints] = runtime_context.aging_stats.get(parent_ints, 0) + 1 
     return new_population
     
 def depth_fitness(interactions, outputs, population = [], **_):
@@ -817,7 +853,7 @@ gp_sim_names = [ 'gp', 'ifs', 'gp_0', 'ifs_0' ]
 if __name__ == '__main__':
     import gp_benchmarks
     problem_builder = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = gp(problem_builder)
+    best_prog, stats = gp_0(problem_builder)
     print(best_prog)
     print(stats)
     pass    

@@ -450,7 +450,9 @@ def alg_problem_init(gold_fn, train_set_build, symbol_list, num_consts = 10, con
                            counts_constraints = counts_constraints)
 
 # IDEA: generalize further to allow dynamic list of symbols - from reduced to reach set of symbols in search.
-benchmark = {k:partial(alg_problem_init, gold_fn, train_set_build, [f_add, f_sub, f_mul, f_div]) \
+func_set1 = [f_add, f_sub, f_mul, f_div]
+func_set2 = [f_add, f_mul, f_neg, f_inv, f_sin, f_cos, f_exp, f_log]
+benchmark = {k:partial(alg_problem_init, gold_fn, train_set_build, func_set2) \
               for k, (gold_fn, train_set_build, _) in benchmark_data.items()}
 
 

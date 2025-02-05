@@ -416,7 +416,7 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
     runtime_context.nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
 
     selected_programs = [programs[i] for i in selected_ids]
-    selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions )
+    selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions, runtime_context = runtime_context)
     return [selected_programs, selected_tests]
 
 def gp_coevolve2(problem_init, *,
