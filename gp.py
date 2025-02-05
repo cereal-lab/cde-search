@@ -1,5 +1,5 @@
 ''' Module for classic genetic programming. '''
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import inspect
 from functools import partial
 from itertools import chain, product
@@ -59,24 +59,24 @@ Vectors = np.ndarray | torch.Tensor
 
 @dataclass 
 class RuntimeContext:
-    stats: dict[str, Any]
-    int_cache: dict[Node, np.ndarray]
-    out_cache: dict[Node, Outputs]
-    counts_cache: dict[Node, dict[str, int]]
-    syntax_cache: dict[(Callable, list[Node]), Node]
-    parent_child_relations: list[tuple[list[Node], list[Node]]]
-    counts_constraints: Optional[dict[str, int]]
-    free_vars: dict[str, Any] #bindings of free variables
-    gold_outputs: Outputs
-    fitness_fns: list[Callable]
-    main_fitness_fn: Callable
-    select_fitness_ids: Optional[list[int]]
-    func_list: list[utils.AnnotatedFunc]
-    terminal_list: list[utils.AnnotatedFunc]
-    node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node]
-    tree_contexts: dict[Node, dict[str, Any]]
-    aging_stats: Optional[dict[Any, int]] = None #either syntax or semantics with opt position --> number of times in breeding
-    aging_type: Optional[str] = None # none, syntax, semantics, syntax_w_position, semantics_w_position
+    free_vars: dict[str, Any] = field(default_factory=dict) #bindings of free variables
+    gold_outputs: Outputs = field(default_factory=list) #gold outputs
+    stats: dict[str, Any] = field(default_factory=dict)
+    int_cache: dict[Node, np.ndarray] = field(default_factory=dict)
+    out_cache: dict[Node, Outputs] = field(default_factory=dict)
+    counts_cache: dict[Node, dict[str, int]] = field(default_factory=dict)
+    syntax_cache: dict[(Callable, list[Node]), Node] = field(default_factory=dict)
+    parent_child_relations: list[tuple[list[Node], list[Node]]] = field(default_factory=list)
+    counts_constraints: Optional[dict[str, int]] = None
+    fitness_fns: list[Callable] = field(default_factory=list)
+    main_fitness_fn: Optional[Callable] = None
+    select_fitness_ids: Optional[list[int]] = None
+    func_list: list[utils.AnnotatedFunc] = field(default_factory=list)
+    terminal_list: list[utils.AnnotatedFunc] = field(default_factory=list)
+    node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node] = Node
+    tree_contexts: dict[Node, dict[str, Any]] = field(default_factory=dict)
+    aging_stats: dict[Any, int] = field(default_factory=dict) #either syntax or semantics with opt position --> number of times in breeding
+    aging_type: str = '' # none, syntax, semantics, syntax_w_position, semantics_w_position
     def update(self, **kwargs):        
         for k, v in kwargs.items():
             assert hasattr(self, k), f'Runtime context does not have property {k}'
@@ -793,17 +793,9 @@ def evol_loop(population_size, max_gens, init_fn, map_fn, breed_fn, eval_fn, ana
     return best_ind, gen
 
 def create_runtime_context(fitness_fns, main_fitness_fn = None, select_fitness_ids = None, context_class = RuntimeContext, **kwargs):
-    stats = {}
-    syntax_cache = {}
-    node_builder = partial(default_node_builder, syntax_cache = syntax_cache, stats = stats)
-    runtime_context = context_class(stats = stats, int_cache = {}, out_cache = {}, 
-                                         counts_cache = {}, syntax_cache = syntax_cache, parent_child_relations = [],                                         
-                                         fitness_fns=fitness_fns, main_fitness_fn = main_fitness_fn,
-                                         select_fitness_ids = select_fitness_ids, node_builder = node_builder,
-                                         tree_contexts={},
-                                         # next set by problem
-                                         free_vars={}, gold_outputs=[], counts_constraints=None, 
-                                         func_list=[], terminal_list=[], **kwargs)
+    runtime_context = context_class(fitness_fns=fitness_fns, main_fitness_fn = main_fitness_fn, select_fitness_ids = select_fitness_ids, **kwargs)
+    node_builder = partial(default_node_builder, syntax_cache = runtime_context.syntax_cache, stats = runtime_context.stats)
+    runtime_context.update(node_builder = node_builder)
     return runtime_context
 
 

@@ -2,7 +2,7 @@
     Used in epxerimentation with test-based GP
 '''
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 import numpy as np
 from de import extract_dims_np_b
@@ -56,7 +56,7 @@ class NondominantGroups():
 
 @dataclass
 class CoevolRuntimeContext(RuntimeContext):
-    nondominant: NondominantGroups
+    nondominant: NondominantGroups = field(default_factory=NondominantGroups)
 
 # fitness_cache = {}
 # current_good_programs = []
@@ -428,8 +428,7 @@ def gp_coevolve2(problem_init, *,
                 interract_fn = prog_test_interractions,
                 update_fn = update_cand_underlying_objectives,
                 analyze_pop_fn = analyze_population):
-    runtime_context = create_runtime_context(fitness_fns, main_fitness_fn, select_fitness_ids, context_class=CoevolRuntimeContext,
-                                             nondominant = NondominantGroups())
+    runtime_context = create_runtime_context(fitness_fns, main_fitness_fn, select_fitness_ids, context_class=CoevolRuntimeContext)
     problem_init(runtime_context = runtime_context)
     evo_funcs = [init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn]
     init_fn, map_fn, first_select_fn, second_select_fn, interract_fn, update_fn, analyze_pop_fn = [partial(fn, runtime_context = runtime_context) for fn in evo_funcs]

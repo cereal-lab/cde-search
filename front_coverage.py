@@ -1,6 +1,6 @@
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from itertools import cycle
 import numpy as np
@@ -53,7 +53,7 @@ class FullTestCoverageIterators():
 
 @dataclass 
 class FrontCovRuntimeContext(RuntimeContext):
-    full_coverage: FullTestCoverageIterators
+    full_coverage: FullTestCoverageIterators = field(default_factory=FullTestCoverageIterators)
 
 def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, *, runtime_context: FrontCovRuntimeContext):
     if (next_index := next(runtime_context.full_coverage.selected, None)) is None:
@@ -186,7 +186,7 @@ def front_evolve(problem_init, *,
                     eval_fn = gp_eval, analyze_pop_fn = analyze_population, 
                     select_parents_fn = full_test_coverage_hardest_test_best_program):
     runtime_context = create_runtime_context(fitness_fns, main_fitness_fn, select_fitness_ids, 
-                                                context_class=FrontCovRuntimeContext, full_coverage = FullTestCoverageIterators())
+                                                context_class=FrontCovRuntimeContext)
     problem_init(runtime_context = runtime_context)
     evo_funcs = [init_fn, map_fn, breed_fn, eval_fn, analyze_pop_fn, select_parents_fn]
     evo_funcs_bound = [partial(fn, runtime_context = runtime_context) for fn in evo_funcs]
