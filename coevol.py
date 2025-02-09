@@ -164,7 +164,8 @@ def select_discriminative_tests(tests, prog_interactions: np.ndarray):
 
 def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, selection_size = 10, *, runtime_context: RuntimeContext):
     test_stats = np.sum(prog_interactions, axis=0)
-    sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: x[1])
+    rand_test_vals = default_rnd.rand(len(test_stats))
+    sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: (x[1], rand_test_vals[x[0]]))
     filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
     fraction_size = max(1, int(fraction * prog_interactions.shape[1]))
     min_size = min(fraction_size, selection_size)
@@ -453,16 +454,16 @@ def update_cand_uo_builder(frac_or_size = 10, main_fn = update_cand_underlying_o
     return partial(main_fn, 
                    test_selection_strategy = partial(select_hardest_tests, fraction = frac_or_size / 100.0, selection_size = frac_or_size))
 
-# coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
-# coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
-# coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
+coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
+coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
+coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
 coevol_uo_40 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(40))
-# coevol_uo_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50))
-# coevol_uo_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60))
-# coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
-# coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
-# coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
-# coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
+coevol_uo_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50))
+coevol_uo_60 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(60))
+coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
+coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
+coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
+coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
 
 
 # coevol_uo2_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10, main_fn=update_cand_underlying_objectives2))
