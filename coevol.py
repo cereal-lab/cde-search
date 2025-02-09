@@ -478,10 +478,10 @@ coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, mai
 # coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
 
 
-# coevol_sim_names1 = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+coevol_sim_names = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
 # coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
 # coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
-coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
+# coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
 
 if __name__ == '__main__':
     import gp_benchmarks
