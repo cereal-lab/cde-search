@@ -173,6 +173,18 @@ def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, s
     return res
 
 import time 
+
+def dedupl_prog_ids(prog_ids, population):
+    res = [] 
+    present = {}
+    for prog_id in prog_ids:
+        prog = population[prog_id]
+        if prog in present:
+            continue
+        present[prog] = prog_id 
+        res.append(prog_id)
+    return res
+
 def update_cand_underlying_objectives(populations, interactions, test_selection_strategy = select_hardest_tests, *, runtime_context: CoevolRuntimeContext):
     """ Finds underlying objectives for programs, samples most discriminating tests (if necessary)
         Extracted coordinate system preserve relation of what individuals could be combined in breeding 
@@ -213,15 +225,15 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     runtime_context.stats.setdefault('dims', []).append(len(dims))
     dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
     dim_points_coords = frozenset(dim_points.keys())
-    spanned_groups = {}    
-    preserved_points =  [prog_ids for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
+    spanned_groups = {} 
+    preserved_points =  [dedupl_prog_ids(prog_ids, programs) for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
     span_id_to_covered_dims = {}
     for span_coords, prog_ids in spanned_points.items():
         span_dims = frozenset.intersection(span_coords, dim_points_coords)
         if len(span_dims) == 0:
             continue
         span_id = len(preserved_points)
-        preserved_points.append(prog_ids)
+        preserved_points.append(dedupl_prog_ids(prog_ids, programs))
         span_id_to_covered_dims[span_id] = span_dims
         spanned_groups[span_id] = set(dim_id for (dim_id, _) in span_dims)
     for span_id1, span_dims1 in span_id_to_covered_dims.items():
@@ -233,7 +245,7 @@ def update_cand_underlying_objectives(populations, interactions, test_selection_
     group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
     selected_group_ids = set()
     selected_group_ids_list = []
-    for test_id in range(len(runtime_context.gold_outputs)):
+    for test_id in tests:
         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
         if len(filtered_subgroup_ids) == 0:
@@ -342,11 +354,11 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
     preserved_points_dims = [] 
     
     for coors, prog_ids in filtered_dims.items():
-        preserved_points.append(prog_ids)
+        preserved_points.append(dedupl_prog_ids(prog_ids, programs))
         preserved_points_dims.append(frozenset([coors]))
 
     for coords, prog_ids in left_spanned_points.items():
-        preserved_points.append(prog_ids)
+        preserved_points.append(dedupl_prog_ids(prog_ids, programs))
         preserved_points_dims.append(coords)
 
     excluded_breed_groups = defaultdict(set)
@@ -381,7 +393,7 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
     group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
     selected_group_ids = set()
     selected_group_ids_list = []
-    for test_id in range(len(runtime_context.gold_outputs)):
+    for test_id in tests:
         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
         if len(filtered_subgroup_ids) == 0:
