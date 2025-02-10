@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from functools import partial
 import numpy as np
 from de import extract_dims_np_b
-from gp import RuntimeContext, analyze_population, create_runtime_context, gp_eval, depth_fitness, hamming_distance_fitness, identity_map, init_each, subtree_breed, tournament_selection
+from gp import RuntimeContext, analyze_population, create_runtime_context, gp_eval, depth_fitness, hamming_distance_fitness, identity_map, init_each, random_selection, subtree_breed, tournament_selection
 from rnd import default_rnd
 import utils
 
@@ -65,7 +65,7 @@ class CoevolRuntimeContext(RuntimeContext):
 
 # previously_selected = None
 
-def breeding_group_selection(population, fitnesses, select_fn = partial(tournament_selection, tournament_selection_size = 3), *, runtime_context: CoevolRuntimeContext):
+def breeding_group_selection(population, fitnesses, select_fn = random_selection, *, runtime_context: CoevolRuntimeContext):
     nondominant = runtime_context.nondominant
     if nondominant.selected_group_id is not None:
         exclude_groups = nondominant.spanned_groups.get(nondominant.selected_group_id, set())
@@ -168,9 +168,24 @@ def select_hardest_tests(tests, prog_interactions: np.ndarray, fraction = 0.5, s
     sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: (x[1], rand_test_vals[x[0]]))
     filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
     fraction_size = max(1, int(fraction * prog_interactions.shape[1]))
-    min_size = min(fraction_size, selection_size)
+    min_size = round(min(fraction_size, selection_size))
     runtime_context.stats.setdefault('obj_size', []).append(min_size)
     res = filtered_test_ids[:min_size]
+    return res
+
+def select_hardest_tests_anneal(tests, prog_interactions: np.ndarray, anneal_time = 100, max_fraction = 0.5, max_selection_size = 50, min_fraction = 0.1, min_selection_size = 10, *, runtime_context: RuntimeContext):
+    test_stats = np.sum(prog_interactions, axis=0)
+    rand_test_vals = default_rnd.rand(len(test_stats))
+    sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: (x[1], rand_test_vals[x[0]]))
+    filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
+    time_i = runtime_context.anneal_context.get(select_hardest_tests_anneal.__name__, 0)
+    fraction = max_fraction - (max_fraction - min_fraction) * min(time_i, anneal_time) / anneal_time
+    selection_size = max_selection_size - (max_selection_size - min_selection_size) * min(time_i, anneal_time) / anneal_time
+    fraction_size = max(1, int(fraction * prog_interactions.shape[1]))
+    min_size = round(min(fraction_size, selection_size))
+    runtime_context.stats.setdefault('obj_size', []).append(min_size)
+    res = filtered_test_ids[:min_size]
+    runtime_context.anneal_context[select_hardest_tests_anneal.__name__] = time_i + 1
     return res
 
 import time 
@@ -432,6 +447,114 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
     selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions, runtime_context = runtime_context)
     return [selected_programs, selected_tests]
 
+# def find_discriminative_tests(interactions: np.ndarray):
+#     ''' interactions are underlying objectives (rows) vs tests (columns) '''
+#     selected_test_ids = []
+#     uo_ids = np.arange(interactions.shape[0])
+#     while len(uo_ids) > 0:
+#         test_scores = np.zeros(interactions.shape[1], dtype=int)
+#         for i in range(interactions.shape[1]):
+#             for j in range(i + 1, interactions.shape[1]):
+#                 score = np.sum(interactions[:, i] != interactions[:, j])
+#                 test_scores[i] += score
+#                 test_scores[j] += score
+#         best_test_ids = np.argsort(test_scores)
+#     return selected_test_ids
+
+
+# def update_cand_underlying_objectives_discr_tests(populations, interactions, *, runtime_context: CoevolRuntimeContext):
+#     """ See update_cand_underlying_objectives,
+#         As a test selection strategy, we select tests that discriminate extracted underlying objectives
+#     """
+#     programs, tests = populations
+
+#     selected_interactions = interactions[:, tests]
+
+#     # if weighted_interractions:
+#     #     # idea as in ifs - we count number of programs that solve tests
+#     #     test_difficulty = np.sum(selected_interactions, axis=0)
+#     #     solvable_tests_mask = test_difficulty > 0
+#     #     if not(np.all(solvable_tests_mask)):
+#     #         selected_interactions = selected_interactions[:, solvable_tests_mask]
+#     #         test_difficulty = test_difficulty[solvable_tests_mask]
+#     #     test_weight = 1.0 / test_difficulty # 0 --> many programs solve it, 1 --> one program solves it
+#     #     selected_interactions = selected_interactions * test_weight
+
+#     # TODO: handle case when all tests are difficult!!!
+
+#     origin_zero = np.packbits(np.zeros_like(selected_interactions[0], dtype = bool))
+#     packed_ints = np.packbits(selected_interactions.astype(bool), axis=1)
+#     start_ms = time.process_time()
+#     dims, origin, spanned_points = extract_dims_np_b(packed_ints, origin_outcomes=origin_zero) # program underlying objectives
+#     end_ms = time.process_time()
+#     dims_time = end_ms - start_ms
+#     runtime_context.stats.setdefault('dims_time', []).append(dims_time)
+#     # print(f"Extract dims time: {dims_time}")
+#     # pass 
+#     # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
+#     # pass
+#     runtime_context.stats.setdefault('dims', []).append(len(dims))
+#     dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
+#     dim_points_coords = frozenset(dim_points.keys())
+#     spanned_groups = {} 
+#     preserved_points =  [dedupl_prog_ids(prog_ids, programs) for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
+#     span_id_to_covered_dims = {}
+#     for span_coords, prog_ids in spanned_points.items():
+#         span_dims = frozenset.intersection(span_coords, dim_points_coords)
+#         if len(span_dims) == 0:
+#             continue
+#         span_id = len(preserved_points)
+#         preserved_points.append(dedupl_prog_ids(prog_ids, programs))
+#         span_id_to_covered_dims[span_id] = span_dims
+#         spanned_groups[span_id] = set(dim_id for (dim_id, _) in span_dims)
+#     for span_id1, span_dims1 in span_id_to_covered_dims.items():
+#         for span_id2, span_dims2 in span_id_to_covered_dims.items():
+#             if (span_id1 != span_id2) and (span_dims1.issubset(span_dims2) or span_dims2.issubset(span_dims1)):
+#                 spanned_groups[span_id1].add(span_id2)
+#     runtime_context.stats.setdefault('spanned', []).append(len(spanned_groups))
+#     group_interactions = interactions[[p[0] for p in preserved_points]]
+#     group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
+#     selected_group_ids = set()
+#     selected_group_ids_list = []
+#     for test_id in tests:
+#         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
+#         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
+#         if len(filtered_subgroup_ids) == 0:
+#             continue
+#         selected_group_id = min(filtered_subgroup_ids, key = lambda x: group_fitnesses[x])
+#         selected_group_ids.add(selected_group_id)
+#         selected_group_ids_list.append(selected_group_id)
+
+#     selected_groups = []
+#     selected_group_remap = {}
+#     for i in selected_group_ids_list:
+#         pp = preserved_points[i]
+#         selected_group_remap[i] = len(selected_groups)
+#         selected_groups.append(pp)
+#     selected_spanned_groups = {}
+#     for group_id, excluded_groups in spanned_groups.items():
+#         if group_id in selected_group_ids:
+#             new_excluded_groups = set(selected_group_remap[eg] for eg in excluded_groups if eg in selected_group_ids)
+#             if len(new_excluded_groups) > 0:
+#                 selected_spanned_groups[selected_group_remap[group_id]] = new_excluded_groups
+
+#     selected_ids = [i for p in selected_groups for i in p]
+#     prog_id_remap = {old_id:new_id for new_id, old_id in enumerate(selected_ids)}
+#     selected_groups_remapped = [[prog_id_remap[i] for i in p] for p in selected_groups]
+#     # ind_groups = {prog_id: group_id for group_id, prog_ids in enumerate(preserved_points) for prog_id in prog_ids}
+
+#     runtime_context.nondominant.groups = selected_groups_remapped
+#     # nondominant.ind_groups = ind_groups
+#     runtime_context.nondominant.spanned_groups = selected_spanned_groups
+#     runtime_context.nondominant.selected_group_id = None
+#     runtime_context.nondominant.group_interactions = group_interactions[selected_group_ids_list]
+#     runtime_context.nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
+
+#     selected_programs = [programs[i] for i in selected_ids]
+#     selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions, runtime_context = runtime_context)
+#     return [selected_programs, selected_tests]
+
+
 def gp_coevolve2(problem_init, *,
                  population_sizes = [0, 0], max_gens = 100,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = None,
@@ -454,6 +577,12 @@ def update_cand_uo_builder(frac_or_size = 10, main_fn = update_cand_underlying_o
     return partial(main_fn, 
                    test_selection_strategy = partial(select_hardest_tests, fraction = frac_or_size / 100.0, selection_size = frac_or_size))
 
+def update_cand_uo_annel_builder(min_frac_or_size = 10, max_frac_or_size = 50, anneal_time = 100, main_fn = update_cand_underlying_objectives):
+    return partial(main_fn, 
+                   test_selection_strategy = partial(select_hardest_tests_anneal, anneal_time = anneal_time,
+                                                     min_fraction = min_frac_or_size / 100.0, min_selection_size = min_frac_or_size,
+                                                     max_fraction = max_frac_or_size / 100.0, max_selection_size = max_frac_or_size))
+
 coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
 coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
 coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
@@ -464,6 +593,8 @@ coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
 coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
 coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
 coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
+
+coevol_uo_50_10 = partial(gp_coevolve2, update_fn = update_cand_uo_annel_builder(10, 50, anneal_time=90))
 
 
 # coevol_uo2_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10, main_fn=update_cand_underlying_objectives2))
@@ -478,7 +609,7 @@ coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, mai
 # coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
 
 
-coevol_sim_names = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
 # coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
 # coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
 # coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
@@ -486,7 +617,7 @@ coevol_sim_names = ["coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_4
 if __name__ == '__main__':
     import gp_benchmarks
     problem_builder = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = coevol_uo_40(problem_builder)
+    best_prog, stats = coevol_uo_50_10(problem_builder)
     print(best_prog)
     print(stats)
     pass    
