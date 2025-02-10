@@ -90,7 +90,7 @@ def breeding_group_selection(population, fitnesses, select_fn = random_selection
 
 def select_explore_exploit_programs(good_programs, init_fn = init_each, 
                                     breed_fn = partial(subtree_breed, breed_select_fn = breeding_group_selection), 
-                                    explore_size = 0, exploit_size = 1000, uo_repr = 2, *, runtime_context: CoevolRuntimeContext):
+                                    explore_size = 0, exploit_size = 500, uo_repr = 2, *, runtime_context: CoevolRuntimeContext):
     ''' select those programs who previously distinguished tests of underlying objectives and then add new programs to explore'''
     if len(good_programs) == 0: # nobody can breed
         all_programs = init_fn(explore_size + exploit_size, runtime_context = runtime_context)
@@ -556,7 +556,7 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
 
 
 def gp_coevolve2(problem_init, *,
-                 population_sizes = [0, 0], max_gens = 100,
+                 population_sizes = [0, 0], max_gens = 200,
                 fitness_fns = [hamming_distance_fitness, depth_fitness], main_fitness_fn = None,
                 select_fitness_ids = None, init_fn = zero_init, map_fn = identity_map, 
                 first_select_fn = select_explore_exploit_programs,
