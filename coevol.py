@@ -447,113 +447,136 @@ def update_cand_underlying_objectives2(populations, interactions, test_selection
     selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions, runtime_context = runtime_context)
     return [selected_programs, selected_tests]
 
-# def find_discriminative_tests(interactions: np.ndarray):
-#     ''' interactions are underlying objectives (rows) vs tests (columns) '''
-#     selected_test_ids = []
-#     uo_ids = np.arange(interactions.shape[0])
-#     while len(uo_ids) > 0:
-#         test_scores = np.zeros(interactions.shape[1], dtype=int)
-#         for i in range(interactions.shape[1]):
-#             for j in range(i + 1, interactions.shape[1]):
-#                 score = np.sum(interactions[:, i] != interactions[:, j])
-#                 test_scores[i] += score
-#                 test_scores[j] += score
-#         best_test_ids = np.argsort(test_scores)
-#     return selected_test_ids
+def find_discriminative_tests(interactions: np.ndarray):
+    ''' interactions are underlying objectives (rows) vs tests (columns) '''
+    uo_pairs = [ (i, j) for i in range(interactions.shape[0]) for j in range(i + 1, interactions.shape[0]) ]
+    discriminating_lists = {}
+    for (uo1, uo2) in uo_pairs:
+        uo_ints1 = interactions[uo1]
+        uo_ints2 = interactions[uo2]
+        tids = np.where(uo_ints1 != uo_ints2)[0]
+        for tid in tids:
+            if uo_ints1[tid] < uo_ints2[tid]:
+                discriminating_lists.setdefault(tid, set()).add((uo1, uo2))
+            else:
+                discriminating_lists.setdefault(tid, set()).add((uo2, uo1))
+    discriminating_set = set()
+    while len(discriminating_lists) > 0: 
+        max_tid = max(discriminating_lists.keys(), key = lambda x: len(discriminating_lists[x]))
+        max_tid_set = discriminating_lists[max_tid]
+        discriminating_set.add(max_tid)
+        del discriminating_lists[max_tid]
+        to_delete = set()
+        for tid, tid_set in discriminating_lists.items():
+            tid_set -= max_tid_set
+            if len(tid_set) == 0:
+                to_delete.add(tid)
+        for tid in to_delete:
+            del discriminating_lists[tid]
+    return discriminating_set
 
+def select_dicriminating_then_hardest_tests(uo_interactions: np.ndarray, all_interactions: np.ndarray, fraction = 0.5, selection_size = 10, *, runtime_context: RuntimeContext):
+    fraction_size = max(1, int(fraction * all_interactions.shape[1]))
+    min_size = round(min(fraction_size, selection_size))
+    discriminating_tests = find_discriminative_tests(uo_interactions)
+    min_size -= len(discriminating_tests)
+    if min_size < 0:
+        runtime_context.stats.setdefault('obj_size', []).append(len(discriminating_tests))
+        return list(discriminating_tests)
+    other_test_ids = [tid for tid in range(all_interactions.shape[1]) if tid not in discriminating_tests]
+    left_interactions = all_interactions[:, other_test_ids]
+    test_stats = np.sum(left_interactions, axis=0)
+    rand_test_vals = default_rnd.rand(len(test_stats))
+    sorted_test_ids = sorted(enumerate(test_stats), key=lambda x: (x[1], rand_test_vals[x[0]]))
+    filtered_test_ids = [i for i, c in sorted_test_ids if c > 0]
+    res = filtered_test_ids[:min_size]
+    runtime_context.stats.setdefault('obj_size', []).append(min_size + len(discriminating_tests))
+    discriminating_tests.update(res)
+    return list(discriminating_tests)
 
-# def update_cand_underlying_objectives_discr_tests(populations, interactions, *, runtime_context: CoevolRuntimeContext):
-#     """ See update_cand_underlying_objectives,
-#         As a test selection strategy, we select tests that discriminate extracted underlying objectives
-#     """
-#     programs, tests = populations
+def update_cand_underlying_objectives_discr_tests(populations, interactions, fraction = 0.5, selection_size = 10, *, runtime_context: CoevolRuntimeContext):
+    """ See update_cand_underlying_objectives,
+        As a test selection strategy, we select tests that discriminate extracted underlying objectives
+    """
+    programs, tests = populations
 
-#     selected_interactions = interactions[:, tests]
+    selected_interactions = interactions[:, tests]
 
-#     # if weighted_interractions:
-#     #     # idea as in ifs - we count number of programs that solve tests
-#     #     test_difficulty = np.sum(selected_interactions, axis=0)
-#     #     solvable_tests_mask = test_difficulty > 0
-#     #     if not(np.all(solvable_tests_mask)):
-#     #         selected_interactions = selected_interactions[:, solvable_tests_mask]
-#     #         test_difficulty = test_difficulty[solvable_tests_mask]
-#     #     test_weight = 1.0 / test_difficulty # 0 --> many programs solve it, 1 --> one program solves it
-#     #     selected_interactions = selected_interactions * test_weight
+    origin_zero = np.packbits(np.zeros_like(selected_interactions[0], dtype = bool))
+    packed_ints = np.packbits(selected_interactions.astype(bool), axis=1)
+    start_ms = time.process_time()
+    dims, _, spanned_points = extract_dims_np_b(packed_ints, origin_outcomes=origin_zero) # program underlying objectives
+    end_ms = time.process_time()
+    dims_time = end_ms - start_ms
+    runtime_context.stats.setdefault('dims_time', []).append(dims_time)
+    # print(f"Extract dims time: {dims_time}")
+    # pass 
+    # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
+    # pass
+    runtime_context.stats.setdefault('dims', []).append(len(dims))
+    dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
+    dim_points_coords = frozenset(dim_points.keys())
+    spanned_groups = {} 
+    preserved_points = [dedupl_prog_ids(prog_ids, programs) for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
+    uo_interactions = interactions[[p[0] for p in preserved_points]]
+    span_id_to_covered_dims = {}
+    for span_coords, prog_ids in spanned_points.items():
+        span_dims = frozenset.intersection(span_coords, dim_points_coords)
+        if len(span_dims) == 0:
+            continue
+        span_id = len(preserved_points)
+        preserved_points.append(dedupl_prog_ids(prog_ids, programs))
+        span_id_to_covered_dims[span_id] = span_dims
+        spanned_groups[span_id] = set(dim_id for (dim_id, _) in span_dims)
+    for span_id1, span_dims1 in span_id_to_covered_dims.items():
+        for span_id2, span_dims2 in span_id_to_covered_dims.items():
+            if (span_id1 != span_id2) and (span_dims1.issubset(span_dims2) or span_dims2.issubset(span_dims1)):
+                spanned_groups[span_id1].add(span_id2)
+    runtime_context.stats.setdefault('spanned', []).append(len(spanned_groups))
+    group_interactions = interactions[[p[0] for p in preserved_points]]
 
-#     # TODO: handle case when all tests are difficult!!!
+    new_tests = select_dicriminating_then_hardest_tests(uo_interactions, group_interactions, 
+                                                        fraction=fraction, selection_size=selection_size, runtime_context=runtime_context)
 
-#     origin_zero = np.packbits(np.zeros_like(selected_interactions[0], dtype = bool))
-#     packed_ints = np.packbits(selected_interactions.astype(bool), axis=1)
-#     start_ms = time.process_time()
-#     dims, origin, spanned_points = extract_dims_np_b(packed_ints, origin_outcomes=origin_zero) # program underlying objectives
-#     end_ms = time.process_time()
-#     dims_time = end_ms - start_ms
-#     runtime_context.stats.setdefault('dims_time', []).append(dims_time)
-#     # print(f"Extract dims time: {dims_time}")
-#     # pass 
-#     # dims0, _, spanned0 = extract_dims([list(t) for t in selected_interactions])
-#     # pass
-#     runtime_context.stats.setdefault('dims', []).append(len(dims))
-#     dim_points = { (dim_id, len(d) - 1): list(d[-1]) for dim_id, d in enumerate(dims) }
-#     dim_points_coords = frozenset(dim_points.keys())
-#     spanned_groups = {} 
-#     preserved_points =  [dedupl_prog_ids(prog_ids, programs) for (_, _), prog_ids in sorted(dim_points.items(), key = lambda x: x[0][0])]
-#     span_id_to_covered_dims = {}
-#     for span_coords, prog_ids in spanned_points.items():
-#         span_dims = frozenset.intersection(span_coords, dim_points_coords)
-#         if len(span_dims) == 0:
-#             continue
-#         span_id = len(preserved_points)
-#         preserved_points.append(dedupl_prog_ids(prog_ids, programs))
-#         span_id_to_covered_dims[span_id] = span_dims
-#         spanned_groups[span_id] = set(dim_id for (dim_id, _) in span_dims)
-#     for span_id1, span_dims1 in span_id_to_covered_dims.items():
-#         for span_id2, span_dims2 in span_id_to_covered_dims.items():
-#             if (span_id1 != span_id2) and (span_dims1.issubset(span_dims2) or span_dims2.issubset(span_dims1)):
-#                 spanned_groups[span_id1].add(span_id2)
-#     runtime_context.stats.setdefault('spanned', []).append(len(spanned_groups))
-#     group_interactions = interactions[[p[0] for p in preserved_points]]
-#     group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
-#     selected_group_ids = set()
-#     selected_group_ids_list = []
-#     for test_id in tests:
-#         subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
-#         filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
-#         if len(filtered_subgroup_ids) == 0:
-#             continue
-#         selected_group_id = min(filtered_subgroup_ids, key = lambda x: group_fitnesses[x])
-#         selected_group_ids.add(selected_group_id)
-#         selected_group_ids_list.append(selected_group_id)
+    group_fitnesses = len(runtime_context.gold_outputs) - np.sum(group_interactions, axis=1)
+    selected_group_ids = set()
+    selected_group_ids_list = []
+    for test_id in new_tests:
+        subgroup_ids = np.where(group_interactions[:, test_id] == 1)[0] # group solves tests
+        filtered_subgroup_ids = [i for i in subgroup_ids if i not in selected_group_ids]
+        if len(filtered_subgroup_ids) == 0:
+            continue
+        selected_group_id = min(filtered_subgroup_ids, key = lambda x: group_fitnesses[x])
+        selected_group_ids.add(selected_group_id)
+        selected_group_ids_list.append(selected_group_id)
 
-#     selected_groups = []
-#     selected_group_remap = {}
-#     for i in selected_group_ids_list:
-#         pp = preserved_points[i]
-#         selected_group_remap[i] = len(selected_groups)
-#         selected_groups.append(pp)
-#     selected_spanned_groups = {}
-#     for group_id, excluded_groups in spanned_groups.items():
-#         if group_id in selected_group_ids:
-#             new_excluded_groups = set(selected_group_remap[eg] for eg in excluded_groups if eg in selected_group_ids)
-#             if len(new_excluded_groups) > 0:
-#                 selected_spanned_groups[selected_group_remap[group_id]] = new_excluded_groups
+    selected_groups = []
+    selected_group_remap = {}
+    for i in selected_group_ids_list:
+        pp = preserved_points[i]
+        selected_group_remap[i] = len(selected_groups)
+        selected_groups.append(pp)
+    selected_spanned_groups = {}
+    for group_id, excluded_groups in spanned_groups.items():
+        if group_id in selected_group_ids:
+            new_excluded_groups = set(selected_group_remap[eg] for eg in excluded_groups if eg in selected_group_ids)
+            if len(new_excluded_groups) > 0:
+                selected_spanned_groups[selected_group_remap[group_id]] = new_excluded_groups
 
-#     selected_ids = [i for p in selected_groups for i in p]
-#     prog_id_remap = {old_id:new_id for new_id, old_id in enumerate(selected_ids)}
-#     selected_groups_remapped = [[prog_id_remap[i] for i in p] for p in selected_groups]
-#     # ind_groups = {prog_id: group_id for group_id, prog_ids in enumerate(preserved_points) for prog_id in prog_ids}
+    selected_ids = [i for p in selected_groups for i in p]
+    prog_id_remap = {old_id:new_id for new_id, old_id in enumerate(selected_ids)}
+    selected_groups_remapped = [[prog_id_remap[i] for i in p] for p in selected_groups]
+    # ind_groups = {prog_id: group_id for group_id, prog_ids in enumerate(preserved_points) for prog_id in prog_ids}
 
-#     runtime_context.nondominant.groups = selected_groups_remapped
-#     # nondominant.ind_groups = ind_groups
-#     runtime_context.nondominant.spanned_groups = selected_spanned_groups
-#     runtime_context.nondominant.selected_group_id = None
-#     runtime_context.nondominant.group_interactions = group_interactions[selected_group_ids_list]
-#     runtime_context.nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
+    runtime_context.nondominant.groups = selected_groups_remapped
+    # nondominant.ind_groups = ind_groups
+    runtime_context.nondominant.spanned_groups = selected_spanned_groups
+    runtime_context.nondominant.selected_group_id = None
+    runtime_context.nondominant.group_interactions = group_interactions[selected_group_ids_list]
+    runtime_context.nondominant.group_fitnesses = group_fitnesses[selected_group_ids_list][:, None]
 
-#     selected_programs = [programs[i] for i in selected_ids]
-#     selected_tests = test_selection_strategy(tests, runtime_context.nondominant.group_interactions, runtime_context = runtime_context)
-#     return [selected_programs, selected_tests]
-
+    selected_programs = [programs[i] for i in selected_ids]
+    return [selected_programs, new_tests]
 
 def gp_coevolve2(problem_init, *,
                  population_sizes = [0, 0], max_gens = 200,
@@ -583,6 +606,9 @@ def update_cand_uo_annel_builder(min_frac_or_size = 10, max_frac_or_size = 50, a
                                                      min_fraction = min_frac_or_size / 100.0, min_selection_size = min_frac_or_size,
                                                      max_fraction = max_frac_or_size / 100.0, max_selection_size = max_frac_or_size))
 
+def update_cand_uo_discr_builder(frac_or_size = 10):
+    return partial(update_cand_underlying_objectives_discr_tests, fraction = frac_or_size / 100.0, selection_size = frac_or_size)
+
 coevol_uo_10 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(10))
 coevol_uo_20 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(20))
 coevol_uo_30 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(30))
@@ -593,6 +619,17 @@ coevol_uo_70 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(70))
 coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
 coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
 coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
+
+coevol_uo_d_10 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(10))
+coevol_uo_d_20 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(20))
+coevol_uo_d_30 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(30))
+coevol_uo_d_40 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(40))
+coevol_uo_d_50 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(50))
+coevol_uo_d_60 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(60))
+coevol_uo_d_70 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(70))
+coevol_uo_d_80 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(80))
+coevol_uo_d_90 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(90))
+coevol_uo_d_100 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(100))
 
 coevol_uo_50_10 = partial(gp_coevolve2, update_fn = update_cand_uo_annel_builder(10, 50, anneal_time=90))
 
@@ -609,7 +646,8 @@ coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, mai
 # coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
 
 
-coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+# coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+coevol_sim_names = ["coevol_uo_d_10", "coevol_uo_d_20", "coevol_uo_d_30", "coevol_uo_d_40", "coevol_uo_d_50", "coevol_uo_d_60", "coevol_uo_d_70", "coevol_uo_d_80", "coevol_uo_d_90", "coevol_uo_d_100"]
 # coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
 # coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
 # coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
@@ -617,7 +655,7 @@ coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_u
 if __name__ == '__main__':
     import gp_benchmarks
     problem_builder = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = coevol_uo_50_10(problem_builder)
+    best_prog, stats = coevol_uo_d_40(problem_builder)
     print(best_prog)
     print(stats)
     pass    

@@ -6,8 +6,7 @@
 #SBATCH --open-mode=append
 #SBATCH --array=0-164
 
-# NOTE1: rand_selection 
-# NOTE2: annealing
+# NOTE1: coevol4 + 500 inds for 200 gens
 
 games=('coevol_uo_50_10:cmp6'
         'coevol_uo_50_10:cmp8'
