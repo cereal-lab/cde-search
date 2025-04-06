@@ -69,13 +69,13 @@ def compute_run_stats(file_name: str, sim_names = None, tablefmt = "latex", tran
             print(f"Warning: {game} {sim} count is {m['total_count']}")
         m["conv_rate"] = m["conv_count"] / m["total_count"]  
         if 'gen' in m:
-            gen_std = round(np.std(m["gen"]))
-            gen_mean = round(np.mean(m["gen"]))
+            gen_std = round(np.ceil(np.std(m["gen"])))
+            gen_mean = round(np.ceil(np.mean(m["gen"])))
             m['gen_m'] = f"${gen_mean} \\pm {gen_std}$"
         else:
             m['gen_m'] = ""
-        err_mean = round(np.mean(m["err"]))
-        err_std = round(np.std(m["err"]))
+        err_mean = round(np.ceil(np.mean(m["err"])))
+        err_std = round(np.ceil(np.std(m["err"])))
         m["err_m"] = f"${err_mean} \\pm {err_std}$"
         if "cpu_time" in m:
             cpu_time_mean = round(np.mean(m["cpu_time"]))
@@ -113,6 +113,7 @@ def compute_run_stats(file_name: str, sim_names = None, tablefmt = "latex", tran
     rows2 = []
     rows3 = []
     rows4 = []
+    rows5 = []
     # row_names = ['cmp6', 'cmp8', 'disc1', 'disc2', 'disc3', 'disc4', 'disc5', 'maj6', 'malcev1', 'malcev2', 'malcev3', 'malcev4', 'malcev5', 'mux6', 'par5']
     row_names = sorted(game_conv.keys(), key = lambda x: game_conv[x], reverse=True)
     rows.append(["Total", "", "",  *[round(sim_conv[cn] * 100/sim_total_count[cn]) for cn in col_names ]])
@@ -132,21 +133,26 @@ def compute_run_stats(file_name: str, sim_names = None, tablefmt = "latex", tran
         rows3.append([rn, *sim_err])
         sim_cpu_time = [v for cn in col_names for v in [stats.get((rn, cn), {}).get('cpu_time', "")]]
         rows4.append([rn, *sim_cpu_time])        
+        total_count = [v for cn in col_names for v in [stats.get((rn, cn), {}).get('total_count', "")]]
+        rows5.append([rn, *total_count])           
 
     suffix = ""
     col_names1 = ["", "Total", "depth", *col_names]
     col_names2 = ["", *col_names]
     col_names3 = ["", *col_names]
     col_names4 = ["", *col_names]    
+    col_names5 = ["", *col_names]    
     if transpose:
         full_rows1 = [col_names1, *rows]
         full_rows2 = [col_names2, *rows2]
         full_rows3 = [col_names3, *rows3]
         full_rows4 = [col_names4, *rows4]
+        full_rows5 = [col_names4, *rows5]
         col_names1, *rows = list(map(list, zip(*full_rows1)))
         col_names2, *rows2 = list(map(list, zip(*full_rows2)))
         col_names3, *rows3 = list(map(list, zip(*full_rows3)))
         col_names4, *rows4 = list(map(list, zip(*full_rows4)))
+        col_names5, *rows5 = list(map(list, zip(*full_rows5)))
         suffix = "-T"
         pass
 
@@ -162,6 +168,9 @@ def compute_run_stats(file_name: str, sim_names = None, tablefmt = "latex", tran
     
     with open(os.path.join(out_dir, f"{custom_prefix}{out_name}-cpu-{tablefmt}{suffix}.txt"), "w") as f:
         print(tabulate(rows4, headers=col_names4, tablefmt=tablefmt, numalign="center", stralign="center"), file=f)
+
+    with open(os.path.join(out_dir, f"{custom_prefix}{out_name}-count-{tablefmt}{suffix}.txt"), "w") as f:
+        print(tabulate(rows5, headers=col_names5, tablefmt=tablefmt, numalign="center", stralign="center"), file=f)
 
     return stats
 
@@ -710,23 +719,23 @@ def compute_breedings(file_name: str, out_file, game_names, sim_names = None,
 
 
 # sim_names = ["ifs"] #gp_sim_names #["do_rand", "do_fo", "doc_p", "doc_d"]
-sel_sim_names = ["coevol_uo_40", "coevol_uo2_50", "ifs", "ifs_0", "doc_d_0", "doc_p_0", "dof_w_3_0", "dof_wh_3_0", "cov_ht_bp", "cov_rt_bp", "gp", "gp_0", "doc_d", "doc_p", "dof_w_3", "dof_wh_3", 'do_nsga', 'do_nsga_0']
+# sel_sim_names = ["coevol_uo_40", "coevol_uo2_50", "ifs", "ifs_0", "doc_d_0", "doc_p_0", "dof_w_3_0", "dof_wh_3_0", "cov_ht_bp", "cov_rt_bp", "gp", "gp_0", "doc_d", "doc_p", "dof_w_3", "dof_wh_3", 'do_nsga', 'do_nsga_0']
 if __name__ == "__main__":
     print("testing evo runs")
-    # compute_run_stats("data/test-based-gp/all-all.jsonlist", 
-    #                   sim_names=None, tablefmt="github", transpose=True) #['do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3',])
+    compute_run_stats("data/test-based-gp/coevol6.jsonlist", 
+                      sim_names=None, tablefmt="github", transpose=False) #['do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3',])
     # compute_run_stats("data/test-based-gp/all-all-circe.jsonlist", 
     #                   sim_names=None, tablefmt="github", transpose=True) #, custom_prefix="sel-")
     # pass
-    cnt = 0
-    from gp_benchmarks import all_discrete_benchmarks
-    f = open("setups.txt", "w")
-    for sim_name in sel_sim_names:
-        for b_name in all_discrete_benchmarks().keys():
-            print(sim_name, b_name)
-            print(f"'{sim_name}:{b_name}'", file=f)
-            cnt += 1
-    print(f"total setups: {cnt}")
+    # cnt = 0
+    # from gp_benchmarks import all_discrete_benchmarks
+    # f = open("setups.txt", "w")
+    # for sim_name in coevol.coevol_sim_names:
+    #     for b_name in all_discrete_benchmarks().keys():
+    #         print(sim_name, b_name)
+    #         print(f"'{sim_name}:{b_name}'", file=f)
+    #         cnt += 1
+    # print(f"total setups: {cnt}")
     # cov_ht_bp(idx = 11)
     # get_sol_dupl("data/test-based-gp/all.jsonlist")
     # compute_run_stats("data/test-based-gp/all.jsonlist", sim_names=["gp","ifs","coevol_uo_40","doc_p","doc_d","dof_w_3","dof_wh_3","do_nsga","cov_ht_bp","cov_rt_bp"])

@@ -10,7 +10,7 @@ from typing import Any
 from cde import CDESpace
 from games import CDESpaceGame, CompareOnOneGame, FocusingGame, InteractionGame, IntransitiveRegionGame, GreaterThanGame, NumberGame, run_game
 
-from population import DEScores, HillClimbing, OneTimeSequential, ParetoLayersSelection, DESelection, RandSelection
+from population import DEScores, HillClimbing, MCTSSelection, OneTimeSequential, ParetoLayersSelection, DESelection, RandSelection
 from params import *
 
 def get_args(kwargs: dict[str, Any], prefix):
@@ -148,10 +148,12 @@ SIM = {
     "des-mea":  simulate(DEScores, test_score_strategy="mean_score_strategy"),
     "des-med":  simulate(DEScores, test_score_strategy="median_score_strategy"),
     "des-mod":  simulate(DEScores, test_score_strategy="mode_score_strategy"),
-    "pl-l-0":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_discard_spanned = 0),
-    "pl-l-1":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_discard_spanned = 1),
-    "pl-d-0":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_discard_spanned = 0),
-    "pl-d-1":     simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_discard_spanned = 1),
+    "pl-l-0":   simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_discard_spanned = 0),
+    "pl-l-1":   simulate(ParetoLayersSelection, test_cand_sel_strategy = "local_cand_sel_strategy", test_discard_spanned = 1),
+    "pl-d-0":   simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_discard_spanned = 0),
+    "pl-d-1":   simulate(ParetoLayersSelection, test_cand_sel_strategy = "discr_cand_sel_strategy", test_discard_spanned = 1),
+    "mcts-00":  simulate(MCTSSelection, test_p=0),
+    "mcts-10":  simulate(MCTSSelection, test_p=0.1),
 }
 
 from tabulate import tabulate

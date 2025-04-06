@@ -3,8 +3,10 @@
 '''
 
 from abc import abstractmethod
+from dataclasses import dataclass, field
 import json
 from math import sqrt
+import math
 from typing import Any, Iterable, Optional
 
 import numpy as np
@@ -329,7 +331,167 @@ class ExploitExploreSelection(Selection):
         discriminating_candidates = self.get_discriminating_set(set(last_btach_tests))
         return list(discriminating_candidates) # 
         #return list(set.union(discriminating_candidates, last_batch_candidates))    
+
+@dataclass 
+class MCTSNode: 
+    sample: list[int] # we store ind scores in sample separatelly     
+    num_visits: int = 0
+    score: float = 0 # total score of sample avgd across sample count
+    children: list['MCTSNode'] = field(default_factory=list)
+
+class MCTSSelection(ExploitExploreSelection):
+    ''' Implements Monte-Carlo Tree Search selection 
+        Idea: tree node is a sample of size test from pool
+        The expansion from the node estimate possible improvement of the sample.
+        We recognize that some tests in the node sample could be of good position in local coordinate system
+        We resemple worst tests to do the exploration 
+
+        p - nonleaf proba in MCTS
+        alpha - MCTS len penalty
+        beta - minimal reward
+    '''      
+
+    def __init__(self, pool: list[Any], *, p = 0, c = 0.1, #sqrt(2) / 2,
+                                            spanned_penalty = 0.05,
+                                            score_strategy = "mean_score_strategy",
+                                            child_sel_strategy = 'uct_selection', **kwargs) -> None:
+        ''' p - nonleaf proba in MCTS, alpha - len penalty, beta - minimal reward,
+            c - UCT parameter of exploratiion-exploitation tradeoff     
+        '''
+        super().__init__(pool, **kwargs)
+        self.sel_params.update(p = p, c = c, 
+                               spanned_penalty = spanned_penalty,
+                               score_strategy = score_strategy, child_sel_strategy = child_sel_strategy)
+        self.p = float(p)
+        # self.alpha = float(alpha)
+        # self.beta = float(beta)
+        self.c = float(c)
+        self.spanned_penalty = float(spanned_penalty)
+        self.score_strategy = getattr(self, score_strategy)        
+        self.child_sel_strategy = getattr(self, child_sel_strategy)
+
+    def init_selection(self):
+        super().init_selection()
+        self.axis_scores = {}
+        # self.root = MCTSNode(sample = [], num_visits=1, score=0, children = [])
+        self.roots = []
+        self.total_visits = 0
+
+    def mean_score_strategy(self, test_id: Any) -> float:
+        axis_score = np.mean(self.axis_scores[test_id])
+        return axis_score
+    
+    def uct_selection(self, children: list[MCTSNode], parent: Optional[MCTSNode]) -> Optional[MCTSNode]:
+        ''' Upper Confidence bounds applied to Trees '''
+        if len(children) == 0:
+            return None
         
+        if parent is not None:
+            num_parent_visits = parent.num_visits
+        else:
+            num_parent_visits = self.total_visits
+        if num_parent_visits == 0:
+            num_parent_visits = 1
+        parent_num_visits_log = np.log2(num_parent_visits)
+        total_scores = np.array([ch.score for ch in children])
+        num_visits = np.array([ch.num_visits for ch in children])
+        explore_part = self.c * np.sqrt(parent_num_visits_log / num_visits)
+        exploit_part = total_scores / num_visits
+        children_scores = exploit_part + explore_part
+        best_child_id = np.argmax(children_scores)
+        best_child = children[best_child_id]
+        return (best_child, children_scores[best_child_id])
+    
+    def select_mcts_path(self) -> list[tuple[MCTSNode, float]]:
+        ''' Going from root, selects the path that is best according to child_sel_strategy 
+            Excludes root node as it is just a container
+        '''
+        path = [] # path has node and its score in the selection - tuples
+        cur_node_with_score = self.child_sel_strategy(self.roots, None)
+        while cur_node_with_score is not None:
+            path.append(cur_node_with_score)
+            if self.p != 0 and rnd.random() < self.p:
+                break
+            cur_node = cur_node_with_score[0]
+            cur_node_with_score = self.child_sel_strategy(cur_node.children, cur_node)
+        return path        
+
+    def backpropagate_path(self, sample_score: float, sample: list[int]) -> None:
+        ''' Extends path and backpropagates scores '''
+        new_node = MCTSNode(sample = sample, num_visits = 0, score = 0, children = [])
+        if len(self.selected_path) > 0:
+            extended_node = self.selected_path[-1][0]
+            extended_node.children.append(new_node)
+        else:
+            self.roots.append(new_node)
+        self.selected_path.append((new_node, 0))
+        for node, _ in reversed(self.selected_path):
+            node.num_visits += 1
+            node.score += sample_score
+        self.total_visits += 1
+
+    def update_features(self, interactions: dict[Any, dict[Any, int]], int_keys: set[Any]) -> None:
+        test_ids = list(interactions.keys()) #ids off local interactions
+        candidate_ids = list(int_keys)
+        tests = [[self.interactions[test_id][candidate_id] for candidate_id in candidate_ids] for test_id in test_ids]
+        dims, origin, spanned = extract_dims_fix(tests)
+        sample_score = 0
+        count = 0
+        for dim in dims:
+            for point_id, group in enumerate(dim):
+                for i in group:
+                    test_id = test_ids[i]
+                    score = (point_id + 1) / len(dim)
+                    self.axis_scores.setdefault(test_id, []).append(score)
+                    sample_score += score
+                    count += 1
+        for i in origin:
+            test_id = test_ids[i]
+            self.axis_scores.setdefault(test_id, []).append(0)
+            count += 1
+        for i, spanned_dims in spanned.items():
+            test_id = test_ids[i]
+            span_score = np.mean([(point_id + 1) / len(dims[dim_id]) for dim_id, point_id in spanned_dims.items()]) 
+            span_score -= self.spanned_penalty
+            if span_score < 0:
+                span_score = 0                
+            self.axis_scores.setdefault(test_id, []).append(span_score)
+            sample_score += span_score
+            count += 1
+        sample_score /= count
+        # backpropagate score through MCTS path
+        self.backpropagate_path(sample_score, test_ids)
+
+    # def exploit(self, sample_size) -> set[Any]:
+    #     ''' MCTS selection
+    #         sample_size could dictate how many samples from node to leave 
+    #     '''
+
+    # def explore(self, selected):
+    #     ''' Regenerate new samples and create new node '''
+    #     return super().explore(selected)
+    
+    def exploit(self, sample_size) -> set[Any]:
+        ''' Select inds with MC tree '''
+
+        best_path = self.select_mcts_path()
+        self.selected_path = best_path
+        if len(best_path) == 0:
+            return set() # create full rand sample
+        expansion_node_id = max(range(len(best_path)), key = lambda x: best_path[x][1])
+        if expansion_node_id != len(best_path) - 1:
+            best_path = best_path[:expansion_node_id + 1]
+            self.selected_path = best_path
+        expansion_node = best_path[-1][0]
+        scores = {}
+        for test_id in expansion_node.sample:
+            score = self.score_strategy(test_id)
+            scores[test_id] = score
+        sorted_scores = sorted(scores.keys(), key = lambda x: (scores[x], len(self.interactions[x])), reverse=True)
+        selected = set(sorted_scores[:sample_size])
+        self.ind_groups.setdefault(f"exploit", []).extend(selected)
+        return selected
+
 class DESelection(ExploitExploreSelection):
     ''' Implementation that is based on DECA idea (modified DE algo)
         Param approx_strategy defines how to compute missing values None from global interactions

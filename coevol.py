@@ -22,7 +22,7 @@ def coevol_loop(max_gens, population_sizes, init_fn, map_fns, select_fns, interr
 
         selections = [m(pop) for m, pop in zip(map_fns, selections)]
 
-        outputs, fitnesses, interactions = interract_fn(selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
+        outputs, fitnesses, interactions, selections = interract_fn(selections) # return list of interactions, one per population. In zero-sum game, sum of interactions = const (e.g. 0, 1)
         # test-based GP we consider - zero-sum game where sum = 1, win = 1 (program solved test), 0
 
         best_ind = analyze_pop_fn(selections[0], outputs, fitnesses, all_populations = selections)
@@ -133,7 +133,7 @@ def prog_test_interractions(populations, eval_fn = gp_eval, *, runtime_context: 
     ''' Test-based interactions, zero-sum game '''
     programs, tests = populations
     outputs, fitnesses, interactions = eval_fn(programs, runtime_context = runtime_context)
-    return outputs, fitnesses, interactions    
+    return outputs, fitnesses, interactions, populations
 
 def select_all_tests(tests, cand_interactions):
     return tests
@@ -620,16 +620,16 @@ coevol_uo_80 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(80))
 coevol_uo_90 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(90))
 coevol_uo_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100))
 
-coevol_uo_d_10 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(10))
-coevol_uo_d_20 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(20))
+# coevol_uo_d_10 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(10))
+# coevol_uo_d_20 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(20))
 coevol_uo_d_30 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(30))
-coevol_uo_d_40 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(40))
-coevol_uo_d_50 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(50))
-coevol_uo_d_60 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(60))
-coevol_uo_d_70 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(70))
-coevol_uo_d_80 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(80))
-coevol_uo_d_90 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(90))
-coevol_uo_d_100 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(100))
+# coevol_uo_d_40 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(40))
+# coevol_uo_d_50 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(50))
+# coevol_uo_d_60 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(60))
+# coevol_uo_d_70 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(70))
+# coevol_uo_d_80 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(80))
+# coevol_uo_d_90 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(90))
+# coevol_uo_d_100 = partial(gp_coevolve2, update_fn = update_cand_uo_discr_builder(100))
 
 coevol_uo_50_10 = partial(gp_coevolve2, update_fn = update_cand_uo_annel_builder(10, 50, anneal_time=90))
 
@@ -646,8 +646,8 @@ coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, mai
 # coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
 
 
-# coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
-coevol_sim_names = ["coevol_uo_d_10", "coevol_uo_d_20", "coevol_uo_d_30", "coevol_uo_d_40", "coevol_uo_d_50", "coevol_uo_d_60", "coevol_uo_d_70", "coevol_uo_d_80", "coevol_uo_d_90", "coevol_uo_d_100"]
+coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+# coevol_sim_names = ["coevol_uo_d_10", "coevol_uo_d_20", "coevol_uo_d_30", "coevol_uo_d_40", "coevol_uo_d_50", "coevol_uo_d_60", "coevol_uo_d_70", "coevol_uo_d_80", "coevol_uo_d_90", "coevol_uo_d_100"]
 # coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
 # coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
 # coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
@@ -655,7 +655,7 @@ coevol_sim_names = ["coevol_uo_d_10", "coevol_uo_d_20", "coevol_uo_d_30", "coevo
 if __name__ == '__main__':
     import gp_benchmarks
     problem_builder = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = coevol_uo_d_40(problem_builder)
+    best_prog, stats = coevol_uo_40(problem_builder)
     print(best_prog)
     print(stats)
     pass    

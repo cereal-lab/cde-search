@@ -196,12 +196,12 @@ def step_game(step: int, num_steps: int, sel1: Selection, sel2: Selection, game:
     # here we test set2 on set1 (set1 plays role of tests) and we adjust set of tests, sel1
     # test win when candidate loses, therefore 1 -, because interact is not symmetric 
     # and we pick best tests on update 
-    if sel1 is not OneTimeSequential:
+    if not isinstance(sel1, OneTimeSequential):
         ints = {test: {cand:1 - game.interact(cand, test, step = step, num_steps = num_steps) for cand in set2} for test in set1}
         sel1.update(ints, set2)
 
     # here we test set1 on set2 (set2 plays role of tests) and we adjust set of tests, sel2
-    if sel2 is not OneTimeSequential:
+    if not isinstance(sel2, OneTimeSequential):
         ints = {test: {cand:1 - game.interact(cand, test, step = step, num_steps = num_steps) for cand in set1} for test in set2}
         sel2.update(ints, set1)        
 

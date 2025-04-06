@@ -74,10 +74,16 @@ class RuntimeContext:
     func_list: list[utils.AnnotatedFunc] = field(default_factory=list)
     terminal_list: list[utils.AnnotatedFunc] = field(default_factory=list)
     node_builder: Callable[[utils.AnnotatedFunc, list[Node]], Node] = Node
-    tree_contexts: dict[Node, dict[str, Any]] = field(default_factory=dict)
+    # tree_contexts: dict[Node, dict[str, Any]] = field(default_factory=dict)
     breeding_stats: dict[str, dict[Any, int]] = field(default_factory=dict)
     anneal_context: dict[str, Any] = field(default_factory=dict) # depending on operator - stores annealing context
     # aging_type: str = '' # none, syntax, semantics, syntax_w_position, semantics_w_position
+
+    # elitism tracks num_elites of fitnesses and bins nodes from node cache
+    # elite_fitnesses: Optional[np.ndarray] = None
+    # elite_bins: Optional[list[Node]] = None #bin i has fitness elite_fitnesses[i]
+    # num_elites: int = 0
+
     def update(self, **kwargs):        
         for k, v in kwargs.items():
             assert hasattr(self, k), f'Runtime context does not have property {k}'
