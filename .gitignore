@@ -5,3 +5,9 @@ cde-search-env
 img/*
 gifs/*
 data/metrics.jsonlist
+data/test-based-gp/plots/*
+data/test-based-gp/tables/*
+data/test-based-gp/raw/*
+data/sft
+data/metrics/old
+data/test-based-gp/old
