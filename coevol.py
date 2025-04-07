@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from functools import partial
 import numpy as np
 from de import extract_dims_np_b
-from gp import RuntimeContext, analyze_population, create_runtime_context, gp_eval, depth_fitness, hamming_distance_fitness, identity_map, init_each, random_selection, subtree_breed, tournament_selection
+from gp import RuntimeContext, analyze_population, create_runtime_context, gp_eval, depth_fitness, hamming_distance_fitness, identity_map, init_each, random_selection, subtree_breed
 from rnd import default_rnd
 import utils
 
@@ -65,7 +65,7 @@ class CoevolRuntimeContext(RuntimeContext):
 
 # previously_selected = None
 
-def breeding_group_selection(population, fitnesses, select_fn = random_selection, *, runtime_context: CoevolRuntimeContext):
+def breeding_group_selection(population, fitnesses, interactions, select_fn = random_selection, *, runtime_context: CoevolRuntimeContext):
     nondominant = runtime_context.nondominant
     if nondominant.selected_group_id is not None:
         exclude_groups = nondominant.spanned_groups.get(nondominant.selected_group_id, set())
@@ -75,13 +75,13 @@ def breeding_group_selection(population, fitnesses, select_fn = random_selection
             selected_one_id = default_rnd.choice(len(population))
             nondominant.selected_group_id = None
             return selected_one_id
-        selected_group_id = select_fn(candidate_groups, nondominant.group_fitnesses[candidate_groups], runtime_context=runtime_context)
+        selected_group_id = select_fn(candidate_groups, nondominant.group_fitnesses[candidate_groups], None, runtime_context=runtime_context)
         selected_group = nondominant.groups[candidate_groups[selected_group_id]]
         selected_program_id_id = default_rnd.choice(len(selected_group))
         selected_program_id = selected_group[selected_program_id_id]
         nondominant.selected_group_id = None 
         return selected_program_id
-    selected_group_id = select_fn(nondominant.groups, nondominant.group_fitnesses, runtime_context=runtime_context)
+    selected_group_id = select_fn(nondominant.groups, nondominant.group_fitnesses, None, runtime_context=runtime_context)
     prog_ids = nondominant.groups[selected_group_id]
     prog_id_id = default_rnd.choice(len(prog_ids))
     prog_id = prog_ids[prog_id_id]
@@ -99,7 +99,7 @@ def select_explore_exploit_programs(good_programs, init_fn = init_each,
         all_programs = [] #list(good_programs)
         inited_programs = init_fn(explore_size, runtime_context = runtime_context)
         all_programs.extend(inited_programs)
-        breed_programs = breed_fn(exploit_size, good_programs, None, runtime_context=runtime_context)
+        breed_programs = breed_fn(exploit_size, good_programs, None, None, runtime_context=runtime_context)
         all_programs.extend(breed_programs)
 
         #from good programs we only preserve at max uo_repr inds 
@@ -646,11 +646,12 @@ coevol_uo2_50 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(50, mai
 # coevol_uo2_100 = partial(gp_coevolve2, update_fn = update_cand_uo_builder(100, main_fn=update_cand_underlying_objectives2))
 
 
-coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
+# coevol_sim_names = ["coevol_uo_50_10", "coevol_uo_10", "coevol_uo_20", "coevol_uo_30", "coevol_uo_40", "coevol_uo_50", "coevol_uo_60", "coevol_uo_70", "coevol_uo_80", "coevol_uo_90", "coevol_uo_100"]
 # coevol_sim_names = ["coevol_uo_d_10", "coevol_uo_d_20", "coevol_uo_d_30", "coevol_uo_d_40", "coevol_uo_d_50", "coevol_uo_d_60", "coevol_uo_d_70", "coevol_uo_d_80", "coevol_uo_d_90", "coevol_uo_d_100"]
 # coevol_sim_names2 = ["coevol_uo2_10", "coevol_uo2_20", "coevol_uo2_30", "coevol_uo2_40", "coevol_uo2_50", "coevol_uo2_60", "coevol_uo2_70", "coevol_uo2_80", "coevol_uo2_90", "coevol_uo2_100"]
 # coevol_sim_names = [*coevol_sim_names1, *coevol_sim_names2]
 # coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50"]
+coevol_sim_names = ["coevol_uo_40", "coevol_uo2_50", "coevol_uo_d_30"]
 
 if __name__ == '__main__':
     import gp_benchmarks

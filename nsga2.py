@@ -60,14 +60,42 @@ def get_sparsity(fitnesses: np.ndarray) -> np.ndarray:
     front_sparsity = np.sum(sparsity, axis=1)
     return front_sparsity
 
+def validate_pareto_layering():
+    rnd = np.random.RandomState()
+    f = rnd.random((1000,2))
+    fronts_ids = np.array([], dtype = int)
+    last_idxs = None
+    mask = np.ones(f.shape[0], dtype=bool)
+    fronts = []
+    while len(fronts_ids) < f.shape[0]:
+        next_idxs = get_pareto_front_indexes(f, fronts_ids)
+        assert len(next_idxs) > 0
+        fronts.append(next_idxs)
+        new_front_is = np.concatenate([fronts_ids, next_idxs])
+        mask[new_front_is] = False 
+        left_f = f[mask]
+        for fv in f[next_idxs]:
+            for fv2 in left_f:
+                assert not (np.all(fv2 >= fv) and np.any(fv2 > fv))
+        if last_idxs is not None:
+            for fv in f[next_idxs]:
+                has_dominant = []
+                for fv2 in f[last_idxs]:
+                    if np.all(fv2 >= fv) and np.any(fv2 > fv):
+                        has_dominant.append(fv2)
+                assert len(has_dominant) > 0        
+        fronts_ids = new_front_is
+        last_idxs = next_idxs
+    pass 
+
+# validate_pareto_layering()
+# pass
 # a = np.zeros((4,3), dtype=bool)
 # a
 # a[0] = [True, False, True]
 # a[1,1] = True
 # f = np.array([[0,100],[10,90],[50, 50],[90,10],[100,0]])
-# rnd = np.random.RandomState(0)
-# f = rnd.random((1000,2))
-# fx = get_pareto_front_indexes_neg(f)
+# pass
 # get_sparsity(f[fx])
 # s = np.zeros_like(f, dtype = float)
 # o = np.array([1, 0, 3])
@@ -97,7 +125,7 @@ def nsga2_loop(archive_size, population_size, max_gens,
     while gen < max_gens:
         all_inds = population + archive
         all_inds = map_fn(all_inds)
-        outputs, fitnesses, _, derived_objectives = eval_fn(all_inds) 
+        outputs, fitnesses, interactions, derived_objectives = eval_fn(all_inds) 
         new_archive = []
         all_fronts_indicies = np.array([], dtype=int)
         # best_front_indexes = None
@@ -121,6 +149,7 @@ def nsga2_loop(archive_size, population_size, max_gens,
                 break  
         archive = new_archive
         archive_fitnesses = fitnesses[all_fronts_indicies]
+        archive_interactions = interactions[all_fronts_indicies]
         archive_outputs = outputs[all_fronts_indicies]
         # best_front = [all_inds[i] for i in best_front_indexes]
         # best_front_fitnesses = fitnesses[best_front_indexes]
@@ -128,7 +157,7 @@ def nsga2_loop(archive_size, population_size, max_gens,
         best_ind = analyze_pop_fn(archive, archive_outputs, archive_fitnesses)
         if best_ind is not None:
             break
-        population = breed_fn(population_size, archive, archive_fitnesses)
+        population = breed_fn(population_size, archive, archive_fitnesses, archive_interactions)
         gen += 1
     return best_ind, gen
 
@@ -141,6 +170,10 @@ def doc_objectives(interactions):
     derived_objectives = np.array(centers).T
     # NOTE: centroid === to np.mean above.
     return derived_objectives, dict(test_clusters = test_clusters)
+
+# one_ints = np.ones((1000, 100), dtype=float)
+# res = doc_objectives(one_ints)
+# pass 
 
 def rand_objectives(interactions):
     rand_ints = default_rnd.randint(2, size = interactions.shape)
@@ -223,49 +256,27 @@ def weighted_hypervolume_fitness(interactions, outputs, derived_objectives = [],
     return -np.prod(weighted_objs, axis = 1)
 
 
-do_nsga = gp_nsga2
-do_nsga_0 = partial(gp_nsga2, select_fitness_ids = [0])
-
-# do_rand = partial(gp_nsga2, derive_objs_fn = rand_objectives)
-
-# doc = partial(gp_nsga2, derive_objs_fn = doc_objectives)
-doc_p = partial(gp_nsga2, derive_objs_fn = doc_objectives, 
+# rewritten to remove Parsimony pressure by depth
+nsga2_all = partial(gp_nsga2, select_fitness_ids = [0])
+nsga2_doc_p = partial(gp_nsga2, derive_objs_fn = doc_objectives, select_fitness_ids = [0, 1],
                 fitness_fns = [hypervolume_fitness, hamming_distance_fitness, depth_fitness])
 
-doc_p_0 = partial(doc_p, select_fitness_ids = [0, 1])
-
-doc_d = partial(gp_nsga2, derive_objs_fn = doc_objectives,
+nsga2_doc_d = partial(gp_nsga2, derive_objs_fn = doc_objectives, select_fitness_ids = [0, 1],
                 fitness_fns = [weighted_hypervolume_fitness, hamming_distance_fitness, depth_fitness])
 
-doc_d_0 = partial(doc_d, select_fitness_ids = [0, 1])
+nsga2_dof_w_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 3, alpha = 1), 
+                        select_fitness_ids = [0])
 
-# dof_w_2 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 2, alpha = 1))
-dof_w_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 3, alpha = 1))
-dof_w_3_0 = partial(dof_w_3, select_fitness_ids = [0])
-# dof_wh_2 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 2, alpha = 1))
-dof_wh_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 3, alpha = 1))
-dof_wh_3_0 = partial(dof_wh_3, select_fitness_ids = [0])
-
-# dof_w_2_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 2, alpha = 0.8))
-# dof_w_3_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_w_objectives, k = 3, alpha = 0.8))
-# dof_wh_2_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 2, alpha = 0.8))
-# dof_wh_3_80 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 3, alpha = 0.8))
-
-# do_fo = partial(gp_nsga2, derive_objs_fn = do_feature_objectives)
-
-# do_pca_abs_2 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_abs_objectives, k = 2))
-# do_pca_abs_3 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_abs_objectives, k = 3))
-
-# do_pca_diff_2 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_diff_objectives, k = 2))
-# do_pca_diff_3 = partial(gp_nsga2, derive_objs_fn = partial(do_pca_diff_objectives, k = 3))
+nsga2_dof_wh_3 = partial(gp_nsga2, derive_objs_fn = partial(dof_wh_objectives, k = 3, alpha = 1), 
+                         select_fitness_ids = [0])
 
 # nsga2_sim_names = [ 'do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3' ]
-nsga2_sim_names = [ 'do_nsga', 'doc_p', 'doc_d', 'dof_w_3', 'dof_wh_3', 'do_nsga_0', 'doc_p_0', 'doc_d_0', 'dof_w_3_0', 'dof_wh_3_0' ]
+nsga2_sim_names = [ 'nsga2_all', 'nsga2_doc_p', 'nsga2_doc_d', 'nsga2_dof_w_3', 'nsga2_dof_wh_3' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
     problem_builder = gp_benchmarks.get_benchmark('cmp6')
-    best_prog, stats = doc_d_0(problem_builder)
+    best_prog, stats = nsga2_all(problem_builder)
     print(best_prog)
     print(stats)
     pass    

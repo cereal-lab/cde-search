@@ -1348,8 +1348,66 @@ def get_batch_pareto_layers2(tests: list[list[Optional[int]]], max_layers = 1, d
     layers = [[el2 for el in layer for el2 in [el, *duplicates.get(el, [])]] for layer in layers]
     return layers, discarded
 
+def test_dim_counts(num_cand: int, start_n: int, end_n: int, cnt = 1, seed: int = 119):
+    ''' Computes stats for different methods of num of dimensions  '''
+    stats = []
+    rnd = np.random.RandomState(seed)
+    for n in range(start_n, end_n + 1):
+        for i in range(cnt):
+            interactions = rnd.randint(0, 2, size=(num_cand, n), dtype=int)
+
+            dims1, o1, s1 = extract_dims(interactions.tolist())
+            dims2, o2, s2 = extract_dims_fix(interactions)
+            # dims3, o3, s3 = extract_dims_approx(tests)
+            # dims4, o4, s4 = extract_nonb_dims_approx(tests)
+            z0 = np.packbits(np.zeros_like(interactions[0], dtype=bool))
+            t0 = np.packbits(np.array(interactions), axis=1)
+            dims5, o5, s5 = extract_dims_np_b(t0, origin_outcomes=z0)     
+            if n < len(dims1):
+                stats.append(dict(n = n, de_dim_count = len(dims1), cse_fix_count = len(dims2), cse_b_count = len(dims5),
+                                    ints = interactions))
+            pass
+    return stats
+
+
+
+
 if __name__ == "__main__":
+    # stats = test_dim_counts(10, 6, 6, cnt=100, seed=119)
+    # print(stats)
+    # pass 
+
+    tests = np.array([[0, 1, 0, 1, 0, 1],
+       [1, 1, 1, 1, 0, 0],
+       [1, 0, 1, 0, 1, 1],
+    #    [1, 1, 1, 1, 0, 0],
+       [1, 0, 0, 1, 0, 0],
+       [1, 0, 1, 1, 1, 0],
+       [0, 0, 1, 1, 0, 1],
+    #    [0, 1, 0, 1, 1, 1],
+       [1, 1, 0, 0, 0, 1],
+       [0, 0, 0, 1, 1, 1]])
+
+    tests = np.array([[1, 1, 0, 0],
+                    [1, 0, 1, 0],
+                    [1, 0, 0, 1],
+                    [0, 1, 1, 0],
+                    [0, 1, 0, 1]
+                    ])
     
+    dom_rel = []
+    for i in range(len(tests)):
+        iv = tests[i]
+        for j in range(len(tests)):
+            jv = tests[j]
+            if np.all(iv >= jv) and np.any(iv > jv):
+                dom_rel.append((i, j))
+    print(dom_rel)
+    
+    dims2, o2, s2 = extract_dims_fix(tests)    
+    vects = [[tests[p[0]] for p in d] for d in dims2]
+    pass
+
     tests = np.array([
         [9,1,9],
         [9,2,9],

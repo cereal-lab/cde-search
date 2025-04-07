@@ -321,7 +321,7 @@ def pick_min(selected_fitnesses: np.ndarray):
     best_id_id, best_fitness = min([(fid, (ft if len(selected_fitnesses.shape) == 1 else tuple(ft))) for fid, ft in enumerate(selected_fitnesses)], key = lambda x: x[1])
     return best_id_id
 
-def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
+def tournament_selection(population: list[Any], fitnesses: np.ndarray, interactions: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
     ''' Select parents using tournament selection '''
     selected_ids = default_rnd.choice(len(population), tournament_selection_size, replace=True)
     selected_fitnesses = fitnesses[selected_ids]
@@ -329,6 +329,23 @@ def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_c
     best_id = selected_ids[best_id_id]
     # best = population[best_id]
     return best_id
+
+def lexicase_selection(population: list[Any], fitnesses: np.ndarray, interactions: np.ndarray, *, runtime_context: RuntimeContext):
+    """ Based on Lee Spector's team: Solving Uncompromising Problems With Lexicase Selection """
+    test_ids = np.arange(interactions.shape[1]) # direction is hardcoded 0 - bad, 1 - good
+    default_rnd.shuffle(test_ids)
+    candidate_ids = np.arange(len(population))
+    for test_id in test_ids:
+        test_max_outcome = np.max(interactions[candidate_ids, test_id])
+        candidate_id_ids = np.where(interactions[candidate_ids, test_id] == test_max_outcome)[0]
+        candidate_ids = candidate_ids[candidate_id_ids]
+        if len(candidate_ids) == 1:
+            break
+    if len(candidate_ids) == 1:
+        return candidate_ids[0]
+    best_id = default_rnd.choice(candidate_ids)
+    return best_id
+
 
 # def tournament_selection_with_syntax_againg(population: list[Any], fitnesses: np.ndarray, fitness_comp_fn = pick_min, tournament_selection_size = 7, *, runtime_context: RuntimeContext):
 #     ''' Select parents using tournament selection '''
@@ -354,7 +371,7 @@ def tournament_selection(population: list[Any], fitnesses: np.ndarray, fitness_c
 #     # best = population[best_id]
 #     return best_id
 
-def random_selection(population: list[Any], fitnesses: np.ndarray, *, runtime_context: RuntimeContext):
+def random_selection(population: list[Any], fitnesses: np.ndarray, interactions, *, runtime_context: RuntimeContext):
     ''' Select parents using random selection '''
     rand_id = default_rnd.choice(len(population))
     # selected = population[rand_id]
@@ -605,7 +622,7 @@ def subtree_crossover(parent1: Node, parent2: Node, select_node_leaf_prob = 0.1,
     child2 = repl_fn(parent2, {at2_id: at1}, node_builder = runtime_context.node_builder)
     return child1, child2       
 
-def subtree_breed(size, population, fitnesses,
+def subtree_breed(size, population, fitnesses, interactions,
                     breed_select_fn = tournament_selection, mutation_fn = subtree_mutation, crossover_fn = subtree_crossover,
                     mutation_rate = 0.1, crossover_rate = 0.9, *, runtime_context: RuntimeContext):
     new_population = []
@@ -616,8 +633,8 @@ def subtree_breed(size, population, fitnesses,
     all_parents = []
     while len(new_population) < size:
         # Select parents for the next generation
-        parent1_id = breed_select_fn(population, fitnesses, runtime_context = runtime_context)
-        parent2_id = breed_select_fn(population, fitnesses, runtime_context = runtime_context)
+        parent1_id = breed_select_fn(population, fitnesses, interactions, runtime_context = runtime_context)
+        parent2_id = breed_select_fn(population, fitnesses, interactions, runtime_context = runtime_context)
         parent1 = population[parent1_id]
         parent2 = population[parent2_id]
         if default_rnd.rand() < mutation_rate:
@@ -790,11 +807,11 @@ def evol_loop(population_size, max_gens, init_fn, map_fn, breed_fn, eval_fn, ana
     best_ind = None
     while gen < max_gens:
         population = map_fn(population)
-        outputs, fitnesses, *_ = eval_fn(population)
+        outputs, fitnesses, interactions, *_ = eval_fn(population)
         best_ind = analyze_pop_fn(population, outputs, fitnesses)
         if best_ind is not None:
             break        
-        population = breed_fn(population_size, population, fitnesses)  
+        population = breed_fn(population_size, population, fitnesses, interactions)  
         gen += 1
     
     return best_ind, gen
@@ -836,23 +853,26 @@ def koza_evolve(problem_init, *,
     runtime_context.stats["best_found"] = best_ind is not None
     return best_ind, runtime_context.stats
 
-gp = koza_evolve
-gp_0 = partial(koza_evolve, select_fitness_ids = [0])
+# Remove Parsimony pressure
+# gp = koza_evolve
+gp = partial(koza_evolve, select_fitness_ids = [0])
+lexicase = partial(koza_evolve, select_fitness_ids = [0], breed_fn = partial(subtree_breed, breed_select_fn = lexicase_selection))
 
-ifs = partial(koza_evolve, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness])
-ifs_0 = partial(ifs, select_fitness_ids = [0, 1])
+# ifs = partial(koza_evolve, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness])
+ifs = partial(koza_evolve, fitness_fns = [ifs_fitness, hamming_distance_fitness, depth_fitness], 
+                select_fitness_ids = [0, 1])
 
-gp_a = partial(koza_evolve, fitness_fns = [mse_fitness, depth_fitness], main_fitness_fn = mse_fitness,
-                            eval_fn = partial(gp_eval, int_fn = dist_test_based_interactions, 
-                                              output_prep = torch_output_prep),
-                            analyze_pop_fn = partial(analyze_population, best_cond = approx_best))
+# gp_a = partial(koza_evolve, fitness_fns = [mse_fitness, depth_fitness], main_fitness_fn = mse_fitness,
+#                             eval_fn = partial(gp_eval, int_fn = dist_test_based_interactions, 
+#                                               output_prep = torch_output_prep),
+#                             analyze_pop_fn = partial(analyze_population, best_cond = approx_best))
 
-gp_sim_names = [ 'gp', 'ifs', 'gp_0', 'ifs_0' ]
+gp_sim_names = [ 'gp', 'ifs', 'lexicase' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
     problem_builder = gp_benchmarks.get_benchmark('cmp8')
-    best_prog, stats = gp_0(problem_builder)
+    best_prog, stats = lexicase(problem_builder)
     print(best_prog)
     print(stats)
     pass    

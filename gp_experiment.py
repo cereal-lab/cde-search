@@ -9,6 +9,8 @@ from gp import gp_sim_names
 import gp
 from nsga2 import nsga2_sim_names
 import nsga2
+from nsga3 import nsga3_sim_names
+import nsga3
 from front_coverage import cov_sim_names
 import front_coverage as cov
 from coevol import coevol_sim_names
@@ -27,6 +29,8 @@ def get_simulation(sim_name):
         return getattr(gp, sim_name)
     if sim_name in nsga2_sim_names:
         return getattr(nsga2, sim_name)
+    if sim_name in nsga3_sim_names:
+        return getattr(nsga3, sim_name)    
     if sim_name in cov_sim_names:
         return getattr(cov, sim_name)
     if sim_name in coevol_sim_names:
@@ -592,9 +596,6 @@ def draw_bar_charts_of_breeding(file_name, game_names, sim_names, out_file, bree
     fig.savefig(out_file, format='pdf')  
     plt.clf()  
 
-
-# sim_names = [*gp_sim_names, *nsga2_sim_names, *cov_sim_names, *coevol_sim_names]
-
 def compute_breedings(file_name: str, out_file, game_names, sim_names = None,
                       breed_metric_names = ['good_children', 'best_children', 'good_dom_children', 'best_dom_children',
                                         'bad_children'], col_names = None,
@@ -717,25 +718,25 @@ def compute_breedings(file_name: str, out_file, game_names, sim_names = None,
 
     # return stats
 
-
 # sim_names = ["ifs"] #gp_sim_names #["do_rand", "do_fo", "doc_p", "doc_d"]
 # sel_sim_names = ["coevol_uo_40", "coevol_uo2_50", "ifs", "ifs_0", "doc_d_0", "doc_p_0", "dof_w_3_0", "dof_wh_3_0", "cov_ht_bp", "cov_rt_bp", "gp", "gp_0", "doc_d", "doc_p", "dof_w_3", "dof_wh_3", 'do_nsga', 'do_nsga_0']
 if __name__ == "__main__":
-    print("testing evo runs")
-    compute_run_stats("data/test-based-gp/coevol6.jsonlist", 
-                      sim_names=None, tablefmt="github", transpose=False) #['do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3',])
+    # print("testing evo runs")
+    # compute_run_stats("data/test-based-gp/coevol6.jsonlist", 
+    #                   sim_names=None, tablefmt="github", transpose=False) #['do_rand', 'do_nsga', 'doc', 'doc_p', 'doc_d', 'dof_w_2', 'dof_w_3', 'dof_wh_2', 'dof_wh_3', 'dof_w_2_80', 'dof_w_3_80', 'dof_wh_2_80', 'dof_wh_3_80', 'do_fo', 'do_pca_abs_2', 'do_pca_abs_3', 'do_pca_diff_2', 'do_pca_diff_3',])
     # compute_run_stats("data/test-based-gp/all-all-circe.jsonlist", 
     #                   sim_names=None, tablefmt="github", transpose=True) #, custom_prefix="sel-")
     # pass
-    # cnt = 0
-    # from gp_benchmarks import all_discrete_benchmarks
-    # f = open("setups.txt", "w")
-    # for sim_name in coevol.coevol_sim_names:
-    #     for b_name in all_discrete_benchmarks().keys():
-    #         print(sim_name, b_name)
-    #         print(f"'{sim_name}:{b_name}'", file=f)
-    #         cnt += 1
-    # print(f"total setups: {cnt}")
+    sim_names = [*gp_sim_names, *nsga2_sim_names, *nsga3_sim_names, *cov_sim_names, *coevol_sim_names]
+    cnt = 0
+    from gp_benchmarks import all_discrete_benchmarks
+    f = open("setups.txt", "w")
+    for sim_name in sim_names:
+        for b_name in all_discrete_benchmarks().keys():
+            print(sim_name, b_name)
+            print(f"'{sim_name}:{b_name}'", file=f)
+            cnt += 1
+    print(f"total setups: {cnt}")
     # cov_ht_bp(idx = 11)
     # get_sol_dupl("data/test-based-gp/all.jsonlist")
     # compute_run_stats("data/test-based-gp/all.jsonlist", sim_names=["gp","ifs","coevol_uo_40","doc_p","doc_d","dof_w_3","dof_wh_3","do_nsga","cov_ht_bp","cov_rt_bp"])

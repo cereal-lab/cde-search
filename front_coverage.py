@@ -1,5 +1,3 @@
-
-
 from dataclasses import dataclass, field
 from functools import partial
 from itertools import cycle
@@ -40,7 +38,8 @@ def pareto_front_loop(archive_size, population_size, max_gens,
         selected_indexes = all_fronts_indexes[selected_indexes_ids]
         parents = [population[i] for i in selected_indexes]
         parents_fitnesses = fitnesses[selected_indexes]
-        new_population = breed_fn(population_size, parents, parents_fitnesses)
+        parents_interactions = interactions[selected_indexes]
+        new_population = breed_fn(population_size, parents, parents_fitnesses, parents_interactions)
         new_population.extend(parents)
         population = new_population
         gen += 1
@@ -55,7 +54,7 @@ class FullTestCoverageIterators():
 class FrontCovRuntimeContext(RuntimeContext):
     full_coverage: FullTestCoverageIterators = field(default_factory=FullTestCoverageIterators)
 
-def full_coverage_selection(population, fitnesses, coverage_selection_size = 2, *, runtime_context: FrontCovRuntimeContext):
+def full_coverage_selection(population, fitnesses, interactions, coverage_selection_size = 2, *, runtime_context: FrontCovRuntimeContext):
     if (next_index := next(runtime_context.full_coverage.selected, None)) is None:
         subgroup_start, subgroup_size = next(runtime_context.full_coverage.subgroups)
         if subgroup_size < coverage_selection_size:
@@ -207,7 +206,8 @@ cov_et_rp = partial(front_evolve, select_parents_fn = full_test_coverage_easiest
 
 cov_rt_rp = partial(front_evolve, select_parents_fn = full_test_coverage_random_test_rand_program)
 
-cov_sim_names = [ 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp', 'cov_rt_rp' ]
+# cov_sim_names = [ 'cov_ht_bp', 'cov_et_bp', 'cov_rt_bp', 'cov_ht_rp', 'cov_et_rp', 'cov_rt_rp' ]
+cov_sim_names = [ 'cov_ht_bp']
 
 if __name__ == '__main__':
     import gp_benchmarks
