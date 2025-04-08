@@ -77,6 +77,7 @@ class RuntimeContext:
     # tree_contexts: dict[Node, dict[str, Any]] = field(default_factory=dict)
     breeding_stats: dict[str, dict[Any, int]] = field(default_factory=dict)
     anneal_context: dict[str, Any] = field(default_factory=dict) # depending on operator - stores annealing context
+    data: dict[str, Any] = field(default_factory=dict) # for arbitrary data
     # aging_type: str = '' # none, syntax, semantics, syntax_w_position, semantics_w_position
 
     # elitism tracks num_elites of fitnesses and bins nodes from node cache
@@ -871,7 +872,7 @@ gp_sim_names = [ 'gp', 'ifs', 'lexicase' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    problem_builder = gp_benchmarks.get_benchmark('par5')
+    problem_builder = gp_benchmarks.get_benchmark('cmp8')
     best_prog, stats = lexicase(problem_builder)
     print(best_prog)
     print(stats)
