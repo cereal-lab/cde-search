@@ -871,7 +871,7 @@ gp_sim_names = [ 'gp', 'ifs', 'lexicase' ]
 
 if __name__ == '__main__':
     import gp_benchmarks
-    problem_builder = gp_benchmarks.get_benchmark('cmp8')
+    problem_builder = gp_benchmarks.get_benchmark('par5')
     best_prog, stats = lexicase(problem_builder)
     print(best_prog)
     print(stats)
