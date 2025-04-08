@@ -4,7 +4,7 @@
 #SBATCH --output=out/atbgpc.out
 #SBATCH --mem=16G
 #SBATCH --open-mode=append
-#SBATCH --array=0-305
+#SBATCH --array=0-53
 
 # NOTE1: latest (after test-based-gp, coevol2-6)
 # NOTE2: includes NSGA-3 and lexicase 
